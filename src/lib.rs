@@ -290,21 +290,55 @@ fn row(start_column: usize, keys: impl IntoIterator<Item = KeySpec>) -> RowSpec 
     RowSpec { start_column, keys: keys.into_iter().collect() }
 }
 
-/// German QWERTZ on a honeycomb: letter rows keep their QWERTZ order, the
-/// bottom rows carry the modifiers and the space key.
+fn keys(labels: &[(&str, usize)]) -> Vec<KeySpec> {
+    labels.iter().map(|&(label, span)| KeySpec::new(label, span)).collect()
+}
+
+/// German QWERTZ on a honeycomb with 11 small keys per row: every letter row
+/// keeps its exact QWERTZ order.
 pub fn qwertz() -> LayoutSpec {
     let third = std::iter::once(KeySpec::new("⇧", 2))
         .chain(letters("yxcvbnm"))
         .chain(std::iter::once(KeySpec::new("⌫", 2)));
-    let bottom = [("?123", 2), (",", 1), ("space", 5), (".", 1), ("⏎", 2)]
-        .map(|(label, span)| KeySpec::new(label, span));
-
     LayoutSpec {
         rows: vec![
             row(0, letters("qwertzuiopü")),
             row(0, letters("asdfghjklöä")),
             row(0, third),
-            row(0, bottom),
+            row(0, keys(&[("?123", 2), (",", 1), ("space", 5), (".", 1), ("⏎", 2)])),
+        ],
+    }
+}
+
+/// Large keys, eight to a row, umlauts as keys of their own.
+///
+/// QWERTZ has three letter rows and these keys need four, so letters cannot
+/// all keep their row. Each sits in the cell nearest to where it is on a
+/// QWERTZ phone keyboard (an optimal assignment over squared distance, with
+/// vertical distance weighted double), which keeps left and right and every
+/// letter's neighbourhood.
+pub fn honeycomb_8() -> LayoutSpec {
+    LayoutSpec {
+        rows: vec![
+            row(0, letters("qwrzuipü")),
+            row(0, letters("seth,oö")),
+            row(0, letters("adfgjklä")),
+            row(0, letters("yxcvbnm")),
+            row(0, keys(&[("⇧", 1), ("?123", 1), ("space", 3), (".", 1), ("⏎", 1), ("⌫", 1)])),
+        ],
+    }
+}
+
+/// Large keys, seven to a row, umlauts on long-press of a, o and u. Letters
+/// are placed as in [`honeycomb_8`].
+pub fn honeycomb_7() -> LayoutSpec {
+    LayoutSpec {
+        rows: vec![
+            row(0, letters("qerzuip")),
+            row(0, letters("wdthjo")),
+            row(0, letters("asfgbkl")),
+            row(0, letters("yxcvnm")),
+            row(0, keys(&[("⇧", 1), ("?123", 1), (",", 1), ("space", 2), (".", 1), ("⌫", 1)])),
         ],
     }
 }

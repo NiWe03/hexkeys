@@ -1,12 +1,18 @@
-//! Writes the QWERTZ layout as SVG to stdout: `cargo run --example render -- <width> <stretch>`.
+//! Writes a layout as SVG to stdout:
+//! `cargo run --example render -- <width> <stretch> [qwertz|8|7]`.
 
-use hexkeys::{Layout, Point, qwertz};
+use hexkeys::{Layout, Point, honeycomb_7, honeycomb_8, qwertz};
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let width: f32 = args.next().map_or(1008.0, |a| a.parse().expect("width"));
     let stretch: f32 = args.next().map_or(1.0, |a| a.parse().expect("stretch"));
-    let layout = Layout::fit(&qwertz(), width, stretch);
+    let spec = match args.next().as_deref() {
+        Some("8") => honeycomb_8(),
+        Some("7") => honeycomb_7(),
+        _ => qwertz(),
+    };
+    let layout = Layout::fit(&spec, width, stretch);
     let gap = layout.cell_width * 0.04;
 
     println!(
@@ -27,7 +33,7 @@ fn main() {
             .collect();
         let letter = key.label.chars().count() == 1 && key.label.chars().all(char::is_alphabetic);
         let fill = if letter { "#3a3a42" } else { "#2a2a30" };
-        let size = if letter { layout.cell_width * 0.42 } else { layout.cell_width * 0.3 };
+        let size = if letter { layout.cell_width * 0.36 } else { layout.cell_width * 0.26 };
         println!(r##"<polygon points="{}" fill="{fill}"/>"##, points.join(" "));
         println!(
             r##"<text x="{:.1}" y="{:.1}" font-family="sans-serif" font-size="{size:.1}" fill="#e8e8ee" text-anchor="middle" dominant-baseline="central">{}</text>"##,
