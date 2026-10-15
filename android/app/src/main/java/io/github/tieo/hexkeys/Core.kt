@@ -24,4 +24,22 @@ object Core {
 
     /** What a press means, as kind (commit, backspace, enter, redraw) and text. */
     external fun press(handle: Long, index: Int): Array<String>
+
+    /** Room above the keys a long-press popup can reach into. */
+    external fun headroom(handle: Long): Float
+
+    /** Opens the key's long-press popup; false when it has no alternatives. */
+    external fun longPress(handle: Long, index: Int): Boolean
+    external fun popupMove(handle: Long, x: Float, y: Float)
+
+    /** Commits the selected alternative, in the same form as [press]. */
+    external fun popupRelease(handle: Long): Array<String>
+    external fun popupCancel(handle: Long)
+
+    /** Choices in the open popup, 0 when none is open. */
+    external fun popupCount(handle: Long): Int
+    external fun popupSelected(handle: Long): Int
+    external fun popupOutline(handle: Long, index: Int): FloatArray
+    external fun popupLabelPosition(handle: Long, index: Int): FloatArray
+    external fun popupLabel(handle: Long, index: Int): String
 }

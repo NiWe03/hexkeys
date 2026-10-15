@@ -146,6 +146,17 @@ impl Layout {
     }
 
     /// The key under a touch: the one owning the nearest cell centre.
+    /// A free-standing cell outline around `center`, clockwise on screen, for
+    /// things drawn over the keys such as a long-press popup.
+    pub fn hexagon(&self, center: Point) -> Vec<Point> {
+        let (w, h) = (self.cell_width / 2.0, self.cell_height / 2.0);
+        let q = self.cell_height / 4.0;
+        [(0.0, -h), (w, -q), (w, q), (0.0, h), (-w, q), (-w, -q)]
+            .iter()
+            .map(|&(dx, dy)| Point { x: center.x + dx, y: center.y + dy })
+            .collect()
+    }
+
     pub fn find(&self, label: &str) -> &Key {
         self.keys.iter().find(|key| key.label == label).expect("no such key")
     }
@@ -316,22 +327,83 @@ enum Shift {
     Once,
 }
 
+/// The alternatives a long press offers, shown as a row of cells above the
+/// key; the finger slides along it and lifting commits the one under it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Popup {
+    pub choices: Vec<String>,
+    /// Centres of the choice cells, in keyboard coordinates. The row sits one
+    /// row above the key, so over the top row it is above the keyboard.
+    pub cells: Vec<Point>,
+    pub selected: usize,
+}
+
 /// A fitted layout plus the state that decides what its keys mean.
 pub struct Keyboard {
     pub layout: Layout,
     shift: Shift,
+    pub popup: Option<Popup>,
 }
 
 impl Keyboard {
     pub fn new(width: f32, stretch: f32) -> Self {
-        Self { layout: Layout::fit(&qwertz(), width, stretch), shift: Shift::Off }
+        Self { layout: Layout::fit(&qwertz(), width, stretch), shift: Shift::Off, popup: None }
+    }
+
+    /// How far above the keyboard a popup can reach: one row's pitch.
+    pub fn headroom(&self) -> f32 {
+        self.layout.cell_height * 0.75
+    }
+
+    /// Opens the key's popup if it has alternatives; returns whether it did.
+    pub fn long_press(&mut self, index: usize) -> bool {
+        let label = self.layout.keys[index].label.as_str();
+        let shifted = self.shift == Shift::Once;
+        let choices: Vec<String> =
+            alternates(label).iter().map(|c| if shifted { upper(c) } else { (*c).to_owned() }).collect();
+        if choices.is_empty() {
+            return false;
+        }
+        let layout = &self.layout;
+        let center = layout.keys[index].center();
+        let w = layout.cell_width;
+        let n = choices.len() as f32;
+        // Centred over the key, then pushed inwards so no cell leaves the sides.
+        let first = (center.x - (n - 1.0) / 2.0 * w).clamp(w / 2.0, layout.width - w / 2.0 - (n - 1.0) * w);
+        let y = center.y - layout.cell_height * 0.75;
+        let cells: Vec<Point> = (0..choices.len()).map(|i| Point { x: first + i as f32 * w, y }).collect();
+        let selected = nearest_by_x(&cells, center.x);
+        self.popup = Some(Popup { choices, cells, selected });
+        true
+    }
+
+    /// Follows the finger along an open popup.
+    pub fn popup_move(&mut self, touch: Point) {
+        if let Some(popup) = &mut self.popup {
+            popup.selected = nearest_by_x(&popup.cells, touch.x);
+        }
+    }
+
+    /// Lifting the finger commits the selected alternative.
+    pub fn popup_release(&mut self) -> Action {
+        match self.popup.take() {
+            Some(popup) => {
+                self.shift = Shift::Off;
+                Action::Commit(popup.choices[popup.selected].clone())
+            }
+            None => Action::Redraw,
+        }
+    }
+
+    pub fn popup_cancel(&mut self) {
+        self.popup = None;
     }
 
     /// The text shown on a key in the current state.
     pub fn label(&self, index: usize) -> String {
         let label = &self.layout.keys[index].label;
         match self.shift {
-            Shift::Once if is_letter(label) => label.to_uppercase(),
+            Shift::Once if is_letter(label) => upper(label),
             _ => label.clone(),
         }
     }
@@ -360,6 +432,33 @@ impl Keyboard {
             }
         }
     }
+}
+
+/// Long-press alternatives for German and English, left to right.
+fn alternates(label: &str) -> &'static [&'static str] {
+    match label {
+        "s" => &["ß"],
+        "a" => &["à", "á", "â", "æ"],
+        "e" => &["é", "è", "ê", "ë"],
+        "i" => &["í", "ì", "î", "ï"],
+        "o" => &["ó", "ò", "ô", "œ"],
+        "u" => &["ú", "ù", "û"],
+        "c" => &["ç"],
+        "n" => &["ñ"],
+        "." => &["…", "!", "?"],
+        "," => &[";", ":", "'", "\""],
+        _ => &[],
+    }
+}
+
+/// Upper case of a single character, with the capital sharp s rather than
+/// the "SS" that `to_uppercase` spells it as.
+fn upper(text: &str) -> String {
+    if text == "ß" { "ẞ".to_owned() } else { text.to_uppercase() }
+}
+
+fn nearest_by_x(cells: &[Point], x: f32) -> usize {
+    (0..cells.len()).min_by(|&a, &b| (cells[a].x - x).abs().total_cmp(&(cells[b].x - x).abs())).unwrap_or(0)
 }
 
 fn is_letter(label: &str) -> bool {
@@ -502,6 +601,34 @@ mod tests {
         let (shift, o) = (keyboard_index(&keyboard, "⇧"), keyboard_index(&keyboard, "ö"));
         keyboard.press(shift);
         assert_eq!(keyboard.press(o), Action::Commit("Ö".into()));
+    }
+
+    #[test]
+    fn long_press_on_s_gives_sharp_s_and_capital_after_shift() {
+        let mut keyboard = Keyboard::new(1008.0, 1.3);
+        let (shift, s) = (keyboard_index(&keyboard, "⇧"), keyboard_index(&keyboard, "s"));
+        assert!(keyboard.long_press(s));
+        assert_eq!(keyboard.popup_release(), Action::Commit("ß".into()));
+        keyboard.press(shift);
+        assert!(keyboard.long_press(s));
+        assert_eq!(keyboard.popup_release(), Action::Commit("ẞ".into()));
+        assert_eq!(keyboard.label(s), "s", "shift is used up by the alternative");
+    }
+
+    #[test]
+    fn popup_follows_the_finger_and_stays_on_screen() {
+        let mut keyboard = Keyboard::new(1008.0, 1.3);
+        let q = keyboard_index(&keyboard, "q");
+        assert!(!keyboard.long_press(q), "q has no alternatives");
+        let e = keyboard_index(&keyboard, "e");
+        assert!(keyboard.long_press(e));
+        let popup = keyboard.popup.clone().unwrap();
+        let w = keyboard.layout.cell_width;
+        assert!(popup.cells.iter().all(|c| c.x >= w / 2.0 - 0.01));
+        assert!(popup.cells[0].y < 0.0, "a top-row popup sits in the headroom");
+        assert!(popup.cells[0].y - keyboard.layout.cell_height / 2.0 >= -keyboard.headroom() - 0.01);
+        keyboard.popup_move(popup.cells[3]);
+        assert_eq!(keyboard.popup_release(), Action::Commit("ë".into()));
     }
 
     fn keyboard_index(keyboard: &Keyboard, label: &str) -> usize {
