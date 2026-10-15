@@ -84,8 +84,13 @@ class KeyboardView(
         if (handle != 0L) Core.destroy(handle)
         handle = Core.create(width.toFloat(), STRETCH)
         headroom = Core.headroom(handle).toInt()
-        paths = (0 until Core.keyCount(handle)).map { path(Core.outline(handle, it)) }
+        loadOutlines()
         setMeasuredDimension(width, headroom + Core.height(handle).toInt() + navigationBar)
+    }
+
+    /** Every layer tiles the same area, so a layer change only swaps the outlines. */
+    private fun loadOutlines() {
+        paths = (0 until Core.keyCount(handle)).map { path(Core.outline(handle, it)) }
     }
 
     override fun onDetachedFromWindow() {
@@ -167,6 +172,7 @@ class KeyboardView(
                     if (key >= 0) Core.press(handle, key) else arrayOf("redraw", "")
                 }
                 pressed = -1
+                if (kind == "redraw") loadOutlines()
                 onAction(kind, text)
                 invalidate()
             }

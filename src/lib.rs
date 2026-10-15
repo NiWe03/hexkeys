@@ -340,9 +340,33 @@ pub fn honeycomb() -> LayoutSpec {
             row(0, letters("wdthjo")),
             row(0, letters("asfgbkl")),
             last_letters,
-            row(0, keys(&[("?123", 1), (",", 1), ("space", 3), (".", 1), ("⏎", 1)])),
+            bottom_row("?123"),
         ],
     }
+}
+
+/// The bottom row every layer shares, with the key back to letters or on to
+/// symbols at its left.
+fn bottom_row(switch: &str) -> RowSpec {
+    row(0, keys(&[(switch, 1), (",", 1), ("space", 3), (".", 1), ("⏎", 1)]))
+}
+
+fn symbol_rows(top: [&str; 4], left_edge: &str) -> Vec<RowSpec> {
+    let mut rows: Vec<RowSpec> = top.iter().map(|&symbols| row(0, letters(symbols))).collect();
+    rows[3].left_edge = Some(left_edge.into());
+    rows[3].right_edge = Some("⌫".into());
+    rows.push(bottom_row("ABC"));
+    rows
+}
+
+/// Digits in order along the top, then the symbols typed most.
+pub fn symbols() -> LayoutSpec {
+    LayoutSpec { rows: symbol_rows(["1234567", "890@#€", "-+()/&%", "?!\"':;"], "=\\<") }
+}
+
+/// The rarer symbols, behind the key in shift's place.
+pub fn more_symbols() -> LayoutSpec {
+    LayoutSpec { rows: symbol_rows(["~`|•√π÷", "׶∆£¥$", "^°={}\\[", "]<>_¢*"], "?123") }
 }
 
 /// What a key press asks the app to do.
@@ -376,14 +400,18 @@ pub struct Popup {
 
 /// A fitted layout plus the state that decides what its keys mean.
 pub struct Keyboard {
+    /// The layer on screen now.
     pub layout: Layout,
+    /// Letters, symbols and more symbols, fitted once.
+    layers: [Layout; 3],
     shift: Shift,
     pub popup: Option<Popup>,
 }
 
 impl Keyboard {
     pub fn new(width: f32, stretch: f32) -> Self {
-        Self { layout: Layout::fit(&honeycomb(), width, stretch), shift: Shift::Off, popup: None }
+        let layers = [honeycomb(), symbols(), more_symbols()].map(|spec| Layout::fit(&spec, width, stretch));
+        Self { layout: layers[0].clone(), layers, shift: Shift::Off, popup: None }
     }
 
     /// How far above the keyboard a popup can reach: one row's pitch.
@@ -431,6 +459,13 @@ impl Keyboard {
         }
     }
 
+    fn show(&mut self, layer: usize) -> Action {
+        self.layout = self.layers[layer].clone();
+        self.shift = Shift::Off;
+        self.popup = None;
+        Action::Redraw
+    }
+
     pub fn popup_cancel(&mut self) {
         self.popup = None;
     }
@@ -459,8 +494,9 @@ impl Keyboard {
             "⌫" => Action::Backspace,
             "⏎" => Action::Enter,
             "space" => Action::Commit(" ".into()),
-            // The symbol layer does not exist yet.
-            "?123" => Action::Redraw,
+            "ABC" => self.show(0),
+            "?123" => self.show(1),
+            "=\\<" => self.show(2),
             _ => {
                 let text = self.label(index);
                 self.shift = Shift::Off;
@@ -657,6 +693,32 @@ mod tests {
         assert!(popup.cells[0].y - keyboard.layout.cell_height / 2.0 >= -keyboard.headroom() - 0.01);
         keyboard.popup_move(popup.cells[2]);
         assert_eq!(keyboard.popup_release(), Action::Commit("û".into()));
+    }
+
+    #[test]
+    fn symbol_layers_switch_and_type() {
+        let mut keyboard = Keyboard::new(1008.0, 1.0);
+        let symbols = keyboard_index(&keyboard, "?123");
+        assert_eq!(keyboard.press(symbols), Action::Redraw);
+        let one = keyboard_index(&keyboard, "1");
+        assert_eq!(keyboard.press(one), Action::Commit("1".into()));
+        let more = keyboard_index(&keyboard, "=\\<");
+        keyboard.press(more);
+        let pi = keyboard_index(&keyboard, "π");
+        assert_eq!(keyboard.press(pi), Action::Commit("π".into()));
+        let letters = keyboard_index(&keyboard, "ABC");
+        keyboard.press(letters);
+        assert_eq!(keyboard.layout.find("q").label, "q");
+    }
+
+    #[test]
+    fn every_layer_tiles_the_keyboard() {
+        for spec in [symbols(), more_symbols()] {
+            let layout = Layout::fit(&spec, 1008.0, 1.0);
+            let area: f32 = layout.keys.iter().map(|key| polygon_area(&layout.outline(key))).sum();
+            let expected = layout.width * layout.height;
+            assert!((area - expected).abs() / expected < 1e-4);
+        }
     }
 
     fn keyboard_index(keyboard: &Keyboard, label: &str) -> usize {
