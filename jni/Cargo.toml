@@ -1,0 +1,12 @@
+[package]
+name = "hexkeys-jni"
+version = "0.1.0"
+edition = "2024"
+description = "The keyboard core as the Android input method sees it."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+hexkeys = { path = ".." }
+jni = "0.21"
