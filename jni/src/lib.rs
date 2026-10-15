@@ -248,3 +248,13 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_popupLabel(
     let popup = keyboard(handle).popup.as_ref().expect("no popup open");
     env.new_string(&popup.choices[index as usize]).expect("label").into_raw()
 }
+
+/// Width of one cell, which labels are sized from.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_cellWidth(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jfloat {
+    keyboard(handle).layout.cell_width
+}

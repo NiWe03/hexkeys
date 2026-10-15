@@ -12,6 +12,9 @@ object Core {
     external fun height(handle: Long): Float
     external fun keyCount(handle: Long): Int
 
+    /** Width of one cell, which labels are sized from. */
+    external fun cellWidth(handle: Long): Float
+
     /** Outline corners as x0, y0, x1, y1, ... */
     external fun outline(handle: Long, index: Int): FloatArray
 

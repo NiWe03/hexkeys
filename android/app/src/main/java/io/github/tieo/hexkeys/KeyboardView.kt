@@ -100,11 +100,11 @@ class KeyboardView(
         canvas.drawRect(0f, headroom.toFloat(), width.toFloat(), height.toFloat(), backgroundPaint)
         canvas.save()
         canvas.translate(0f, headroom.toFloat())
-        labelPaint.textSize = width / 11.5f * 0.42f
+        val cellWidth = Core.cellWidth(handle)
         for ((index, path) in paths.withIndex()) {
             canvas.drawPath(path, if (index == pressed) pressedPaint else keyPaint)
             canvas.drawPath(path, gapPaint)
-            drawLabel(canvas, Core.label(handle, index), Core.labelPosition(handle, index))
+            drawLabel(canvas, Core.label(handle, index), Core.labelPosition(handle, index), cellWidth)
         }
         val choices = Core.popupCount(handle)
         if (choices > 0) {
@@ -113,13 +113,15 @@ class KeyboardView(
                 val path = path(Core.popupOutline(handle, index))
                 canvas.drawPath(path, if (index == selected) selectedPaint else popupPaint)
                 canvas.drawPath(path, gapPaint)
-                drawLabel(canvas, Core.popupLabel(handle, index), Core.popupLabelPosition(handle, index))
+                drawLabel(canvas, Core.popupLabel(handle, index), Core.popupLabelPosition(handle, index), cellWidth)
             }
         }
         canvas.restore()
     }
 
-    private fun drawLabel(canvas: Canvas, label: String, position: FloatArray) {
+    /** Single characters large, words such as "space" smaller so they fit their key. */
+    private fun drawLabel(canvas: Canvas, label: String, position: FloatArray, cellWidth: Float) {
+        labelPaint.textSize = cellWidth * if (label.codePointCount(0, label.length) == 1) 0.36f else 0.24f
         val baseline = position[1] - (labelPaint.descent() + labelPaint.ascent()) / 2
         canvas.drawText(label, position[0], baseline, labelPaint)
     }
@@ -179,7 +181,7 @@ class KeyboardView(
     }
 
     private companion object {
-        /** Cells 1.3 times as tall as a regular hexagon, for a finger-sized height. */
-        const val STRETCH = 1.3f
+        /** Regular hexagons: at eight to a row they are already finger-sized. */
+        const val STRETCH = 1.0f
     }
 }

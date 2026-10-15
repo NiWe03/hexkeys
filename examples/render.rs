@@ -1,18 +1,12 @@
-//! Writes a layout as SVG to stdout:
-//! `cargo run --example render -- <width> <stretch> [qwertz|8|7]`.
+//! Writes the layout as SVG to stdout: `cargo run --example render -- <width> <stretch>`.
 
-use hexkeys::{Layout, Point, honeycomb_7, honeycomb_8, qwertz};
+use hexkeys::{Layout, Point, honeycomb};
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let width: f32 = args.next().map_or(1008.0, |a| a.parse().expect("width"));
     let stretch: f32 = args.next().map_or(1.0, |a| a.parse().expect("stretch"));
-    let spec = match args.next().as_deref() {
-        Some("8") => honeycomb_8(),
-        Some("7") => honeycomb_7(),
-        _ => qwertz(),
-    };
-    let layout = Layout::fit(&spec, width, stretch);
+    let layout = Layout::fit(&honeycomb(), width, stretch);
     let gap = layout.cell_width * 0.04;
 
     println!(

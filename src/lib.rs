@@ -34,6 +34,10 @@ impl KeySpec {
 pub struct RowSpec {
     pub start_column: usize,
     pub keys: Vec<KeySpec>,
+    /// Keys filling the half cell a shifted row leaves free at its left and
+    /// right end, instead of the row's outer keys running on into it.
+    pub left_edge: Option<String>,
+    pub right_edge: Option<String>,
 }
 
 /// A layout before it is fitted to a screen.
@@ -73,6 +77,8 @@ pub struct Key {
     pub row: usize,
     /// Centres of the cells the key covers, left to right.
     pub cells: Vec<Point>,
+    /// Where the label goes: the middle of the key's visible area.
+    pub label_at: Point,
     /// `cells` plus, for a key at the end of a row that stops half a cell
     /// short of the keyboard's edge, one more centre beyond it. The key's
     /// area then runs on to the edge, which keeps the keyboard's sides
@@ -83,9 +89,7 @@ pub struct Key {
 impl Key {
     /// Centre of the whole key, where its label goes.
     pub fn center(&self) -> Point {
-        let first = self.cells[0];
-        let last = self.cells[self.cells.len() - 1];
-        Point { x: (first.x + last.x) / 2.0, y: first.y }
+        self.label_at
     }
 }
 
@@ -114,29 +118,51 @@ impl Layout {
             let y = cell_height / 2.0 + row as f32 * row_pitch;
             let mut column = row_spec.start_column as f32 + row_shift(row);
             for key_spec in &row_spec.keys {
-                let cells = (0..key_spec.span)
+                let cells: Vec<Point> = (0..key_spec.span)
                     .map(|i| Point { x: (column + i as f32 + 0.5) * cell_width, y })
                     .collect();
-                keys.push(Key { label: key_spec.label.clone(), row, regions: Vec::new(), cells });
+                let label_at = Point { x: (column + key_spec.span as f32 / 2.0) * cell_width, y };
+                keys.push(Key { label: key_spec.label.clone(), row, label_at, regions: cells.clone(), cells });
                 column += key_spec.span as f32;
             }
         }
 
-        for key in &mut keys {
-            key.regions = key.cells.clone();
-        }
-        for row in 0..spec.rows.len() {
-            let in_row = |key: &&mut Key| key.row == row;
-            if let Some(first) = keys.iter_mut().find(in_row) {
-                let left = first.cells[0];
-                if left.x - cell_width / 2.0 > 0.01 {
-                    first.regions.insert(0, Point { x: left.x - cell_width, y: left.y });
+        for (row, row_spec) in spec.rows.iter().enumerate() {
+            let y = cell_height / 2.0 + row as f32 * row_pitch;
+            let left = keys.iter().position(|key| key.row == row);
+            let right = keys.iter().rposition(|key| key.row == row);
+            let (Some(left), Some(right)) = (left, right) else { continue };
+            let left_x = keys[left].cells[0].x;
+            let right_x = keys[right].cells[keys[right].cells.len() - 1].x;
+            let left_gap = left_x - cell_width / 2.0 > 0.01;
+            let right_gap = right_x + cell_width / 2.0 < width - 0.01;
+            // A gap at a row's end goes to an edge key when the row has one,
+            // otherwise the outer key runs on into it. Either way the
+            // keyboard's sides stay straight.
+            if left_gap {
+                let centre = Point { x: left_x - cell_width, y };
+                match &row_spec.left_edge {
+                    Some(label) => keys.push(Key {
+                        label: label.clone(),
+                        row,
+                        label_at: Point { x: (left_x - cell_width / 2.0) / 2.0, y },
+                        cells: vec![centre],
+                        regions: vec![centre],
+                    }),
+                    None => keys[left].regions.insert(0, centre),
                 }
             }
-            if let Some(last) = keys.iter_mut().rev().find(in_row) {
-                let right = last.cells[last.cells.len() - 1];
-                if right.x + cell_width / 2.0 < width - 0.01 {
-                    last.regions.push(Point { x: right.x + cell_width, y: right.y });
+            if right_gap {
+                let centre = Point { x: right_x + cell_width, y };
+                match &row_spec.right_edge {
+                    Some(label) => keys.push(Key {
+                        label: label.clone(),
+                        row,
+                        label_at: Point { x: (right_x + cell_width / 2.0 + width) / 2.0, y },
+                        cells: vec![centre],
+                        regions: vec![centre],
+                    }),
+                    None => keys[right].regions.push(centre),
                 }
             }
         }
@@ -287,58 +313,34 @@ fn letters(s: &str) -> impl Iterator<Item = KeySpec> + '_ {
 }
 
 fn row(start_column: usize, keys: impl IntoIterator<Item = KeySpec>) -> RowSpec {
-    RowSpec { start_column, keys: keys.into_iter().collect() }
+    RowSpec { start_column, keys: keys.into_iter().collect(), left_edge: None, right_edge: None }
 }
 
 fn keys(labels: &[(&str, usize)]) -> Vec<KeySpec> {
     labels.iter().map(|&(label, span)| KeySpec::new(label, span)).collect()
 }
 
-/// German QWERTZ on a honeycomb with 11 small keys per row: every letter row
-/// keeps its exact QWERTZ order.
-pub fn qwertz() -> LayoutSpec {
-    let third = std::iter::once(KeySpec::new("⇧", 2))
-        .chain(letters("yxcvbnm"))
-        .chain(std::iter::once(KeySpec::new("⌫", 2)));
-    LayoutSpec {
-        rows: vec![
-            row(0, letters("qwertzuiopü")),
-            row(0, letters("asdfghjklöä")),
-            row(0, third),
-            row(0, keys(&[("?123", 2), (",", 1), ("space", 5), (".", 1), ("⏎", 2)])),
-        ],
-    }
-}
-
-/// Large keys, eight to a row, umlauts as keys of their own.
+/// The keyboard: the largest keys that fit the letters in four rows, seven
+/// and six to a row, with nothing but letters among them.
 ///
-/// QWERTZ has three letter rows and these keys need four, so letters cannot
-/// all keep their row. Each sits in the cell nearest to where it is on a
-/// QWERTZ phone keyboard (an optimal assignment over squared distance, with
-/// vertical distance weighted double), which keeps left and right and every
-/// letter's neighbourhood.
-pub fn honeycomb_8() -> LayoutSpec {
-    LayoutSpec {
-        rows: vec![
-            row(0, letters("qwrzuipü")),
-            row(0, letters("seth,oö")),
-            row(0, letters("adfgjklä")),
-            row(0, letters("yxcvbnm")),
-            row(0, keys(&[("⇧", 1), ("?123", 1), ("space", 3), (".", 1), ("⏎", 1), ("⌫", 1)])),
-        ],
-    }
-}
-
-/// Large keys, seven to a row, umlauts on long-press of a, o and u. Letters
-/// are placed as in [`honeycomb_8`].
-pub fn honeycomb_7() -> LayoutSpec {
+/// QWERTZ has three letter rows and keys this size need four, so letters
+/// cannot all keep their row. Each sits in the cell nearest to where it is on
+/// a QWERTZ phone keyboard (an optimal assignment over squared distance, with
+/// vertical distance weighted double), which keeps left and right and each
+/// letter's neighbourhood. Shift and backspace fill the half cells at the ends
+/// of the last letter row, beside y and m as on QWERTZ. There are no umlauts;
+/// ß is a long-press of s.
+pub fn honeycomb() -> LayoutSpec {
+    let mut last_letters = row(0, letters("yxcvnm"));
+    last_letters.left_edge = Some("⇧".into());
+    last_letters.right_edge = Some("⌫".into());
     LayoutSpec {
         rows: vec![
             row(0, letters("qerzuip")),
             row(0, letters("wdthjo")),
             row(0, letters("asfgbkl")),
-            row(0, letters("yxcvnm")),
-            row(0, keys(&[("⇧", 1), ("?123", 1), (",", 1), ("space", 2), (".", 1), ("⌫", 1)])),
+            last_letters,
+            row(0, keys(&[("?123", 1), (",", 1), ("space", 3), (".", 1), ("⏎", 1)])),
         ],
     }
 }
@@ -381,7 +383,7 @@ pub struct Keyboard {
 
 impl Keyboard {
     pub fn new(width: f32, stretch: f32) -> Self {
-        Self { layout: Layout::fit(&qwertz(), width, stretch), shift: Shift::Off, popup: None }
+        Self { layout: Layout::fit(&honeycomb(), width, stretch), shift: Shift::Off, popup: None }
     }
 
     /// How far above the keyboard a popup can reach: one row's pitch.
@@ -480,7 +482,7 @@ fn alternates(label: &str) -> &'static [&'static str] {
         "c" => &["ç"],
         "n" => &["ñ"],
         "." => &["…", "!", "?"],
-        "," => &[";", ":", "'", "\""],
+        "," => &[";", ":", "'", "\"", "-"],
         _ => &[],
     }
 }
@@ -505,14 +507,14 @@ mod tests {
     use super::*;
 
     fn layout() -> Layout {
-        Layout::fit(&qwertz(), 1008.0, 1.3)
+        Layout::fit(&honeycomb(), 1008.0, 1.0)
     }
 
     #[test]
-    fn every_row_fills_the_same_cell_count() {
-        for row in &qwertz().rows {
+    fn rows_alternate_seven_and_six_cells() {
+        for (index, row) in honeycomb().rows.iter().enumerate() {
             let cells: usize = row.keys.iter().map(|key| key.span).sum();
-            assert_eq!(row.start_column + cells, 11);
+            assert_eq!(row.start_column + cells, if index % 2 == 0 { 7 } else { 6 });
         }
     }
 
@@ -630,14 +632,6 @@ mod tests {
     }
 
     #[test]
-    fn umlauts_capitalise() {
-        let mut keyboard = Keyboard::new(1008.0, 1.3);
-        let (shift, o) = (keyboard_index(&keyboard, "⇧"), keyboard_index(&keyboard, "ö"));
-        keyboard.press(shift);
-        assert_eq!(keyboard.press(o), Action::Commit("Ö".into()));
-    }
-
-    #[test]
     fn long_press_on_s_gives_sharp_s_and_capital_after_shift() {
         let mut keyboard = Keyboard::new(1008.0, 1.3);
         let (shift, s) = (keyboard_index(&keyboard, "⇧"), keyboard_index(&keyboard, "s"));
@@ -654,15 +648,15 @@ mod tests {
         let mut keyboard = Keyboard::new(1008.0, 1.3);
         let q = keyboard_index(&keyboard, "q");
         assert!(!keyboard.long_press(q), "q has no alternatives");
-        let e = keyboard_index(&keyboard, "e");
-        assert!(keyboard.long_press(e));
+        let u = keyboard_index(&keyboard, "u");
+        assert!(keyboard.long_press(u));
         let popup = keyboard.popup.clone().unwrap();
         let w = keyboard.layout.cell_width;
         assert!(popup.cells.iter().all(|c| c.x >= w / 2.0 - 0.01));
         assert!(popup.cells[0].y < 0.0, "a top-row popup sits in the headroom");
         assert!(popup.cells[0].y - keyboard.layout.cell_height / 2.0 >= -keyboard.headroom() - 0.01);
-        keyboard.popup_move(popup.cells[3]);
-        assert_eq!(keyboard.popup_release(), Action::Commit("ë".into()));
+        keyboard.popup_move(popup.cells[2]);
+        assert_eq!(keyboard.popup_release(), Action::Commit("û".into()));
     }
 
     fn keyboard_index(keyboard: &Keyboard, label: &str) -> usize {
@@ -673,8 +667,8 @@ mod tests {
     fn rows_interlock() {
         let layout = layout();
         let q = layout.keys.iter().find(|k| k.label == "q").unwrap().center();
-        let a = layout.keys.iter().find(|k| k.label == "a").unwrap().center();
-        assert!((a.x - q.x - layout.cell_width / 2.0).abs() < 0.01);
-        assert!((a.y - q.y - layout.cell_height * 0.75).abs() < 0.01);
+        let w = layout.keys.iter().find(|k| k.label == "w").unwrap().center();
+        assert!((w.x - q.x - layout.cell_width / 2.0).abs() < 0.01);
+        assert!((w.y - q.y - layout.cell_height * 0.75).abs() < 0.01);
     }
 }
