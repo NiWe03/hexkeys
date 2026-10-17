@@ -1,4 +1,5 @@
-//! Suggestions from `.dict` files for typed words, timed:
+//! Suggestions from `.dict` files for typed words, timed, and with `PREVIOUS:`
+//! alone what is predicted after it:
 //! `cargo run --release --example suggest -- FILE[,FILE...] [PREVIOUS:]WORD...`.
 
 use hexkeys::dictionary::Dictionary;
@@ -18,6 +19,11 @@ fn main() {
             None => (None, arg.as_str()),
         };
         let started = std::time::Instant::now();
+        if let (Some(previous), "") = (previous, typed) {
+            let words = suggest::predict(&lexicon, previous, 5).expect("read");
+            println!("{arg:>16} {:>6.1?}  {}", started.elapsed(), words.join(", "));
+            continue;
+        }
         let found = suggest::suggest(&lexicon, typed, previous, &substitution, 5).expect("read");
         let elapsed = started.elapsed();
         let list: Vec<String> = found.iter().map(|s| format!("{} {:.0}{}", s.word, s.score, if s.exact { "*" } else { "" })).collect();

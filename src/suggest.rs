@@ -556,26 +556,42 @@ pub fn suggest(
     Ok(suggestions)
 }
 
-/// What usually follows `previous`, best first, before anything is typed.
+/// What usually follows `previous`, best first, before anything is typed;
+/// the words of the language the text is in gain as they do while typing.
 pub fn predict(lexicon: &Lexicon, previous: &str, limit: usize) -> Result<Vec<String>, Error> {
-    let mut found: HashMap<String, u8> = HashMap::new();
-    for dictionary in &lexicon.dictionaries {
+    let mut found: HashMap<String, f32> = HashMap::new();
+    for (index, dictionary) in lexicon.dictionaries.iter().enumerate() {
         for (word, frequency) in next_words(dictionary, previous)? {
-            let entry = found.entry(word).or_insert(0);
-            *entry = (*entry).max(frequency);
+            let score = frequency as f32 + lexicon.boost(index);
+            let entry = found.entry(word).or_insert(0.0);
+            *entry = entry.max(score);
         }
     }
-    let mut words: Vec<(String, u8)> = found.into_iter().collect();
-    words.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let mut words: Vec<(String, f32)> = found.into_iter().collect();
+    words.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Ok(words.into_iter().take(limit).map(|(word, _)| word).collect())
 }
 
-/// Next words for `previous` as written, or for its lower-case form when a
-/// sentence start capitalised it.
+/// Next words for `previous` as written, or, where the dictionary lacks it
+/// or holds it at frequency 0 (English "i", a slip for "I"), for its most
+/// frequent other form in lower case or capitalised: a sentence start
+/// capitalises "Die" for "die", a lazy "i" stands for "I".
 pub(crate) fn next_words(dictionary: &Dictionary, previous: &str) -> Result<Vec<(String, u8)>, Error> {
-    let node = match dictionary.find(previous)? {
+    let written = dictionary.find(previous)?.filter(|node| node.frequency.unwrap_or(0) > 0);
+    let node = match written {
         Some(node) => Some(node),
-        None => dictionary.find(&previous.to_lowercase())?,
+        None => {
+            let lower = previous.to_lowercase();
+            let mut best: Option<Node> = None;
+            for form in [lower.clone(), capitalise(&lower)] {
+                if let Some(node) = dictionary.find(&form)?
+                    && node.frequency > best.as_ref().and_then(|b| b.frequency)
+                {
+                    best = Some(node);
+                }
+            }
+            best
+        }
     };
     match node {
         Some(node) => dictionary.next_words(&node),
@@ -891,6 +907,15 @@ mod tests {
         let german = german();
         assert_eq!(predict(&german, "die", 2).unwrap(), ["Polizei", "Stadt"]);
         assert_eq!(predict(&german, "Die", 2).unwrap(), ["Polizei", "Stadt"], "sentence start");
+    }
+
+    #[test]
+    fn a_lazy_lower_case_word_predicts_as_its_capitalised_form() {
+        use crate::dictionary::tests::encode;
+        let english = Dictionary::new(encode(&[("I", 230), ("i", 0), ("think", 200)], &[("I", "think", 9), ("i", "think", 1)])).unwrap();
+        let german = Dictionary::new(encode(&[("i", 117), ("hab", 150)], &[("i", "hab", 4)])).unwrap();
+        let lexicon = Lexicon::new(vec![english, german]);
+        assert_eq!(predict(&lexicon, "i", 1).unwrap(), ["think"]);
     }
 
     #[test]
