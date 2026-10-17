@@ -100,6 +100,17 @@ object Core {
 
     /** Adds a `.dict` file's bytes; false when they are not a readable dictionary. */
     external fun lexiconAdd(lexicon: Long, bytes: ByteArray): Boolean
+
+    /** Adds the context counts (assets/contexts) for the language of the dictionary added `index`th. */
+    external fun lexiconContexts(lexicon: Long, index: Int, text: String)
+
+    /**
+     * The end of `before` with a word respelled for the words that followed
+     * it, as the number of UTF-16 units to replace from the end and the text
+     * to put there; empty when nothing changes. `kept` is where a word put
+     * back by hand ends, in units from the end, -1 for none.
+     */
+    external fun amend(lexicon: Long, before: String, kept: Int): Array<String>
     external fun lexiconClear(lexicon: Long)
 
     /** Counts [word] as kept [times] more times; returns how often it now has been. */

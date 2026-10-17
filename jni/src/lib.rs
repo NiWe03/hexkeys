@@ -388,6 +388,50 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconAdd(
     }
 }
 
+/// Adds the context counts (assets/contexts) of the language of the
+/// dictionary added `index`th.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconContexts(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+    text: JString,
+) {
+    let text: String = env.get_string(&text).map(Into::into).unwrap_or_default();
+    if let Ok(index) = usize::try_from(index) {
+        lexicon(handle).add_contexts(index, hexkeys::context::Contexts::parse(&text));
+    }
+}
+
+/// How the end of `before` reads better with a word respelled for the words
+/// that followed it: the number of UTF-16 units to replace from the end and
+/// the text to put there, or an empty array. `kept` is where a word put back
+/// by hand ends, in UTF-16 units from the end, -1 for none.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_amend(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    before: JString,
+    kept: jint,
+) -> jobjectArray {
+    let before: String = env.get_string(&before).map(Into::into).unwrap_or_default();
+    let amended = hexkeys::context::amend(lexicon(handle), &before, usize::try_from(kept).ok());
+    let values = match &amended {
+        Some((replaced, text)) => vec![replaced.to_string(), text.clone()],
+        None => Vec::new(),
+    };
+    let array = env
+        .new_object_array(values.len() as i32, "java/lang/String", jni::objects::JObject::null())
+        .expect("string array");
+    for (i, value) in values.iter().enumerate() {
+        let string = env.new_string(value).expect("string");
+        env.set_object_array_element(&array, i as i32, string).expect("fill string array");
+    }
+    array.into_raw()
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconClear(_env: JNIEnv, _class: JClass, handle: jlong) {
     lexicon(handle).clear();

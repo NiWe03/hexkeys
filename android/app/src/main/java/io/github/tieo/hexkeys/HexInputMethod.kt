@@ -37,9 +37,19 @@ class HexInputMethod : InputMethodService() {
     /** Off in password fields and where the app asks for no suggestions. */
     private var suggesting = false
 
-    /** A correction autocorrect just made: what was typed, and the word and separator put in its place. */
-    private data class Correction(val typed: String, val inserted: String)
+    /**
+     * A correction autocorrect just made: the end of the text as typed and
+     * as put in its place, and the word typed when it was one no dictionary
+     * has, to learn when it is put back.
+     */
+    private data class Correction(val typed: String, val inserted: String, val unknown: String? = null)
     private var lastCorrection: Correction? = null
+
+    /**
+     * Where in the field a word ends that was put back by hand after a
+     * correction, which autocorrect leaves as it is from then on; -1 for none.
+     */
+    private var keptEnd = -1
 
     /** What the delete swipe under way has deleted, last piece last, to put back when it slides back. */
     private val deleted = ArrayDeque<String>()
@@ -50,6 +60,7 @@ class HexInputMethod : InputMethodService() {
     override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         editor.reset(attribute.initialSelStart, attribute.initialSelEnd)
+        keptEnd = -1
     }
 
     /** The word swiped right before the delete swipe under way, which it takes first, whole. */
@@ -117,6 +128,12 @@ class HexInputMethod : InputMethodService() {
             val fresh = Core.lexiconCreate()
             val added = files.filter { file -> Dictionaries.read(this, file)?.let { Core.lexiconAdd(fresh, it) } == true }
             for ((word, times) in words) Core.lexiconLearn(fresh, word, times)
+            // Spellings told apart by context, for the languages that have counts.
+            val counted = assets.list("contexts").orEmpty().toSet()
+            for ((index, file) in added.withIndex()) {
+                val name = "${languageCode(file)}.tsv"
+                if (name in counted) Core.lexiconContexts(fresh, index, assets.open("contexts/$name").bufferedReader().readText())
+            }
             val accents = Core.lexiconAccents(fresh, -1)
             Core.words.execute {
                 if (lexicon == 0L) {
@@ -134,6 +151,34 @@ class HexInputMethod : InputMethodService() {
                 }
             }
         }
+    }
+
+    /**
+     * Respells a word before the cursor where the words now after it show
+     * another spelling was meant ("its" before "good" is "it's"), and keeps
+     * the change for backspace to undo. `typed` is the text before the
+     * cursor as the user typed it, before any correction.
+     */
+    private fun amend(typed: String) {
+        if (!suggesting || lexicon == 0L) return
+        val before = editor.textBefore()
+        val kept = if (keptEnd >= 0) editor.selectionStart - keptEnd else -1
+        val result = runCatching {
+            Core.words.submit<Array<String>> { Core.amend(lexicon, before, kept) }
+                .get(STRIP_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }.getOrNull()
+        if (result == null || result.size < 2) return
+        val replaced = result[0].toInt()
+        editor.beginBatch()
+        editor.deleteBefore(replaced)
+        editor.commit(result[1])
+        editor.endBatch()
+        keyboard?.note("amended", "${before.takeLast(replaced)} -> ${result[1]}")
+        // Backspace puts back everything as typed, from the first change on.
+        val after = editor.textBefore()
+        val same = typed.commonPrefixWith(after).length
+        val unknown = lastCorrection?.unknown
+        lastCorrection = Correction(typed.substring(same), after.substring(same), unknown)
     }
 
     /** A swipe being decoded; actions arriving meanwhile wait in [waiting]. */
@@ -199,7 +244,10 @@ class HexInputMethod : InputMethodService() {
             val space = last != null && !last.isWhitespace() && last !in OPENING
             swiped = words[0]
             view.note("words", words.joinToString(", "))
+            val typed = editor.textBefore() + (if (space) " " else "") + words[0]
             editor.commit((if (space) " " else "") + words[0])
+            if (Dictionaries.autocorrectMode(this) != "off") amend(typed)
+            lastCorrection = null
             view.showSwipe(words)
         }
         while (!decoding && waiting.isNotEmpty()) {
@@ -282,16 +330,17 @@ class HexInputMethod : InputMethodService() {
                     "obvious" -> keyboard?.fix
                     else -> null
                 }
+                val typedBefore = connection.textBefore()
                 if (text in SEPARATORS && correction != null) {
                     val (word, replaces) = correction
-                    val typed = connection.textBefore()
-                        .let { it.substring(it.offsetByCodePoints(it.length, -replaces)) }
+                    val typed = typedBefore.substring(typedBefore.offsetByCodePoints(typedBefore.length, -replaces))
                     connection.beginBatch()
                     connection.deleteCodePointsBefore(replaces)
                     connection.commit(word + text)
                     connection.endBatch()
-                    lastCorrection = Correction(typed, word + text)
+                    lastCorrection = Correction(typed + text, word + text, typed)
                     keyboard?.note("corrected", "$typed -> $word")
+                    if (mode != "off") amend(typedBefore + text)
                 } else {
                     if (text in SEPARATORS) keyboard?.unknown?.let { learn(it, 1) }
                     // A letter right after a swiped word starts the next word, as on
@@ -299,6 +348,7 @@ class HexInputMethod : InputMethodService() {
                     val before = connection.textBefore()
                     val space = justSwiped != null && before.endsWith(justSwiped) && text.firstOrNull()?.isLetterOrDigit() == true
                     connection.commit(if (space) " $text" else text)
+                    if (text in SEPARATORS && mode != "off") amend(typedBefore + text)
                 }
             }
             "backspace" -> {
@@ -312,9 +362,12 @@ class HexInputMethod : InputMethodService() {
                     undo != null && before.endsWith(undo.inserted) -> {
                         connection.beginBatch()
                         connection.deleteBefore(undo.inserted.length)
-                        connection.commit(undo.typed + undo.inserted.substring(undo.inserted.length - 1))
+                        val start = connection.selectionStart
+                        connection.commit(undo.typed)
                         connection.endBatch()
-                        learn(undo.typed, 1)
+                        // The first word put back stays as typed.
+                        keptEnd = start + (WORD_AT_START.find(undo.typed)?.value?.length ?: 0)
+                        undo.unknown?.let { learn(it, 1) }
                     }
                     else -> deleteCharacter()
                 }
@@ -363,6 +416,7 @@ class HexInputMethod : InputMethodService() {
             connection.deleteCodePointsBefore(replaces)
             connection.commit("$word ")
             connection.endBatch()
+            if (Dictionaries.autocorrectMode(this) != "off") amend(connection.textBefore())
         },
         onSettings = {
             startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -742,6 +796,9 @@ class HexInputMethod : InputMethodService() {
 
         /** The last word before the cursor with the spaces after it. */
         val WORD_AT_END = Regex("\\S*\\s*$")
+
+        /** The word, or the rest of one, a text starts with. */
+        val WORD_AT_START = Regex("^[\\p{L}\\p{N}'’-]*")
 
         /** What a swiped word follows without a space. */
         const val OPENING = "([{\"'¿¡"

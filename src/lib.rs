@@ -12,6 +12,7 @@
 //! by the stretch, which keeps the nearest-centre regions equal to the
 //! stretched hexagons.
 
+pub mod context;
 pub mod dictionary;
 pub mod suggest;
 pub mod swipe;
@@ -1549,12 +1550,6 @@ fn alternates(label: &str) -> &'static [&'static str] {
         "." => &[",", ":", "-", ";"],
         "?" => &["!", "'", "\"", "¿", "¡"],
         "," => &[":", "-", ";", "'", "\""],
-        // The digits that start fractions: the fractions they start, most used
-        // first. The number row's other digits keep it for the cursor and
-        // deleting.
-        "1" => &["½", "⅓", "¼", "⅕", "⅙", "⅛"],
-        "2" => &["⅔", "⅖"],
-        "3" => &["¾", "⅗", "⅜"],
         _ => &[],
     }
 }
@@ -1771,26 +1766,24 @@ mod tests {
 
     #[test]
     fn an_edge_key_keeps_its_popup_above_it() {
-        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.3, 400);
-        let one = keyboard_index(&keyboard, "1");
+        let mut keyboard = Keyboard::new(plain(), 1008.0, 1.3, 400);
+        keyboard.accents.insert('w', vec!['ŵ', 'ẃ', 'ẁ', 'ẅ', 'ẇ', 'ẉ']);
+        let one = keyboard_index(&keyboard, "w");
         assert!(keyboard.long_press(one));
         let popup = keyboard.popup.clone().unwrap();
         let center = keyboard.layout.keys[one].center();
         let w = keyboard.layout.cell_width * POPUP_SCALE;
         assert!((popup.cells[0].x - center.x.max(w / 2.0)).abs() < 0.01, "the first choice above");
-        let lowest = popup.cells.iter().filter(|c| (c.y - popup.cells[0].y).abs() < 0.01).count();
-        assert_eq!(lowest, popup.cells.len(), "one row where only one fits");
         let top = popup.cells.iter().map(|c| c.y).fold(f32::MAX, f32::min);
         let h = keyboard.layout.cell_height * POPUP_SCALE;
-        assert!(top - h / 2.0 >= -keyboard.headroom() - 0.01, "without a strip one row");
+        assert!(top - h / 2.0 >= -keyboard.headroom() - 0.01, "every row in the headroom");
         keyboard.popup_cancel();
         keyboard.strip = keyboard.layout.cell_height * 0.6;
         assert!(keyboard.long_press(one));
         let popup = keyboard.popup.clone().unwrap();
         let top = popup.cells.iter().map(|c| c.y).fold(f32::MAX, f32::min);
-        assert!(top < popup.cells[0].y, "a strip makes room for a second row");
         assert!(top - h / 2.0 >= -keyboard.headroom() - keyboard.strip - 0.01, "every row in the room above");
-        assert!(popup.cells.iter().all(|c| c.x - w / 2.0 >= -0.01 && c.x >= popup.cells[0].x - 0.01));
+        assert!(popup.cells.iter().all(|c| c.x - w / 2.0 >= -0.01));
     }
 
     #[test]

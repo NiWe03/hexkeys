@@ -285,6 +285,9 @@ pub struct Lexicon {
     guess: Option<usize>,
     /// The dictionary the user picked for the language, over the guess.
     pub pinned: Option<usize>,
+    /// The counts telling apart spellings of one word, each with the
+    /// dictionary of its language.
+    pub(crate) contexts: Vec<(usize, crate::context::Contexts)>,
 }
 
 /// The most frequency points the language of the last words written gives
@@ -351,8 +354,14 @@ impl Lexicon {
         self.accent_uses = OnceLock::new();
     }
 
+    /// Adds the context counts for the language of dictionary `index`.
+    pub fn add_contexts(&mut self, index: usize, contexts: crate::context::Contexts) {
+        self.contexts.push((index, contexts));
+    }
+
     pub fn clear(&mut self) {
         self.dictionaries.clear();
+        self.contexts.clear();
         self.swipe = OnceLock::new();
         self.accent_uses = OnceLock::new();
     }
