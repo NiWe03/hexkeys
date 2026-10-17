@@ -266,14 +266,29 @@ class HexInputMethod : InputMethodService() {
         }
     }
 
+    /** Enter shows what it does in the field: a new line, or the field's action. */
+    private fun showEnter() {
+        keyboard?.enterIcon = if (multiLine) R.drawable.icon_keyboard_return else actionIcon()
+        keyboard?.enterHint = if (multiLine) action?.let { actionIcon() } else null
+    }
+
+    /** Ends the emoji search; enter does the field's own thing again. */
+    private fun closeSearch() {
+        frame?.showSearch(false)
+        showEnter()
+    }
+
     /** Opens the search over the strip, the letters below it typing the query. */
     private fun openEmojiSearch() {
         query.clear()
         readEmojiSearch()
         frame?.showSearch(true, back = {
-            frame?.showSearch(false)
+            closeSearch()
             frame?.showEmoji(true)
         }, backspace = { searchKey("backspace", "") })
+        // While searching, enter ends the search.
+        keyboard?.enterIcon = R.drawable.icon_check
+        keyboard?.enterHint = null
         showEmojiResults()
     }
 
@@ -284,7 +299,7 @@ class HexInputMethod : InputMethodService() {
             "backspace" -> if (query.isNotEmpty()) query.setLength(query.length - 1)
             "delete" -> query.setLength(maxOf(0, query.length - (text.substringBefore(' ').toIntOrNull() ?: 1)))
             "enter", "enter_action" -> {
-                frame?.showSearch(false)
+                closeSearch()
                 return
             }
             else -> return
@@ -607,7 +622,7 @@ class HexInputMethod : InputMethodService() {
 
     /** Back to the keys: the emoji, their search and the clipboard closed. */
     private fun closePanels() {
-        frame?.showSearch(false)
+        if (frame?.searching == true) closeSearch()
         frame?.showEmoji(false)
         frame?.showClipboard(false)
     }
@@ -654,8 +669,7 @@ class HexInputMethod : InputMethodService() {
                 .put("actionLabel", info.actionLabel?.toString())
                 .put("actionId", info.actionId))
         }
-        keyboard?.enterIcon = if (multiLine) R.drawable.icon_keyboard_return else actionIcon()
-        keyboard?.enterHint = if (multiLine) action?.let { actionIcon() } else null
+        showEnter()
         refreshStrip()
     }
 
