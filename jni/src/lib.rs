@@ -300,11 +300,19 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_movingCursor(_env: JNIEn
 }
 
 /// While a delete slide is under way, where it started and where the
-/// finger is, as two x positions; empty otherwise.
+/// finger is, as two x positions, then 1 when it reached the far side and
+/// deletes whole words, else 0; empty otherwise.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_deleting(env: JNIEnv, _class: JClass, handle: jlong) -> jfloatArray {
-    let flat: Vec<f32> = keyboard(handle).deleting().map_or(Vec::new(), |(from, to)| vec![from, to]);
+    let flat: Vec<f32> =
+        keyboard(handle).deleting().map_or(Vec::new(), |(from, to, far)| vec![from, to, if far { 1.0 } else { 0.0 }]);
     floats(&env, &flat)
+}
+
+/// Shift as it stands: 0 off, 1 for the next letter, 2 locked.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_shiftState(_env: JNIEnv, _class: JClass, handle: jlong) -> jint {
+    keyboard(handle).shift_state() as jint
 }
 
 /// Width of one cell, which labels are sized from.

@@ -29,6 +29,7 @@ fn main() {
             "pass_free" => tuning.pass_free = value,
             "pass_weight" => tuning.pass_weight = value,
             "end_weight" => tuning.end_weight = value,
+            "start_weight" => tuning.start_weight = value,
             "capitals" => tuning.capitals = value,
             "warp" => tuning.warp = value as usize,
             "turn_weight" => tuning.turn_weight = value,

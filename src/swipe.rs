@@ -41,8 +41,11 @@ pub struct Tuning {
     pub pass_free: f32,
     /// What a squared key width of missing a letter costs.
     pub pass_weight: f32,
-    /// What a squared key width between the path's ends and the word's
-    /// first and last letter costs.
+    /// What a squared key width between where the path starts and the
+    /// word's first letter costs.
+    pub start_weight: f32,
+    /// What a squared key width between where the path ends and the word's
+    /// last letter costs.
     pub end_weight: f32,
     /// What a word in capitals costs: abbreviations are rarely meant.
     pub capitals: f32,
@@ -63,7 +66,10 @@ pub struct Tuning {
 /// Weights fitted to real swipes: those in FUTO's swipe dataset
 /// (huggingface.co/datasets/futo-org/swipe.futo.org), measured with
 /// `examples/futo.rs`. On swipes left out of the fitting, 88.3% of
-/// dictionary words come first and 96.3% among the first three.
+/// dictionary words come first and 96.3% among the first three. The start
+/// weighs more than the end: a finger touches down on the first letter,
+/// which on the hexagons' close rows also tells "wann" from "an"; on 8000
+/// held-out swipes 100 against 30 gives 88.8% first instead of 88.4%.
 impl Default for Tuning {
     fn default() -> Self {
         Self {
@@ -72,6 +78,7 @@ impl Default for Tuning {
             distance_weight: 200.0,
             pass_free: 0.5,
             pass_weight: 50.0,
+            start_weight: 100.0,
             end_weight: 30.0,
             capitals: 30.0,
             warp: 3,
@@ -334,7 +341,7 @@ pub fn decode_tuned(
     // bound left can beat the words already found.
     let end_cost = |letters: &[char]| -> Option<f32> {
         let (a, b) = (keys.centre(letters[0])?, keys.centre(letters[letters.len() - 1])?);
-        Some(tuning.end_weight * ((distance(first, a) / width).powi(2) + (distance(last, b) / width).powi(2)))
+        Some(tuning.start_weight * (distance(first, a) / width).powi(2) + tuning.end_weight * (distance(last, b) / width).powi(2))
     };
     let mut candidates: Vec<(&str, std::borrow::Cow<[char]>, f32)> = Vec::new();
     for &start in &starts {

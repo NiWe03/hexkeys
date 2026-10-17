@@ -441,8 +441,12 @@ class HexInputMethod : InputMethodService() {
         keyboard?.listening = voice.listening
         keyboard?.recognising = voice.pending
         // The field's own action for enter, such as send or search, and whether it takes new lines.
+        // A field may name an action yet ask that enter not do it (Paseo: done, which
+        // closes the keyboard); enter's key event then goes to the app instead.
+        val noEnterAction = info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION != 0
         action = when {
             info.actionLabel != null -> info.actionId
+            noEnterAction -> null
             else -> (info.imeOptions and EditorInfo.IME_MASK_ACTION).takeIf { it in ACTION_ICONS }
         }
         multiLine = info.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE != 0

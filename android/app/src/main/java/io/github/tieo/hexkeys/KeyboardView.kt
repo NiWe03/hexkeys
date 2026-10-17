@@ -355,14 +355,20 @@ class KeyboardView(
         val pressed = Core.pressed(handle)
         // Holding space turns the keys into a touchpad for the cursor: their labels fade.
         labelPaint.alpha = if (Core.movingCursor(handle)) 0x40 else 0xFF
+        val shiftState = Core.shiftState(handle)
         for ((index, path) in paths.withIndex()) {
             val color = keyColor(index)
             keyPaint.color = if (index == pressed || index == flashKey) theme.pressed(color) else color
+            // Shift shows its state: lit for the next letter, in the accent colour while locked.
+            val label = Core.label(handle, index)
+            if (label == "⇧") when (shiftState) {
+                1 -> keyPaint.color = theme.pressed(color)
+                2 -> keyPaint.color = theme.accent
+            }
             canvas.drawPath(path, keyPaint)
             canvas.drawPath(path, gapPaint)
             val position = Core.labelPosition(handle, index)
             val hint = Core.keyHint(handle, index)
-            val label = Core.label(handle, index)
             val enterSmall = enterHint
             if (label == "⏎" && enterSmall != null) {
                 // What holding enter does, small above the return arrow.
@@ -391,12 +397,15 @@ class KeyboardView(
         }
         // A delete slide washes the keys it has crossed, from the edge to the finger.
         val deleting = Core.deleting(handle)
-        if (deleting.size == 2) {
-            val fromLeft = deleting[1] > deleting[0]
+        if (deleting.size == 3) {
+            val fromLeft = Dictionaries.preferences(context).getBoolean(DELETE_FROM_LEFT, false)
             val edge = if (fromLeft) 0f else width.toFloat()
-            deletePaint.color = DELETE_COLOR
-            canvas.drawRect(minOf(edge, deleting[1]), 0f, maxOf(edge, deleting[1]), Core.height(handle), deletePaint)
-            drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerY, cellWidth * 0.45f, theme.label)
+            // On the far side the wash snaps across the whole keyboard: whole words go, ever faster.
+            val far = deleting[2] == 1f
+            val reach = if (far) width - edge else deleting[1]
+            deletePaint.color = if (far) DELETE_FAR_COLOR else DELETE_COLOR
+            canvas.drawRect(minOf(edge, reach), 0f, maxOf(edge, reach), Core.height(handle), deletePaint)
+            drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerY, cellWidth * (if (far) 0.6f else 0.45f), theme.label)
         }
         val trail = Core.trail(handle)
         if (trail.size >= 4) {
@@ -775,6 +784,7 @@ class KeyboardView(
 
         /** The wash over keys a delete slide has crossed, and the colour of the text it took. */
         private const val DELETE_COLOR = 0x40E5484D
+        private const val DELETE_FAR_COLOR = 0x70E5484D
         private const val DELETE_TEXT = 0xFFFF6B6B.toInt()
 
         /** How round the keys' corners are drawn, in key widths. */

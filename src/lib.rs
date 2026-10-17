@@ -688,6 +688,8 @@ enum Shift {
     Off,
     /// The next letter is upper case, then shift turns off.
     Once,
+    /// Every letter is upper case until shift is tapped again: shift held.
+    Locked,
 }
 
 /// The alternatives a long press offers, shown as a row of cells above the
@@ -739,9 +741,17 @@ const DELETE_STRAY: f32 = 0.5;
 /// for seconds and moved back and forth drifts too, which must not count.
 const DELETE_DECIDE_MS: u64 = 400;
 
-/// How long a delete swipe holds still before it deletes whole words, in
-/// ms: longer than a pause to look at the text.
-const WORD_HOLD_MS: u64 = 1200;
+/// How near the far side of the keyboard a delete swipe has to reach to
+/// delete whole words, in key widths from that edge: holding anywhere else
+/// is choosing how many characters to take.
+const FAR_SIDE: f32 = 1.0;
+
+/// How long a delete swipe rests on the far side before its first whole
+/// word goes, in ms.
+const FAR_HOLD_MS: u64 = 250;
+
+/// Pause between characters while backspace is held, in ms.
+const BACKSPACE_REPEAT_MS: u64 = 60;
 
 /// How far a delete swipe moves inwards for its first character, in key
 /// widths. Further characters come faster: n characters take
@@ -778,8 +788,11 @@ const FAST_BEND: f32 = 0.35;
 /// The longest a quick stroke can be, in key widths.
 const FAST_LONGEST: f32 = 3.5;
 
-/// Pause between whole words deleted while a delete swipe holds still, in ms.
+/// Pause between whole words deleted while a delete swipe rests on the far side, in ms.
 const WORD_REPEAT_MS: u64 = 300;
+
+/// The shortest pause between whole words, which the pause shrinks to.
+const WORD_REPEAT_FASTEST: u64 = 60;
 
 /// The gesture that types a capital letter.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1015,15 +1028,42 @@ impl Keyboard {
         )
     }
 
+    /// Whether a delete swipe has reached the far side of the keyboard,
+    /// where resting deletes whole words.
+    fn on_far_side(&self, touch: &Touch) -> bool {
+        let reach = FAR_SIDE * self.layout.cell_width;
+        if self.gestures.delete_from_left { touch.at.x > self.layout.width - reach } else { touch.at.x < reach }
+    }
+
+    /// Shift as it stands: 0 off, 1 for the next letter, 2 locked.
+    pub fn shift_state(&self) -> u8 {
+        match self.shift {
+            Shift::Off => 0,
+            Shift::Once => 1,
+            Shift::Locked => 2,
+        }
+    }
+
+    /// Shift goes off after a letter unless it is locked.
+    fn letter_typed(&mut self) {
+        if self.shift == Shift::Once {
+            self.shift = Shift::Off;
+        }
+    }
+
     /// Whether space is held and the keyboard moves the cursor.
     pub fn moving_cursor(&self) -> bool {
         self.touch.as_ref().is_some_and(|touch| touch.cursor.is_some())
     }
 
     /// While a delete slide is under way, where it started and where the
-    /// finger is now, along the keyboard's width.
-    pub fn deleting(&self) -> Option<(f32, f32)> {
-        self.touch.as_ref().filter(|touch| touch.deleting.is_some()).map(|touch| (touch.start.x, touch.at.x))
+    /// finger is now, along the keyboard's width, and whether it has reached
+    /// the far side, where it deletes whole words.
+    pub fn deleting(&self) -> Option<(f32, f32, bool)> {
+        self.touch
+            .as_ref()
+            .filter(|touch| touch.deleting.is_some())
+            .map(|touch| (touch.start.x, touch.at.x, self.on_far_side(touch)))
     }
 
     /// The key the finger went down on, which every gesture belongs to;
@@ -1156,14 +1196,14 @@ impl Keyboard {
             // A flick up on enter, towards the action drawn above its arrow, does the field's action.
             Gesture::Up if label == "⏎" => Action::EnterAction,
             _ if is_letter(&label) && self.is_capital(gesture) => {
-                self.shift = Shift::Off;
+                self.letter_typed();
                 Action::Commit(upper(&label))
             }
             // On punctuation the capital gesture types the key's first alternative.
             _ if self.is_capital(gesture) && !alternates(&label).is_empty() => Action::Commit(alternates(&label)[0].to_owned()),
             Gesture::Path if self.is_swipe(&touch) => {
-                self.swiped = Some(Swiped { path: touch.path, capital: self.shift == Shift::Once });
-                self.shift = Shift::Off;
+                self.swiped = Some(Swiped { path: touch.path, capital: self.shift != Shift::Off });
+                self.letter_typed();
                 Action::Swipe
             }
             _ => Action::Nothing,
@@ -1183,8 +1223,13 @@ impl Keyboard {
         }
         let touch = self.touch.as_ref()?;
         match self.gesture(touch) {
-            Gesture::Delete => Some(touch.repeat_at.unwrap_or(touch.anchor_time + WORD_HOLD_MS)),
+            Gesture::Delete if self.on_far_side(touch) => Some(touch.repeat_at.unwrap_or(touch.anchor_time + FAR_HOLD_MS)),
+            Gesture::Delete => None,
+            Gesture::Tap if self.layout.keys[touch.key].label == "⌫" => {
+                Some(touch.repeat_at.unwrap_or(touch.anchor_time + self.long_press_ms))
+            }
             _ if touch.capital_typed => None,
+            Gesture::Tap if self.layout.keys[touch.key].label == "⇧" => Some(touch.anchor_time + self.long_press_ms),
             Gesture::Tap if self.holds_for_capital(touch.key) => Some(touch.anchor_time + CAPITAL_HOLD_MS),
             Gesture::Tap if matches!(self.layout.keys[touch.key].label.as_str(), "⏎" | "space") => {
                 Some(touch.anchor_time + self.long_press_ms)
@@ -1204,9 +1249,11 @@ impl Keyboard {
         match self.gesture(&touch) {
             Gesture::Delete => {
                 let touch = self.touch.as_mut().expect("touch");
-                touch.repeat_at = Some(time + WORD_REPEAT_MS);
                 let deleting = touch.deleting.as_mut().expect("deleting");
                 deleting.words += 1;
+                // Faster the longer it rests there, so a whole text can go.
+                let pause = (WORD_REPEAT_MS as f32 * 0.85f32.powi(deleting.words as i32)).max(WORD_REPEAT_FASTEST as f32);
+                touch.repeat_at = Some(time + pause as u64);
                 Action::Delete { pieces: deleting.pieces(), words: true, started: false }
             }
             Gesture::Tap if self.holds_for_capital(touch.key) => {
@@ -1216,12 +1263,25 @@ impl Keyboard {
                 if self.long_press(touch.key) {
                     self.popup.as_mut().expect("popup").replaces = Some(capital.clone());
                 }
-                self.shift = Shift::Off;
+                self.letter_typed();
                 Action::Commit(capital)
             }
             Gesture::Tap if self.layout.keys[touch.key].label == "⏎" => {
                 self.touch.as_mut().expect("touch").capital_typed = true;
                 Action::EnterAction
+            }
+            // Backspace held deletes again and again until the finger lifts.
+            Gesture::Tap if self.layout.keys[touch.key].label == "⌫" => {
+                let touch = self.touch.as_mut().expect("touch");
+                touch.capital_typed = true;
+                touch.repeat_at = Some(time + BACKSPACE_REPEAT_MS);
+                Action::Backspace
+            }
+            // Shift held locks capitals.
+            Gesture::Tap if self.layout.keys[touch.key].label == "⇧" => {
+                self.touch.as_mut().expect("touch").capital_typed = true;
+                self.shift = Shift::Locked;
+                Action::Redraw
             }
             Gesture::Tap if self.layout.keys[touch.key].label == "space" => {
                 let touch = self.touch.as_mut().expect("touch");
@@ -1314,7 +1374,7 @@ impl Keyboard {
 
     /// The key's long-press alternatives in the current shift state.
     fn choices(&self, index: usize) -> Vec<String> {
-        let shifted = self.shift == Shift::Once;
+        let shifted = self.shift != Shift::Off;
         let label = &self.layout.keys[index].label;
         let mut choices: Vec<String> = match label.chars().next().filter(|_| is_letter(label)) {
             Some(letter) => self.accents.get(&letter).into_iter().flatten().map(|c| c.to_string()).collect(),
@@ -1350,7 +1410,7 @@ impl Keyboard {
     /// capital typed by holding when there is one.
     pub fn popup_release(&mut self) -> Action {
         let Some(popup) = self.popup.take() else { return Action::Redraw };
-        self.shift = Shift::Off;
+        self.letter_typed();
         match (popup.selected, popup.replaces) {
             (Some(index), Some(old)) => Action::Replace { old, new: popup.choices[index].clone() },
             (Some(index), None) => Action::Commit(popup.choices[index].clone()),
@@ -1379,7 +1439,7 @@ impl Keyboard {
             touch.key == index
                 && self.is_capital(gesture)
         });
-        if is_letter(label) && (self.shift == Shift::Once || flicked) { upper(label) } else { label.clone() }
+        if is_letter(label) && (self.shift != Shift::Off || flicked) { upper(label) } else { label.clone() }
     }
 
     /// What the capital gesture types on a punctuation key, shown small on
@@ -1413,7 +1473,7 @@ impl Keyboard {
             "=\\<" => self.show(2),
             _ => {
                 let text = self.label(index);
-                self.shift = Shift::Off;
+                self.letter_typed();
                 Action::Commit(text)
             }
         }
@@ -1735,17 +1795,44 @@ mod tests {
     }
 
     #[test]
-    fn holding_a_delete_slide_deletes_whole_words() {
-        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+    fn a_delete_slide_resting_on_the_far_side_deletes_whole_words_ever_faster() {
+        let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
         let w = keyboard.layout.cell_width;
         let y = keyboard.layout.find("l").center().y;
         keyboard.touch_down(Point { x: 1007.0, y }, 0);
-        keyboard.touch_move(Point { x: 1007.0 - 0.4 * w, y }, 50);
-        assert_eq!(keyboard.deadline(), Some(1250));
-        assert_eq!(keyboard.tick(1249), Action::Nothing);
-        assert_eq!(keyboard.tick(1250), Action::Delete { pieces: 1, words: true, started: false });
-        assert_eq!(keyboard.deadline(), Some(1550));
-        assert_eq!(keyboard.tick(1550), Action::Delete { pieces: 2, words: true, started: false });
+        keyboard.touch_move(Point { x: 600.0, y }, 300);
+        assert_eq!(keyboard.deadline(), None, "resting in the middle only chooses how many characters");
+        keyboard.touch_move(Point { x: 0.5 * w, y }, 500);
+        assert_eq!(keyboard.deadline(), Some(500 + FAR_HOLD_MS));
+        let first = keyboard.tick(500 + FAR_HOLD_MS);
+        assert!(matches!(first, Action::Delete { words: true, .. }));
+        let pauses: Vec<u64> = (0..6)
+            .map(|_| {
+                let due = keyboard.deadline().unwrap();
+                keyboard.tick(due);
+                keyboard.deadline().unwrap() - due
+            })
+            .collect();
+        assert!(pauses.windows(2).all(|pair| pair[1] <= pair[0]), "{pauses:?}");
+        assert!(keyboard.deleting().unwrap().2);
+    }
+
+    #[test]
+    fn holding_backspace_repeats_and_holding_shift_locks_capitals() {
+        let mut keyboard = Keyboard::new(with_shift_and_backspace(space_middle()), 1008.0, 1.0, 400);
+        let backspace = near(&keyboard, "⌫", 0.0, 0.0);
+        keyboard.touch_down(backspace, 0);
+        assert_eq!(keyboard.tick(400), Action::Backspace);
+        assert_eq!(keyboard.tick(400 + BACKSPACE_REPEAT_MS), Action::Backspace);
+        assert_eq!(keyboard.touch_up(backspace, 500), Action::Redraw);
+        let shift = near(&keyboard, "⇧", 0.0, 0.0);
+        keyboard.touch_down(shift, 1000);
+        keyboard.tick(1400);
+        keyboard.touch_up(shift, 1500);
+        assert_eq!(gesture(&mut keyboard, "g", &[]), Action::Commit("G".into()));
+        assert_eq!(gesture(&mut keyboard, "a", &[]), Action::Commit("A".into()), "still capitals");
+        assert_eq!(gesture(&mut keyboard, "⇧", &[]), Action::Redraw);
+        assert_eq!(gesture(&mut keyboard, "a", &[]), Action::Commit("a".into()));
     }
 
     #[test]

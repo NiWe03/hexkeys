@@ -2,8 +2,12 @@
 //! prints what each does now, to check a fix against what really happened:
 //! `cargo run --example replay -- gestures.jsonl [INDEX...]`, all touches
 //! when no index is given. Ticks are simulated every 10 ms between points.
+//! With `DICTS=a.dict,b.dict` a swipe is also decoded and its words printed,
+//! with `START_WEIGHT` in place of the decoder's own if given.
 
-use hexkeys::{Action, Capital, Keyboard, Point, space_middle, space_bottom, with_shift_and_backspace};
+use hexkeys::dictionary::Dictionary;
+use hexkeys::suggest::{Lexicon, last_word};
+use hexkeys::{Action, Capital, Keyboard, Point, swipe, space_middle, space_bottom, with_shift_and_backspace};
 use serde_json::Value;
 
 fn main() {
@@ -11,6 +15,10 @@ fn main() {
     let file = args.next().expect("usage: replay gestures.jsonl [INDEX...]");
     let wanted: Vec<usize> = args.map(|a| a.parse().expect("index")).collect();
     let text = std::fs::read_to_string(file).expect("read");
+    let mut lexicon = Lexicon::default();
+    for path in std::env::var("DICTS").unwrap_or_default().split(',').filter(|p| !p.is_empty()) {
+        lexicon.add(Dictionary::new(std::fs::read(path).expect("read dictionary")).expect("parse dictionary"));
+    }
     for (index, line) in text.lines().enumerate() {
         if !wanted.is_empty() && !wanted.contains(&index) {
             continue;
@@ -51,5 +59,14 @@ fn main() {
         }
         println!("{index} key {} then: {}", record["key"], record["actions"]);
         println!("{index}       now: {}", actions.join(", "));
+        if let Some(swiped) = keyboard.swiped.as_ref().filter(|_| actions.iter().any(|a| a == "Swipe")) {
+            let previous = record["before"].as_str().and_then(last_word);
+            let mut tuning = swipe::Tuning::default();
+            if let Ok(weight) = std::env::var("START_WEIGHT") {
+                tuning.start_weight = weight.parse().expect("START_WEIGHT");
+            }
+            let words = swipe::decode_tuned(&lexicon, &keyboard.swipe_keys(), &swiped.path, previous, 5, &tuning).unwrap_or_default();
+            println!("{index}     words: {}", words.join(", "));
+        }
     }
 }

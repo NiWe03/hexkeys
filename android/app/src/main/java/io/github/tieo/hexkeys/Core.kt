@@ -51,7 +51,10 @@ object Core {
     /** Whether space is held and the keyboard moves the cursor. */
     external fun movingCursor(handle: Long): Boolean
 
-    /** While a delete slide is under way, the x it started at and the finger's x; empty otherwise. */
+    /** Shift: 0 off, 1 for the next letter, 2 locked. */
+    external fun shiftState(handle: Long): Int
+
+    /** While a delete slide is under way, the x it started at, the finger's x, and 1 on the far side where whole words go; empty otherwise. */
     external fun deleting(handle: Long): FloatArray
 
     /** The key the finger went down on, or -1. */
