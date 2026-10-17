@@ -18,8 +18,6 @@ use crate::Point;
 use crate::dictionary::{Dictionary, Error};
 use crate::suggest::{Lexicon, next_words};
 use std::collections::HashMap;
-use unicode_normalization::UnicodeNormalization;
-use unicode_normalization::char::is_combining_mark;
 
 /// Points both paths are resampled to.
 const SAMPLES: usize = 32;
@@ -145,21 +143,23 @@ impl Index {
 }
 
 /// The keys a word's path runs through, or None when it has a character no
-/// key types or fewer than two keys, which no swipe can spell. Case and
-/// accents fold away and ß is an s, as the keyboard types them; apostrophes
-/// and hyphens are left out.
+/// key types or fewer than two keys, which no swipe can spell. Letters the
+/// keys do not have run through the plain letters they are written with, as
+/// typing folds them ("Straße" through s t r a s s e, "þing" through t h i
+/// n g); apostrophes and hyphens are left out.
 fn path_keys(word: &str) -> Option<Vec<char>> {
     let mut keys: Vec<char> = Vec::new();
-    for c in word.nfd().filter(|&c| !is_combining_mark(c)) {
+    for c in word.chars().flat_map(char::to_lowercase) {
         if matches!(c, '\'' | '’' | '-') {
             continue;
         }
-        if !c.is_alphabetic() {
-            return None;
-        }
-        let c = if c == 'ß' { 's' } else { c.to_lowercase().next()? };
-        if keys.last() != Some(&c) {
-            keys.push(c);
+        for key in crate::suggest::fold(c) {
+            if !key.is_ascii_lowercase() {
+                return None;
+            }
+            if keys.last() != Some(&key) {
+                keys.push(key);
+            }
         }
     }
     (keys.len() >= 2).then_some(keys)
@@ -447,6 +447,8 @@ mod tests {
         assert_eq!(path_keys("über"), Some(vec!['u', 'b', 'e', 'r']));
         assert_eq!(path_keys("a"), None);
         assert_eq!(path_keys("4you"), None);
+        assert_eq!(path_keys("þing"), Some(vec!['t', 'h', 'i', 'n', 'g']), "letters without a base letter");
+        assert_eq!(path_keys("gələcək"), Some(vec!['g', 'e', 'l', 'e', 'c', 'e', 'k']));
     }
 
     #[test]

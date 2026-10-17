@@ -81,20 +81,21 @@ fn spellings(c: char) -> Vec<Vec<char>> {
     }
 }
 
-/// A lower-case character without its accents; ligatures as two letters.
-fn fold(c: char) -> Vec<char> {
-    match c {
-        'æ' => vec!['a', 'e'],
-        'œ' => vec!['o', 'e'],
-        'ø' => vec!['o'],
-        'ł' => vec!['l'],
-        'đ' => vec!['d'],
-        'ı' => vec!['i'],
-        _ => {
-            let base: Vec<char> = c.to_string().nfd().filter(|c| !is_combining(*c)).collect();
-            if base.is_empty() { vec![c] } else { base }
-        }
+/// A lower-case character as the keys type it: itself where a key has it,
+/// else the plain letters it is written with (src/letters.rs), "é" as "e",
+/// "æ" as "ae", "ə" as "e"; a combining mark as nothing.
+pub(crate) fn fold(c: char) -> Vec<char> {
+    if c.is_ascii() {
+        return vec![c];
     }
+    if is_combining(c) {
+        return Vec::new();
+    }
+    if let Ok(at) = crate::letters::LETTERS.binary_search_by_key(&c, |&(letter, _)| letter) {
+        return crate::letters::LETTERS[at].1.chars().collect();
+    }
+    let base: Vec<char> = c.to_string().nfd().filter(|c| !is_combining(*c)).collect();
+    if base.is_empty() { vec![c] } else { base }
 }
 
 fn is_combining(c: char) -> bool {
@@ -245,19 +246,13 @@ impl Search<'_> {
 /// The most accented letters one key offers: as many as fit a popup row.
 const MAX_ACCENTS: usize = 7;
 
-/// The plain letter an accented one is typed from: its letter without
-/// marks, or for the letters that have none, the one it is written like.
+/// The key a letter the keys do not have is held on: the first plain letter
+/// it is written with, "e" for "é" and "ə", "t" for "þ".
 fn plain(c: char) -> Option<char> {
-    let special = match c {
-        'ß' => Some('s'),
-        'æ' => Some('a'),
-        'œ' | 'ø' => Some('o'),
-        'ł' => Some('l'),
-        'đ' => Some('d'),
-        'ı' => Some('i'),
-        _ => None,
-    };
-    special.or_else(|| c.nfd().next().filter(|base| base.is_ascii_lowercase()))
+    if c.is_ascii() {
+        return None;
+    }
+    fold(c).first().copied().filter(char::is_ascii_lowercase)
 }
 
 /// How often a word has to be kept before it counts as learned.
@@ -677,16 +672,9 @@ pub fn strip(lexicon: &Lexicon, before: &str, substitution: Substitution) -> Res
 }
 
 /// A word reduced to what an obvious slip leaves alone: lower case, no
-/// apostrophes, letters without their accents and ß as ss.
+/// apostrophes, every letter as the keys type it.
 fn folded(word: &str) -> String {
-    word.chars()
-        .flat_map(char::to_lowercase)
-        .filter(|c| !matches!(c, '\'' | '’'))
-        .flat_map(|c| match c {
-            'ß' => vec!['s', 's'],
-            c => vec![plain(c).unwrap_or(c)],
-        })
-        .collect()
+    word.chars().flat_map(char::to_lowercase).filter(|c| !matches!(c, '\'' | '’')).flat_map(fold).collect()
 }
 
 /// How common a word has to be (of 255) for an obvious fix that adds both a
@@ -985,5 +973,18 @@ mod tests {
         assert_eq!(accents[&'s'], vec!['ß']);
         assert_eq!(accents[&'e'], vec!['é'], "café can be spelled");
         assert_eq!(accents[&'i'], vec!['ï'], "and so can naïve, however rare");
+    }
+
+    #[test]
+    fn letters_without_a_base_letter_are_typed_and_held_like_the_others() {
+        let entries = [("gələcək", 200), ("þing", 150), ("aɣrum", 150)];
+        let lexicon = Lexicon::new(vec![Dictionary::new(encode(&entries, &[])).unwrap()]);
+        let accents = lexicon.accents().unwrap();
+        assert_eq!(accents[&'e'], vec!['ə']);
+        assert_eq!(accents[&'t'], vec!['þ']);
+        assert_eq!(accents[&'g'], vec!['ɣ']);
+        assert_eq!(words(&lexicon, "gelecek", None)[0], "gələcək");
+        assert_eq!(words(&lexicon, "thing", None)[0], "þing");
+        assert_eq!(words(&lexicon, "agrum", None)[0], "aɣrum");
     }
 }

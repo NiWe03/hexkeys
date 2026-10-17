@@ -14,6 +14,7 @@
 
 pub mod context;
 pub mod dictionary;
+mod letters;
 pub mod suggest;
 pub mod swipe;
 

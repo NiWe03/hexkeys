@@ -19,7 +19,7 @@ README = f"https://codeberg.org/Helium314/aosp-dictionaries/raw/commit/{COMMIT}/
 # Languages whose dictionaries are not in Latin script; the *_zz variants
 # (Serbian, Hindi and Tamazight in Latin letters) are kept.
 NOT_LATIN = {
-    "ar", "as", "be", "bg", "bn", "el", "fa", "gu", "he", "hi", "hy", "iw", "ka", "kk", "km", "kn",
+    "ar", "as", "be", "bg", "bn", "el", "fa", "gom", "gu", "he", "hi", "hy", "iw", "ka", "kk", "km", "kn",
     "ks", "mai", "mk", "ml", "mr", "ne", "or", "pa", "ru", "sa", "sat", "sd", "sr", "ta", "tcy",
     "te", "th", "uk", "ur", "zgh",
 }
