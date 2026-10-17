@@ -39,6 +39,7 @@ class KeyboardView(
     private val onSettings: () -> Unit,
     private val onEmoji: () -> Unit,
     private val onPasswords: () -> Unit,
+    private val onVoice: () -> Unit,
 ) : View(context) {
 
     private var handle = 0L
@@ -71,6 +72,23 @@ class KeyboardView(
         set(value) {
             field = value
             if (handle != 0L) Core.setAccents(handle, value)
+        }
+
+    /** Speech input's state, for how the microphone button looks. */
+    var listening = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var recognising = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var voiceLevel = 0f
+        set(value) {
+            field = value
+            invalidate()
         }
 
     /** Whether a password manager is set up, which the key button at the strip's right end opens. */
@@ -110,7 +128,6 @@ class KeyboardView(
         textAlign = Paint.Align.CENTER
     }
     /** Whether flicking down rather than up types a key's alternative, which then shows below its sign. */
-    private var hintBelow = false
 
     /** The small sign on a punctuation key for what flicking it types. */
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -191,14 +208,16 @@ class KeyboardView(
         if (handle != 0L) Core.destroy(handle)
         val preferences = Dictionaries.preferences(context)
         val space_middle = preferences.getString(LAYOUT, null) == SPACE_MIDDLE
-        handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), space_middle)
+        handle = Core.create(
+            width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), space_middle,
+            preferences.getBoolean(EDIT_KEYS, false),
+        )
         Core.setAccents(handle, accents)
         Core.configure(
             handle,
             preferences.getBoolean(DELETE_FROM_LEFT, false),
             CAPITALS.indexOf(preferences.getString(CAPITAL, null)).coerceAtLeast(0),
         )
-        hintBelow = preferences.getString(CAPITAL, null) == "flick_down"
         headroom = Core.headroom(handle).toInt()
         loadOutlines()
         setMeasuredDimension(width, keysTop + Core.height(handle).toInt() + navigationBar)
@@ -281,7 +300,7 @@ class KeyboardView(
                 drawLabel(canvas, Core.label(handle, index), position, cellWidth)
             } else {
                 // The alternative sits on the side the flick goes to, the key's own sign moved off it.
-                val side = if (hintBelow) 1f else -1f
+                val side = -1f
                 val shifted = floatArrayOf(position[0], position[1] - side * cellWidth * 0.14f)
                 drawLabel(canvas, Core.label(handle, index), shifted, cellWidth)
                 hintPaint.textSize = cellWidth * 0.28f
@@ -321,6 +340,14 @@ class KeyboardView(
         if (passwordsAvailable && !chipsShown) {
             drawIcon(canvas, R.drawable.icon_key, width - stripSide / 2f, middle, iconSize, theme.label)
         }
+        // The microphone: in the accent colour and swelling with the voice while listening, dimmed while recognising.
+        val micColor = when {
+            listening -> theme.accent
+            recognising -> (theme.label and 0x00FFFFFF) or 0x66000000
+            else -> theme.label
+        }
+        val micSize = if (listening) iconSize * (1f + (voiceLevel * 6f).coerceAtMost(0.4f)) else iconSize
+        drawIcon(canvas, R.drawable.icon_mic, width - stripSide * 1.5f, middle, micSize, micColor)
         if (chipsShown) return
         val slotWidth = (width - 4f * stripSide) / 3f
         for ((index, word) in slots.withIndex()) {
@@ -352,13 +379,14 @@ class KeyboardView(
 
     /**
      * The strip's part at x: -2 the settings button and -1 the emoji button
-     * at its left end, 0 to 2 the word slots, 3 the right end, which holds
-     * the autofill service's button.
+     * at its left end, 0 to 2 the word slots, 4 the microphone and 3 the
+     * right end, which holds the password manager's button.
      */
     private fun stripSlot(x: Float): Int = when {
         x < stripSide -> -2
         x < 2 * stripSide -> -1
-        x >= width - 2 * stripSide -> 3
+        x >= width - stripSide -> 3
+        x >= width - 2 * stripSide -> 4
         else -> ((x - 2 * stripSide) / ((width - 4f * stripSide) / 3f)).toInt().coerceIn(0, 2)
     }
 
@@ -423,6 +451,7 @@ class KeyboardView(
             .put("cellWidth", Core.cellWidth(handle).toDouble())
             .put("key", if (pressed >= 0) Core.label(handle, pressed) else "")
             .put("capital", Dictionaries.preferences(context).getString(CAPITAL, CAPITALS.first()))
+            .put("editKeys", Dictionaries.preferences(context).getBoolean(EDIT_KEYS, false))
             .put("deleteFromLeft", Dictionaries.preferences(context).getBoolean(DELETE_FROM_LEFT, false))
             .put("before", logContext())
         addPoint(x, y, time)
@@ -506,6 +535,10 @@ class KeyboardView(
                         if (passwordsAvailable) onPasswords()
                         return true
                     }
+                    if (slot == 4) {
+                        onVoice()
+                        return true
+                    }
                     val word = slots.getOrElse(slot) { "" }
                     if (!chipsShown && word.isNotEmpty()) {
                         onPick(word, replaces)
@@ -558,7 +591,8 @@ class KeyboardView(
         private const val STRETCH = 1.0f
 
         /** Keys drawn as icons rather than their label. */
-        private val KEY_ICONS = mapOf(
+        /** Keys drawn as an icon instead of their label. */
+        val KEY_ICONS = mapOf(
             "⌫" to R.drawable.icon_backspace,
             "⏎" to R.drawable.icon_keyboard_return,
             "⇧" to R.drawable.icon_shift,
@@ -580,8 +614,11 @@ class KeyboardView(
         /** Preference: delete swipes come in from the left edge. */
         const val DELETE_FROM_LEFT = "delete_from_left"
 
+        /** Preference adding shift and backspace keys to the layout. */
+        const val EDIT_KEYS = "edit_keys"
+
         /** Preference naming the capital gesture, one of [CAPITALS] in the core's order. */
         const val CAPITAL = "capital"
-        val CAPITALS = listOf("flick_up", "up_and_back", "flick_down", "hold")
+        val CAPITALS = listOf("flick_up", "hold")
     }
 }

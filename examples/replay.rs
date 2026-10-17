@@ -3,7 +3,7 @@
 //! `cargo run --example replay -- gestures.jsonl [INDEX...]`, all touches
 //! when no index is given. Ticks are simulated every 10 ms between points.
 
-use hexkeys::{Action, Capital, Keyboard, Point, honeycomb, space_middle};
+use hexkeys::{Action, Capital, Keyboard, Point, space_middle, space_bottom, with_shift_and_backspace};
 use serde_json::Value;
 
 fn main() {
@@ -17,12 +17,13 @@ fn main() {
         }
         let record: Value = serde_json::from_str(line).expect("json");
         let Some(points) = record["points"].as_array() else { continue };
-        let letters = if record["layout"] == "space_middle" { space_middle() } else { honeycomb() };
+        let mut letters = if record["layout"] == "space_middle" { space_middle() } else { space_bottom() };
+        if record["editKeys"].as_bool().unwrap_or(false) {
+            letters = with_shift_and_backspace(letters);
+        }
         let mut keyboard = Keyboard::new(letters, record["width"].as_f64().unwrap() as f32, 1.0, 400);
         keyboard.gestures.delete_from_left = record["deleteFromLeft"].as_bool().unwrap_or(false);
         keyboard.gestures.capital = match record["capital"].as_str() {
-            Some("up_and_back") => Capital::UpAndBack,
-            Some("flick_down") => Capital::FlickDown,
             Some("hold") => Capital::Hold,
             _ => Capital::FlickUp,
         };

@@ -52,7 +52,8 @@ class HexInputMethod : InputMethodService() {
         when (key) {
             Dictionaries.ENABLED -> loadDictionaries()
             Theme.KEY -> keyboard?.theme = Theme.current(this)
-            KeyboardView.LAYOUT, KeyboardView.DELETE_FROM_LEFT, KeyboardView.CAPITAL -> keyboard?.requestLayout()
+            KeyboardView.LAYOUT, KeyboardView.DELETE_FROM_LEFT, KeyboardView.CAPITAL, KeyboardView.EDIT_KEYS ->
+                keyboard?.requestLayout()
             Dictionaries.LEARNED_RESET -> {
                 Core.lexiconForget(lexicon)
                 learned.clear()
@@ -75,6 +76,7 @@ class HexInputMethod : InputMethodService() {
         super.onDestroy()
         Dictionaries.preferences(this).unregisterOnSharedPreferenceChangeListener(settingsChanged)
         loader.shutdown()
+        voice.release()
         Core.lexiconDestroy(lexicon)
         lexicon = 0L
     }
@@ -220,6 +222,15 @@ class HexInputMethod : InputMethodService() {
                         else -> deleteCharacter()
                     }
                 }
+                "replace" -> {
+                    // A held letter's capital, typed already, swapped for an accent.
+                    val (old, new) = text.split("\t")
+                    val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                    connection.beginBatchEdit()
+                    if (before.endsWith(old)) connection.deleteSurroundingText(old.length, 0)
+                    connection.commitText(new, 1)
+                    connection.endBatchEdit()
+                }
                 "enter" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
             }
         },
@@ -240,6 +251,7 @@ class HexInputMethod : InputMethodService() {
         },
         onEmoji = { frame?.let { it.showEmoji(!it.emojiShown) } },
         onPasswords = { passwordManager()?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } },
+        onVoice = { toggleVoice() },
     ).let { view ->
         keyboard = view
         view.accents = accents
@@ -379,6 +391,45 @@ class HexInputMethod : InputMethodService() {
         val component = android.content.ComponentName.unflattenFromString(service) ?: return null
         if (component.packageName == packageName) return null
         return packageManager.getLaunchIntentForPackage(component.packageName)
+    }
+
+    private val voice by lazy { Voice(this) }
+
+    /**
+     * Starts listening, or stops and puts in what was said, with a space
+     * before it where it follows a word. Without a downloaded model or the
+     * microphone allowed, settings open, where both are set up.
+     */
+    private fun toggleVoice() {
+        val view = keyboard ?: return
+        if (voice.listening) {
+            view.listening = false
+            view.recognising = true
+            voice.stop(voiceLanguages()) { text ->
+                view.recognising = false
+                val connection = currentInputConnection ?: return@stop
+                if (text.isEmpty()) return@stop
+                connection.finishComposingText()
+                val last = connection.getTextBeforeCursor(1, 0)?.lastOrNull()
+                val space = last != null && !last.isWhitespace() && last !in OPENING
+                connection.commitText((if (space) " " else "") + text, 1)
+            }
+            return
+        }
+        if (!Voice.ready(this)) {
+            startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        }
+        if (voice.start { level -> view.voiceLevel = level }) view.listening = true
+    }
+
+    /** The languages of the enabled dictionaries as ISO codes, for recognising speech. */
+    private fun voiceLanguages(): String {
+        val enabled = Dictionaries.enabled(this)
+        return Dictionaries.catalog(this).filter { it.file in enabled }
+            .map { it.locale.substringBefore('_').lowercase() }
+            .distinct()
+            .joinToString(",")
     }
 
     /** Counts a word no dictionary has as kept, when learning is switched on. */

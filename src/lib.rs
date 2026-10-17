@@ -218,12 +218,8 @@ impl Layout {
                     }),
                     None => {
                         // The label moves to the middle of what the key now covers.
-                        let key = &mut keys[left];
-                        key.regions.insert(0, centre);
-                        // Punctuation, with its alternative stacked over it, stays on its hexagon.
-                        if alternates(&key.label).is_empty() {
-                            key.label_at.x = (left_x + key.cells.len() as f32 * cell_width - cell_width / 2.0) / 2.0;
-                        }
+                        // The label stays on the key's hexagon, as on every other key.
+                        keys[left].regions.insert(0, centre);
                     }
                 }
             }
@@ -239,11 +235,7 @@ impl Layout {
                         half: None,
                     }),
                     None => {
-                        let key = &mut keys[right];
-                        key.regions.push(centre);
-                        if alternates(&key.label).is_empty() {
-                            key.label_at.x = (right_x - (key.cells.len() as f32 - 0.5) * cell_width + width) / 2.0;
-                        }
+                        keys[right].regions.push(centre);
                     }
                 }
             }
@@ -555,11 +547,38 @@ pub fn honeycomb() -> LayoutSpec {
     }
 }
 
+/// [`space_middle`] with space and the marks at the bottom: they trade places
+/// with x c v b, which keeps every other key where it is in [`space_middle`].
+/// The bottom row reads . space ? as the reference layout's middle row does, and ?123
+/// and enter stay in their cells.
+pub fn space_bottom() -> LayoutSpec {
+    LayoutSpec {
+        rows: vec![
+            row(0, letters("wetzio")),
+            row(0, letters("qargulp")),
+            row(0, letters("xcfhvb")),
+            row(0, letters("ysdnmjk")),
+            row(0, keys(&[(".", 1), ("space", 2), ("?", 1), ("?123", 1), ("⏎", 1)])),
+        ],
+        first_row_shifted: true,
+        numbers: Some("1234567890".into()),
+    }
+}
+
+/// `spec` with shift and backspace in the half cells at the ends of its
+/// third row, where QWERTZ has them beside its last letter row. Both
+/// layouts have capitals and deleting as gestures; the keys are for those
+/// who want them as well.
+pub fn with_shift_and_backspace(mut spec: LayoutSpec) -> LayoutSpec {
+    let row = &mut spec.rows[2];
+    row.left_edge = Some("⇧".into());
+    row.right_edge = Some("⌫".into());
+    spec
+}
+
 /// the reference layout's arrangement, with its two spaces between the letters, plus
-/// a number row along the top. There are no shift or backspace keys: a
-/// gesture types capitals and a slide in from the edge deletes. For trying
-/// how the original feels next to [`honeycomb`]; it is a registered design
-/// and stays out of any release.
+/// a number row along the top. A gesture types capitals and a slide in from
+/// the edge deletes. It is a registered design and stays out of any release.
 pub fn space_middle() -> LayoutSpec {
     LayoutSpec {
         rows: vec![
@@ -637,6 +656,8 @@ pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
 pub enum Action {
     /// Insert this text at the cursor.
     Commit(String),
+    /// Replace `old`, just typed before the cursor, with `new`.
+    Replace { old: String, new: String },
     Backspace,
     Enter,
     /// Nothing for the app; the keyboard itself changed (shift, layer).
@@ -670,6 +691,11 @@ pub struct Popup {
     /// row above the key, so over the top row it is above the keyboard.
     pub cells: Vec<Point>,
     pub selected: usize,
+    /// Where the finger was when the popup opened; the selection follows
+    /// it only once it has moved away from there.
+    pub origin: Point,
+    /// The finger has moved away from `origin`.
+    pub moved: bool,
 }
 
 /// Below this distance from where it went down, a finger is tapping, in key
@@ -732,19 +758,21 @@ const FAST_LONGEST: f32 = 3.5;
 /// Pause between whole words deleted while a delete swipe holds still, in ms.
 const WORD_REPEAT_MS: u64 = 300;
 
-/// The gesture that types a capital letter. Several are offered to find
-/// the one that is least often mistaken for swipe typing.
+/// The gesture that types a capital letter.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Capital {
     /// A short flick up from the letter.
     FlickUp,
-    /// A short flick up and back to the letter.
-    UpAndBack,
-    /// A short flick down from the letter.
-    FlickDown,
-    /// Holding the letter: its popup opens with the capital chosen.
+    /// Holding the letter: the capital is typed the moment the touch counts
+    /// as a hold, and the letter's accents open with it chosen, so sliding
+    /// to one of them swaps it in.
     Hold,
 }
+
+/// How long a letter is held before it types its capital, in ms. Taps in
+/// the phone's gesture log last 63 ms at the median and 100 ms at the
+/// 99.5th percentile, the longest 130 ms.
+const CAPITAL_HOLD_MS: u64 = 200;
 
 /// How gestures are set up, from the settings.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -768,8 +796,6 @@ enum Gesture {
     Up,
     /// A short flick down.
     Down,
-    /// A short flick up, then back to where it started.
-    UpAndBack,
     /// A flick another way, or one pulled back to where it started: nothing.
     Aborted,
     /// Movement longer than a key: a swipe-typing path.
@@ -820,6 +846,8 @@ struct Touch {
     /// Went down at the delete edge, so sliding inwards deletes.
     at_edge: bool,
     deleting: Option<Deleting>,
+    /// Held long enough to have typed its letter's capital already.
+    capital_typed: bool,
 }
 
 /// A finished swipe across the letters.
@@ -909,10 +937,9 @@ impl Keyboard {
             return Gesture::Tap;
         }
         let (dx, dy) = (touch.at.x - touch.start.x, touch.at.y - touch.start.y);
-        let (fx, fy) = (touch.farthest.x - touch.start.x, touch.farthest.y - touch.start.y);
         if dx.hypot(dy) < FLICK * w {
-            // Pulled back: up and back when it went up, otherwise nothing.
-            if fy < 0.0 && fy.abs() > fx.abs() { Gesture::UpAndBack } else { Gesture::Aborted }
+            // Pulled back: nothing.
+            Gesture::Aborted
         } else if dx.abs() >= dy.abs() {
             Gesture::Aborted
         } else if dy < 0.0 {
@@ -945,7 +972,7 @@ impl Keyboard {
     fn is_capital(&self, gesture: Gesture) -> bool {
         matches!(
             (self.gestures.capital, gesture),
-            (Capital::FlickUp, Gesture::Up) | (Capital::UpAndBack, Gesture::UpAndBack) | (Capital::FlickDown, Gesture::Down)
+            (Capital::FlickUp, Gesture::Up)
         )
     }
 
@@ -976,6 +1003,7 @@ impl Keyboard {
             path: vec![at],
             at_edge,
             deleting: None,
+            capital_typed: false,
         });
     }
 
@@ -1039,11 +1067,14 @@ impl Keyboard {
 
     pub fn touch_up(&mut self, at: Point, time: u64) -> Action {
         if self.popup.is_some() {
-            self.touch = None;
-            return self.popup_release();
+            let typed = self.touch.take().is_some_and(|touch| touch.capital_typed);
+            return if typed { self.popup_swap() } else { self.popup_release() };
         }
         let moved = self.touch_move(at, time);
         let Some(touch) = self.touch.take() else { return moved };
+        if touch.capital_typed {
+            return Action::Redraw;
+        }
         let gesture = self.gesture(&touch);
         let label = self.layout.keys[touch.key].label.clone();
         match gesture {
@@ -1090,6 +1121,8 @@ impl Keyboard {
         let touch = self.touch.as_ref()?;
         match self.gesture(touch) {
             Gesture::Delete => Some(touch.repeat_at.unwrap_or(touch.anchor_time + WORD_HOLD_MS)),
+            _ if touch.capital_typed => None,
+            Gesture::Tap if self.holds_for_capital(touch.key) => Some(touch.anchor_time + CAPITAL_HOLD_MS),
             Gesture::Tap if !self.choices(touch.key).is_empty() => Some(touch.anchor_time + self.long_press_ms),
             _ => None,
         }
@@ -1109,6 +1142,16 @@ impl Keyboard {
                 let deleting = touch.deleting.as_mut().expect("deleting");
                 deleting.words += 1;
                 Action::Delete { pieces: deleting.pieces(), words: true, started: false }
+            }
+            Gesture::Tap if self.holds_for_capital(touch.key) => {
+                self.touch.as_mut().expect("touch").capital_typed = true;
+                let capital = upper(&self.layout.keys[touch.key].label);
+                // Only a letter with accents has anything to slide to.
+                if self.choices(touch.key).len() > 1 {
+                    self.long_press(touch.key);
+                }
+                self.shift = Shift::Off;
+                Action::Commit(capital)
             }
             Gesture::Tap if self.long_press(touch.key) => Action::Redraw,
             _ => Action::Nothing,
@@ -1162,7 +1205,9 @@ impl Keyboard {
         let w = layout.cell_width;
         let n = choices.len() as f32;
         // Centred over the key, then pushed inwards so no cell leaves the sides.
-        let first = (center.x - (n - 1.0) / 2.0 * w).clamp(w / 2.0, layout.width - w / 2.0 - (n - 1.0) * w);
+        // A capital typed by holding starts above the key, the accents after it.
+        let start = if self.holds_for_capital(index) { center.x } else { center.x - (n - 1.0) / 2.0 * w };
+        let first = start.clamp(w / 2.0, layout.width - w / 2.0 - (n - 1.0) * w);
         let y = center.y - layout.cell_height * 0.75;
         let cells: Vec<Point> = (0..choices.len()).map(|i| Point { x: first + i as f32 * w, y }).collect();
         // Holding a letter for its capital starts on the capital.
@@ -1171,7 +1216,8 @@ impl Keyboard {
         } else {
             nearest_by_x(&cells, center.x)
         };
-        self.popup = Some(Popup { choices, cells, selected });
+        let origin = self.touch.as_ref().map_or(center, |touch| touch.at);
+        self.popup = Some(Popup { choices, cells, selected, origin, moved: false });
         true
     }
 
@@ -1200,8 +1246,23 @@ impl Keyboard {
 
     /// Follows the finger along an open popup.
     pub fn popup_move(&mut self, touch: Point) {
+        let still = STILL * self.layout.cell_width;
         if let Some(popup) = &mut self.popup {
-            popup.selected = nearest_by_x(&popup.cells, touch.x);
+            popup.moved |= distance(touch, popup.origin) > still;
+            if popup.moved {
+                popup.selected = nearest_by_x(&popup.cells, touch.x);
+            }
+        }
+    }
+
+    /// Lifting the finger from the popup of a letter whose capital is typed
+    /// already: the capital stays, or the chosen accent replaces it.
+    fn popup_swap(&mut self) -> Action {
+        match self.popup.take() {
+            Some(popup) if popup.selected != 0 => {
+                Action::Replace { old: popup.choices[0].clone(), new: popup.choices[popup.selected].clone() }
+            }
+            _ => Action::Redraw,
         }
     }
 
@@ -1235,7 +1296,7 @@ impl Keyboard {
         let flicked = self.touch.as_ref().is_some_and(|touch| {
             let gesture = self.gesture(touch);
             touch.key == index
-                && (self.is_capital(gesture) || (self.gestures.capital == Capital::UpAndBack && gesture == Gesture::Up))
+                && self.is_capital(gesture)
         });
         if is_letter(label) && (self.shift == Shift::Once || flicked) { upper(label) } else { label.clone() }
     }
@@ -1607,21 +1668,44 @@ mod tests {
     }
 
     #[test]
-    fn each_capital_gesture_types_a_capital_and_only_that_one() {
-        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+    fn a_flick_up_types_a_capital_unless_holding_is_set_up() {
+        let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
         let up = [(0.0, -0.6)];
-        let up_and_back = [(0.0, -0.6), (0.0, -0.1)];
-        let down = [(0.0, 0.6)];
-        keyboard.gestures.capital = Capital::UpAndBack;
-        assert_eq!(gesture(&mut keyboard, "g", &up_and_back), Action::Commit("G".into()));
-        assert_eq!(gesture(&mut keyboard, "g", &up), Action::Nothing);
-        keyboard.gestures.capital = Capital::FlickDown;
-        assert_eq!(gesture(&mut keyboard, "g", &down), Action::Commit("G".into()));
-        assert_eq!(gesture(&mut keyboard, "g", &up), Action::Nothing);
+        assert_eq!(gesture(&mut keyboard, "g", &up), Action::Commit("G".into()));
         keyboard.gestures.capital = Capital::Hold;
+        assert_eq!(gesture(&mut keyboard, "g", &up), Action::Nothing);
+    }
+
+    #[test]
+    fn holding_a_letter_types_its_capital_at_once_and_an_accent_can_replace_it() {
+        let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
+        keyboard.gestures.capital = Capital::Hold;
+        keyboard.accents.insert('a', vec!['ä', 'à']);
+        // No accents: the capital is all there is, and lifting adds nothing.
         keyboard.touch_down(near(&keyboard, "g", 0.0, 0.0), 0);
-        assert_eq!(keyboard.tick(400), Action::Redraw);
-        assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.0, 0.0), 450), Action::Commit("G".into()));
+        assert_eq!(keyboard.deadline(), Some(CAPITAL_HOLD_MS));
+        assert_eq!(keyboard.tick(CAPITAL_HOLD_MS), Action::Commit("G".into()));
+        assert!(keyboard.popup.is_none());
+        assert_eq!(keyboard.deadline(), None);
+        assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.0, 0.0), 900), Action::Redraw);
+        // Accents open with the capital typed and chosen.
+        keyboard.touch_down(near(&keyboard, "a", 0.0, 0.0), 1000);
+        assert_eq!(keyboard.tick(1000 + CAPITAL_HOLD_MS), Action::Commit("A".into()));
+        let popup = keyboard.popup.clone().expect("popup");
+        assert_eq!(popup.choices, ["A", "ä", "à"]);
+        assert_eq!(popup.selected, 0);
+        assert!(popup.cells[0].x - near(&keyboard, "a", 0.0, 0.0).x < 1.0, "the capital sits above the key");
+        // A finger never holds perfectly still; a little drift keeps the capital.
+        keyboard.touch_move(near(&keyboard, "a", 0.1, 0.05), 1250);
+        assert_eq!(keyboard.touch_up(near(&keyboard, "a", 0.1, 0.05), 1300), Action::Redraw);
+        keyboard.touch_down(near(&keyboard, "a", 0.0, 0.0), 2000);
+        keyboard.tick(2000 + CAPITAL_HOLD_MS);
+        let cell = keyboard.popup.as_ref().unwrap().cells[1];
+        keyboard.touch_move(cell, 2400);
+        assert_eq!(keyboard.touch_up(cell, 2450), Action::Replace { old: "A".into(), new: "ä".into() });
+        // Punctuation keeps the long press.
+        keyboard.touch_down(near(&keyboard, ".", 0.0, 0.0), 3000);
+        assert_eq!(keyboard.deadline(), Some(3400));
     }
 
     #[test]
@@ -1668,6 +1752,23 @@ mod tests {
             let area: f32 = layout.keys.iter().map(|key| polygon_area(&layout.outline(key))).sum();
             assert!((area - layout.width * tallest).abs() / (layout.width * tallest) < 1e-4);
         }
+    }
+
+    #[test]
+    fn space_at_the_bottom_differs_from_space_middle_in_eight_keys_only() {
+        let (middle, bottom) = (space_middle(), space_bottom());
+        let mut moved = Vec::new();
+        for (a, b) in middle.rows.iter().zip(&bottom.rows) {
+            let cells = |row: &RowSpec| row.keys.iter().flat_map(|key| vec![key.label.clone(); key.span]).collect::<Vec<_>>();
+            for (x, y) in cells(a).into_iter().zip(cells(b)) {
+                if x != y {
+                    moved.push(x);
+                }
+            }
+        }
+        moved.sort();
+        moved.dedup();
+        assert_eq!(moved, [".", "?", "b", "c", "space", "v", "x"]);
     }
 
     #[test]
@@ -1774,5 +1875,16 @@ mod tests {
             let on_letters: Vec<&str> = plain.keys.iter().map(|key| key.label.as_str()).collect();
             assert!(symbols.keys.iter().filter(|key| !on_letters.contains(&key.label.as_str())).count() >= 20);
         }
+    }
+
+    #[test]
+    fn space_at_the_bottom_has_the_middle_layouts_letters_and_only_letters_in_the_middle() {
+        let layout = Layout::fit(&space_bottom(), 1008.0, 1.0);
+        let letters = layout.keys.iter().filter(|key| is_letter(&key.label)).count();
+        assert_eq!(letters, 26);
+        let bottom = layout.keys.iter().map(|key| key.row).filter(|&row| row != NUMBER_ROW).max().unwrap();
+        assert!(layout.keys.iter().filter(|key| !is_letter(&key.label) && key.row != NUMBER_ROW).all(|key| key.row == bottom));
+        let area: f32 = layout.keys.iter().map(|key| polygon_area(&layout.outline(key))).sum();
+        assert!((area - layout.width * layout.height).abs() / (layout.width * layout.height) < 1e-4);
     }
 }

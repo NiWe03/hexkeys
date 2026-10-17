@@ -36,6 +36,7 @@ class SettingsActivity : Activity() {
     private lateinit var setupButton: Button
     private lateinit var languages: TextView
     private val ui by lazy { Ui(this) }
+    private val downloads = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,24 +63,26 @@ class SettingsActivity : Activity() {
         column.addView(ui.card(
             ui.label("Delete by sliding in from"),
             ui.segmented(
-                listOf("right" to "Right edge", "left" to "Left edge"),
+                listOf("left" to "Left edge", "right" to "Right edge"),
                 if (ui.preferences.getBoolean(KeyboardView.DELETE_FROM_LEFT, false)) "left" else "right",
             ) { id -> ui.preferences.edit().putBoolean(KeyboardView.DELETE_FROM_LEFT, id == "left").apply() },
             ui.label("Capital letter"),
             ui.segmented(
-                KeyboardView.CAPITALS.zip(listOf("Flick up", "Up and back", "Flick down", "Hold")),
-                ui.preferences.getString(KeyboardView.CAPITAL, null) ?: KeyboardView.CAPITALS.first(),
-                columns = 2,
+                KeyboardView.CAPITALS.zip(listOf("Flick up", "Hold")),
+                ui.preferences.getString(KeyboardView.CAPITAL, null)?.takeIf { it in KeyboardView.CAPITALS }
+                    ?: KeyboardView.CAPITALS.first(),
             ) { id -> ui.preferences.edit().putString(KeyboardView.CAPITAL, id).apply() },
         ))
 
+        column.addView(ui.heading("Voice"))
+        column.addView(voiceCard())
+
         column.addView(ui.heading("Look"))
+        layouts = layoutPicker()
         column.addView(ui.card(
             ui.label("Layout"),
-            ui.segmented(
-                listOf("hexkeys" to "Space at the bottom", KeyboardView.SPACE_MIDDLE to "Space and marks in the middle"),
-                ui.preferences.getString(KeyboardView.LAYOUT, null) ?: "hexkeys",
-            ) { id -> ui.preferences.edit().putString(KeyboardView.LAYOUT, id).apply() },
+            layouts,
+            ui.toggle("Shift and backspace keys", KeyboardView.EDIT_KEYS) { layouts.invalidateAll() },
             ui.label("Theme"),
             themePicker(),
         ))
@@ -111,12 +114,79 @@ class SettingsActivity : Activity() {
         }
         val chosen = Dictionaries.enabled(this)
         languages.text = Dictionaries.catalog(this).filter { it.file in chosen }.joinToString(", ") { it.name }
+        microphone.visibility = if (Voice.permitted(this) || Voice.chosen(this) == null) View.GONE else View.VISIBLE
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         // The keyboard picker is a dialog over this window, not a new screen.
         if (hasFocus) onResume()
+    }
+
+    private lateinit var microphone: Button
+    private lateinit var layouts: LayoutTiles
+
+    /**
+     * The speech model to download, by size, with the download's progress,
+     * and the button to allow the microphone while it is not allowed.
+     */
+    private fun voiceCard(): View {
+        val progress = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000
+            visibility = View.GONE
+        }
+        val chosen = Voice.chosen(this)?.id ?: "off"
+        // A model downloaded before it could be timed is timed now.
+        Voice.chosen(this)?.takeIf { Voice.timing(this, it) == null }?.let { model ->
+            downloads.execute {
+                runCatching { Voice.measure(this, model) }
+                if (Voice.timing(this, model) != null) runOnUiThread { recreate() }
+            }
+        }
+        // Each model with its size and, once one has been timed on this phone, how long a sentence takes.
+        val options = listOf("off" to "Off") + Voice.MODELS.map { model ->
+            val time = Voice.expectedTiming(this, model)?.let { (ms, measured) ->
+                "\n${if (measured) "" else "≈"}${"%.1f".format(ms / 1000f)} s"
+            }.orEmpty()
+            model.id to "${model.name}\n${model.megabytes} MB$time"
+        }
+        var choice: View? = null
+        choice = ui.segmented(options, chosen, columns = 4) { id ->
+            val model = Voice.MODELS.firstOrNull { it.id == id }
+            if (model == null || Voice.file(this, model).exists()) {
+                ui.preferences.edit().putString(Voice.MODEL, model?.id).apply()
+                Voice.deleteOthers(this, model)
+                if (model != null && Voice.timing(this, model) == null) recreate()
+                return@segmented
+            }
+            choice?.isEnabled = false
+            progress.progress = 0
+            progress.visibility = View.VISIBLE
+            downloads.execute {
+                val ok = runCatching {
+                    Voice.download(this, model) { done -> runOnUiThread { progress.progress = (done * 1000).toInt() } }
+                    runOnUiThread { progress.isIndeterminate = true }
+                    Voice.measure(this, model)
+                }.isSuccess
+                runOnUiThread {
+                    progress.visibility = View.GONE
+                    if (ok) {
+                        ui.preferences.edit().putString(Voice.MODEL, model.id).apply()
+                        Voice.deleteOthers(this, model)
+                    }
+                    recreate()
+                }
+            }
+        }
+        microphone = ui.primaryButton("Allow the microphone").apply {
+            setOnClickListener { requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1) }
+        }
+        return ui.card(ui.label("Size and time for a spoken sentence on this phone"), choice, progress, microphone)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        onResume()
     }
 
     /** The learning switch, with deleting what was learned beside it once there is something. */
@@ -136,6 +206,40 @@ class SettingsActivity : Activity() {
             row.addView(clear)
         }
         return row
+    }
+
+    /** The layouts side by side as tiles with a drawing of their keys, the chosen one outlined. */
+    private fun layoutPicker(): LayoutTiles {
+        val tiles = LayoutTiles(this)
+        val chosen = ui.preferences.getString(KeyboardView.LAYOUT, null) ?: "hexkeys"
+        val views = mutableListOf<View>()
+        for ((id, name) in listOf("hexkeys" to "Space at the bottom", KeyboardView.SPACE_MIDDLE to "Space in the middle")) {
+            val preview = LayoutPreview(this, id == KeyboardView.SPACE_MIDDLE)
+            tiles.previews += preview
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
+                addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                addView(TextView(this@SettingsActivity).apply {
+                    text = name
+                    textSize = 13f
+                    setTextColor(ui.text)
+                    gravity = Gravity.CENTER
+                    setPadding(0, ui.dp(6), 0, 0)
+                })
+            }
+            views += tile
+            tile.setOnClickListener {
+                views.forEach { ui.outline(it, it === tile) }
+                ui.preferences.edit().putString(KeyboardView.LAYOUT, id).apply()
+            }
+            ui.outline(tile, id == chosen)
+            tiles.addView(tile, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(ui.dp(2), 0, ui.dp(2), 0)
+            })
+        }
+        return tiles
     }
 
     /** Every theme as a tile with its preview and name, the chosen one outlined. */
@@ -162,6 +266,7 @@ class SettingsActivity : Activity() {
             tile.setOnClickListener {
                 views.forEach { ui.outline(it, it === tile) }
                 ui.preferences.edit().putString(Theme.KEY, theme.id).apply()
+                layouts.invalidateAll()
             }
             ui.outline(tile, theme.id == chosen)
             tiles.addView(tile, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -244,13 +349,16 @@ class Ui(private val activity: Activity) {
         }
     }
 
-    fun toggle(label: String, key: String) = Switch(activity).apply {
+    fun toggle(label: String, key: String, changed: () -> Unit = {}) = Switch(activity).apply {
         text = label
         setTextColor(this@Ui.text)
         textSize = 17f
         minHeight = dp(52)
         isChecked = preferences.getBoolean(key, false)
-        setOnCheckedChangeListener { _, checked -> preferences.edit().putBoolean(key, checked).apply() }
+        setOnCheckedChangeListener { _, checked ->
+            preferences.edit().putBoolean(key, checked).apply()
+            changed()
+        }
     }
 
     fun primaryButton(text: String) = Button(activity).apply {
@@ -307,6 +415,12 @@ class Ui(private val activity: Activity) {
     ): View {
         val grid = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val buttons = mutableListOf<Pair<String, TextView>>()
+        // Every button as tall as the label with the most lines, counting a long one as wrapping once.
+        val width = activity.resources.displayMetrics.widthPixels / density / columns
+        val lines = options.maxOf { (_, name) ->
+            name.split('\n').sumOf { line -> if (line.length * 8.5f > width - 24) 2 else 1 }
+        }
+        val tallest = dp(24 + 20 * lines)
         fun paint(current: String) {
             for ((id, button) in buttons) {
                 val on = id == current
@@ -315,20 +429,24 @@ class Ui(private val activity: Activity) {
             }
         }
         for (start in options.indices step columns) {
-            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+            // Not aligned on the text's baseline, which drops a two-line button below its neighbour.
+            val row = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                isBaselineAligned = false
+            }
             for ((id, name) in options.subList(start, minOf(start + columns, options.size))) {
                 val button = TextView(activity).apply {
                     text = name
                     textSize = 15f
                     gravity = Gravity.CENTER
-                    minHeight = dp(44)
+                    setPadding(dp(6), 0, dp(6), 0)
                     setOnClickListener {
                         paint(id)
                         choose(id)
                     }
                 }
                 buttons += id to button
-                row.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                row.addView(button, LinearLayout.LayoutParams(0, tallest, 1f).apply {
                     setMargins(dp(3), dp(3), dp(3), dp(3))
                 })
             }
@@ -375,6 +493,75 @@ private class ThemePreview(context: Context, private val theme: Theme) : View(co
             }
             hexagon.close()
             canvas.drawPath(hexagon, paint)
+        }
+    }
+}
+
+/** The layout tiles in a row, with their drawings to redraw when the keys change. */
+private class LayoutTiles(context: Context) : LinearLayout(context) {
+    val previews = mutableListOf<LayoutPreview>()
+
+    fun invalidateAll() = previews.forEach { it.requestLayout() }
+}
+
+/**
+ * A layout's keys as the keyboard draws them, in the chosen theme, shrunk
+ * to the width it is given; with shift and backspace when they are set up.
+ */
+private class LayoutPreview(context: Context, private val space_middle: Boolean) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val labels = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val gap = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private var handle = 0L
+    private var theme = Theme.current(context)
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = MeasureSpec.getSize(widthMeasureSpec)
+        if (handle != 0L) Core.destroy(handle)
+        val editKeys = Dictionaries.preferences(context).getBoolean(KeyboardView.EDIT_KEYS, false)
+        handle = Core.create(width.toFloat(), 1f, 400, space_middle, editKeys)
+        theme = Theme.current(context)
+        setMeasuredDimension(width, Core.height(handle).toInt())
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        if (handle != 0L) Core.destroy(handle)
+        handle = 0L
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        if (handle == 0L) return
+        val corner = resources.displayMetrics.density * 8
+        paint.color = theme.background
+        canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), corner, corner, paint)
+        val cell = Core.cellWidth(handle)
+        gap.color = theme.background
+        gap.strokeWidth = cell * 0.06f
+        labels.color = theme.label
+        for (index in 0 until Core.keyCount(handle)) {
+            val corners = Core.outline(handle, index)
+            val path = Path()
+            path.moveTo(corners[0], corners[1])
+            for (i in 2 until corners.size step 2) path.lineTo(corners[i], corners[i + 1])
+            path.close()
+            val row = Core.keyRow(handle, index)
+            paint.color = if (row in theme.rows.indices) theme.rows[row] else theme.other
+            canvas.drawPath(path, paint)
+            canvas.drawPath(path, gap)
+            val (x, y) = Core.labelPosition(handle, index).let { it[0] to it[1] }
+            val label = Core.label(handle, index)
+            val icon = KeyboardView.KEY_ICONS[label]
+            if (icon != null) {
+                val drawable = context.getDrawable(icon)!!.mutate()
+                drawable.setTint(theme.label)
+                val half = (cell * 0.2f).toInt()
+                drawable.setBounds(x.toInt() - half, y.toInt() - half, x.toInt() + half, y.toInt() + half)
+                drawable.draw(canvas)
+                continue
+            }
+            labels.textSize = cell * if (label.codePointCount(0, label.length) == 1) 0.4f else 0.24f
+            canvas.drawText(label, x, y - (labels.descent() + labels.ascent()) / 2, labels)
         }
     }
 }

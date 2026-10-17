@@ -5,9 +5,11 @@
 //! means. Every decision about keys lives in the core; Kotlin only draws and
 //! talks to the app being typed into.
 
+mod voice;
+
 use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::Lexicon;
-use hexkeys::{Action, Capital, Keyboard, Point, honeycomb, suggest, swipe, space_middle};
+use hexkeys::{Action, Capital, Keyboard, Point, suggest, swipe, space_middle, space_bottom, with_shift_and_backspace};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
@@ -26,8 +28,12 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_create(
     stretch: jfloat,
     long_press_ms: jlong,
     space_in_middle: jboolean,
+    edit_keys: jboolean,
 ) -> jlong {
-    let letters = if space_in_middle != 0 { space_middle() } else { honeycomb() };
+    let mut letters = if space_in_middle != 0 { space_middle() } else { space_bottom() };
+    if edit_keys != 0 {
+        letters = with_shift_and_backspace(letters);
+    }
     Box::into_raw(Box::new(Keyboard::new(letters, width, stretch, long_press_ms as u64))) as jlong
 }
 
@@ -202,6 +208,7 @@ fn floats(env: &JNIEnv, values: &[f32]) -> jfloatArray {
 fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
     let (kind, text) = match action {
         Action::Commit(text) => ("commit", text),
+        Action::Replace { old, new } => ("replace", format!("{old}\t{new}")),
         Action::Backspace => ("backspace", String::new()),
         Action::Enter => ("enter", String::new()),
         Action::Redraw => ("redraw", String::new()),
@@ -437,8 +444,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_swipe(
 }
 
 /// Sets up the gestures: delete swipes from the left edge instead of the
-/// right, and the capital gesture as 0 flick up, 1 up and back, 2 flick
-/// down, 3 hold.
+/// right, and the capital gesture as 0 flick up, 1 hold.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_configure(
     _env: JNIEnv,
@@ -450,9 +456,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_configure(
     let gestures = &mut keyboard(handle).gestures;
     gestures.delete_from_left = delete_from_left != 0;
     gestures.capital = match capital {
-        1 => Capital::UpAndBack,
-        2 => Capital::FlickDown,
-        3 => Capital::Hold,
+        1 => Capital::Hold,
         _ => Capital::FlickUp,
     };
 }

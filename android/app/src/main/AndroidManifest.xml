@@ -4,6 +4,9 @@
     <!-- Only to download the dictionaries of the languages chosen in settings. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Speech input, asked for in settings. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- To open the password manager in use, whichever app that is. -->
     <queries>
         <intent>

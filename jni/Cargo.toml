@@ -10,3 +10,5 @@ crate-type = ["cdylib"]
 [dependencies]
 hexkeys = { path = ".." }
 jni = "0.21"
+# Speech to text on the device: whisper.cpp, built with cmake from the NDK.
+whisper-rs = { version = "0.16", default-features = false }

@@ -14,5 +14,7 @@
                 android:name="android.autofill"
                 android:resource="@xml/test_autofill" />
         </service>
+        <!-- Runs a recording through speech recognition, the emulator having no microphone. -->
+        <receiver android:name=".VoiceTestReceiver" android:exported="true" />
     </application>
 </manifest>

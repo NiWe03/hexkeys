@@ -9,8 +9,10 @@ object Core {
     /**
      * A keyboard fitted to [width] pixels; [stretch] makes cells taller than
      * regular hexagons, and a finger held still for [longPressMs] is a long press.
+     * [space_middle] puts space and the marks between the letters instead of
+     * below them; [editKeys] adds shift and backspace keys.
      */
-    external fun create(width: Float, stretch: Float, longPressMs: Long, space_middle: Boolean): Long
+    external fun create(width: Float, stretch: Float, longPressMs: Long, space_middle: Boolean, editKeys: Boolean): Long
     external fun destroy(handle: Long)
     external fun height(handle: Long): Float
     external fun keyCount(handle: Long): Int
@@ -35,10 +37,10 @@ object Core {
     external fun touchDown(handle: Long, x: Float, y: Float, time: Long)
     external fun touchMove(handle: Long, x: Float, y: Float, time: Long): Array<String>
 
-    /** Delete swipes from the left edge instead of the right; the capital gesture as 0 flick up, 1 up and back, 2 flick down, 3 hold. */
+    /** Delete swipes from the left edge instead of the right; the capital gesture as 0 flick up, 1 hold. */
     external fun configure(handle: Long, deleteFromLeft: Boolean, capital: Int)
 
-    /** What lifting means, as kind (commit, backspace, enter, redraw, nothing) and text. */
+    /** What lifting means, as kind (commit, replace, backspace, enter, redraw, nothing) and text; replace has the old and new text split by a tab. */
     external fun touchUp(handle: Long, x: Float, y: Float, time: Long): Array<String>
     external fun touchCancel(handle: Long)
 
@@ -94,4 +96,12 @@ object Core {
 
     /** What the capital gesture types on a punctuation key, shown small on it; empty for other keys. */
     external fun keyHint(handle: Long, index: Int): String
+
+    /** Loads a whisper model file; 0 when it cannot be loaded. */
+    external fun voiceLoad(path: String): Long
+
+    external fun voiceFree(model: Long)
+
+    /** The text spoken in 16 kHz mono samples, in the likeliest of the languages (ISO codes, comma separated). */
+    external fun voiceTranscribe(model: Long, audio: FloatArray, languages: String): String
 }

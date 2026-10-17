@@ -242,17 +242,8 @@ impl Search<'_> {
     }
 }
 
-/// How much an accented letter has to be used, as a share of the most used
-/// one, to be offered when holding its plain letter.
-const ACCENT_SHARE: f64 = 0.01;
-
-/// How much an accented letter has to be used, as a share of all letters,
-/// to be offered at all: the accents of loanwords, such as the é of café
-/// in English, stay out.
-const ACCENT_OF_LETTERS: f64 = 0.0005;
-
-/// The most accented letters one key offers.
-const MAX_ACCENTS: usize = 5;
+/// The most accented letters one key offers: as many as fit a popup row.
+const MAX_ACCENTS: usize = 7;
 
 /// The plain letter an accented one is typed from: its letter without
 /// marks, or for the letters that have none, the one it is written like.
@@ -311,21 +302,16 @@ impl Lexicon {
     }
 
     /// The accented letters the dictionaries use, by the plain letter they
-    /// are typed from, most used first: what holding a letter offers. A
-    /// letter's use counts each word it is in by how common the word is.
-    /// Letters used far less than the most used accented letter, or rarely
-    /// among all letters, are left out, so only the languages in use show.
+    /// are typed from, most used first: what holding a letter offers, so
+    /// every word of the languages in use can be spelled. A letter's use
+    /// counts each word it is in by how common the word is.
     pub fn accents(&self) -> Result<HashMap<char, Vec<char>>, Error> {
         let mut uses: HashMap<char, f64> = HashMap::new();
-        let mut letters = 0.0;
         let mut count = |word: &str, frequency: u8| {
             // Frequencies are logarithmic; 12 steps for a doubling fits how often
             // short common words such as French à occur in text.
             let weight = 2f64.powf(frequency as f64 / 12.0);
             for c in word.chars().flat_map(char::to_lowercase) {
-                if c.is_alphabetic() {
-                    letters += weight;
-                }
                 if c.is_alphabetic() && !c.is_ascii() && plain(c).is_some() {
                     *uses.entry(c).or_insert(0.0) += weight;
                 }
@@ -334,12 +320,9 @@ impl Lexicon {
         for dictionary in &self.dictionaries {
             dictionary.for_each_word(&mut count)?;
         }
-        let most = uses.values().copied().fold(0.0, f64::max);
         let mut accents: HashMap<char, Vec<(char, f64)>> = HashMap::new();
         for (c, used) in uses {
-            if used >= most * ACCENT_SHARE && used >= letters * ACCENT_OF_LETTERS
-                && let Some(base) = plain(c)
-            {
+            if let Some(base) = plain(c) {
                 accents.entry(base).or_default().push((c, used));
             }
         }
@@ -722,13 +705,13 @@ mod tests {
     }
 
     #[test]
-    fn accents_come_from_the_dictionaries_most_used_first_and_rare_ones_left_out() {
-        let words = [("über", 200), ("Straße", 180), ("schön", 170), ("Mädchen", 170), ("hätte", 160), ("café", 40), ("naïve", 10)];
+    fn accents_come_from_the_dictionaries_most_used_first() {
+        let words = [("über", 200), ("Straße", 180), ("schön", 170), ("Mädchen", 170), ("hätte", 160), ("café", 40), ("naïve", 10), ("à", 30)];
         let lexicon = Lexicon::new(vec![Dictionary::new(encode(&words, &[])).unwrap()]);
         let accents = lexicon.accents().unwrap();
-        assert_eq!(accents[&'a'], vec!['ä']);
+        assert_eq!(accents[&'a'], vec!['ä', 'à'], "most used first");
         assert_eq!(accents[&'s'], vec!['ß']);
-        assert_eq!(accents[&'u'], vec!['ü']);
-        assert!(!accents.contains_key(&'i'), "naïve is too rare");
+        assert_eq!(accents[&'e'], vec!['é'], "café can be spelled");
+        assert_eq!(accents[&'i'], vec!['ï'], "and so can naïve, however rare");
     }
 }
