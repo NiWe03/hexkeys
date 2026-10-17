@@ -21,13 +21,25 @@ class HexInputMethod : InputMethodService() {
 
     /** Reloads the dictionaries when the languages change in settings. */
     private val settingsChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == Dictionaries.ENABLED) loadDictionaries()
+        when (key) {
+            Dictionaries.ENABLED -> loadDictionaries()
+            Dictionaries.LEARNED_RESET -> {
+                Core.lexiconForget(lexicon)
+                learned.clear()
+            }
+        }
     }
+
+    /** The learned words as last saved, mirrored in the lexicon. */
+    private val learned = mutableMapOf<String, Int>()
 
     override fun onCreate() {
         super.onCreate()
         lexicon = Core.lexiconCreate()
         loadDictionaries()
+        for ((word, times) in Dictionaries.learned(this)) {
+            learned[word] = Core.lexiconLearn(lexicon, word, times)
+        }
         Dictionaries.preferences(this).registerOnSharedPreferenceChangeListener(settingsChanged)
     }
 
@@ -66,6 +78,7 @@ class HexInputMethod : InputMethodService() {
                         connection.endBatchEdit()
                         lastCorrection = Correction(typed, word + text)
                     } else {
+                        if (text in SEPARATORS) keyboard?.unknown?.let { learn(it, 1) }
                         connection.commitText(text, 1)
                     }
                 }
@@ -80,6 +93,7 @@ class HexInputMethod : InputMethodService() {
                             connection.deleteSurroundingText(undo.inserted.length, 0)
                             connection.commitText(undo.typed + undo.inserted.substring(undo.inserted.length - 1), 1)
                             connection.endBatchEdit()
+                            learn(undo.typed, 1)
                         }
                         else -> connection.deleteSurroundingTextInCodePoints(1, 0)
                     }
@@ -90,6 +104,8 @@ class HexInputMethod : InputMethodService() {
         onPick = { word, replaces ->
             val connection = currentInputConnection ?: return@KeyboardView
             lastCorrection = null
+            // Choosing the word as typed over the suggestions keeps it on purpose.
+            if (word == keyboard?.unknown) learn(word, LEARNED)
             connection.beginBatchEdit()
             connection.deleteSurroundingTextInCodePoints(replaces, 0)
             connection.commitText("$word ", 1)
@@ -119,6 +135,13 @@ class HexInputMethod : InputMethodService() {
         refreshStrip()
     }
 
+    /** Counts a word no dictionary has as kept, when learning is switched on. */
+    private fun learn(word: String, times: Int) {
+        if (!Dictionaries.preferences(this).getBoolean(Dictionaries.LEARNING, false)) return
+        learned[word] = Core.lexiconLearn(lexicon, word, times)
+        Dictionaries.saveLearned(this, learned)
+    }
+
     private fun refreshStrip() {
         val view = keyboard ?: return
         val before = currentInputConnection?.getTextBeforeCursor(CONTEXT_LENGTH, 0)
@@ -145,6 +168,9 @@ class HexInputMethod : InputMethodService() {
     private companion object {
         /** Enough text before the cursor for the word being typed and the one before it. */
         const val CONTEXT_LENGTH = 64
+
+        /** How often a word has to be kept to count as learned, as the core counts. */
+        const val LEARNED = 2
 
         /** What ends a word and so triggers autocorrect. */
         val SEPARATORS = setOf(" ", ".", ",", "!", "?", ";", ":")

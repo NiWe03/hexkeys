@@ -115,11 +115,16 @@ fn budget(length: usize) -> f32 {
     }
 }
 
-struct Search<'a> {
-    dictionary: &'a Dictionary,
+/// The typed word and what a slip costs: the edit distance side of a search.
+struct Matcher<'a> {
     typed: Vec<char>,
     substitution: Substitution<'a>,
     budget: f32,
+}
+
+struct Search<'a> {
+    dictionary: &'a Dictionary,
+    matcher: &'a Matcher<'a>,
     found: HashMap<String, Found>,
 }
 
@@ -135,7 +140,11 @@ struct Rows {
     prefix: f32,
 }
 
-impl Search<'_> {
+impl Matcher<'_> {
+    fn start(&self) -> Rows {
+        Rows { row: (0..=self.typed.len()).map(|j| j as f32 * GAP).collect(), previous: None, last: None, prefix: f32::MAX }
+    }
+
     /// The rows after one more folded dictionary character.
     fn step(&self, rows: &Rows, c: char) -> Rows {
         let n = self.typed.len();
@@ -175,40 +184,52 @@ impl Search<'_> {
         best
     }
 
+    /// How a word whose rows end in `rows` matches, if within the budget.
+    fn judge(&self, rows: &Rows, frequency: f32) -> Option<Found> {
+        let exact = rows.row[self.typed.len()];
+        let completion = rows.prefix + COMPLETION;
+        let cost = exact.min(completion);
+        (cost <= self.budget).then_some(Found {
+            score: frequency - COST_WEIGHT * cost,
+            exact: exact == 0.0,
+            completion: completion < exact,
+        })
+    }
+
+    /// How a whole word matches, for words outside a dictionary.
+    fn word(&self, word: &str, frequency: f32) -> Option<Found> {
+        let rows = word.chars().fold(self.start(), |rows, c| self.advance(&rows, c));
+        self.judge(&rows, frequency)
+    }
+}
+
+impl Search<'_> {
     fn visit(&mut self, nodes: Vec<Node>, rows: &Rows, word: &mut String) -> Result<(), Error> {
-        let n = self.typed.len();
+        let matcher = self.matcher;
+        let n = matcher.typed.len();
         for node in nodes {
             let mut node_rows = rows.clone();
             for &c in &node.chars {
-                node_rows = self.advance(&node_rows, c);
+                node_rows = matcher.advance(&node_rows, c);
             }
             let length = word.len();
             word.extend(&node.chars);
             if let Some(frequency) = node.frequency
                 && !node.hidden
+                && let Some(found) = matcher.judge(&node_rows, frequency as f32)
             {
-                let exact = node_rows.row[n];
-                let completion = node_rows.prefix + COMPLETION;
-                let cost = exact.min(completion);
-                if cost <= self.budget {
-                    let found = Found {
-                        score: frequency as f32 - COST_WEIGHT * cost,
-                        exact: exact == 0.0,
-                        completion: completion < exact,
-                    };
-                    match self.found.get_mut(word.as_str()) {
-                        Some(entry) => entry.merge(found),
-                        None => {
-                            self.found.insert(word.clone(), found);
-                        }
+                match self.found.get_mut(word.as_str()) {
+                    Some(entry) => entry.merge(found),
+                    None => {
+                        self.found.insert(word.clone(), found);
                     }
                 }
             }
             let reachable = node_rows.row.iter().copied().fold(f32::MAX, f32::min);
-            let completing = node_rows.prefix + COMPLETION <= self.budget
+            let completing = node_rows.prefix + COMPLETION <= matcher.budget
                 && word.chars().count() < n + COMPLETION_LETTERS;
             if let Some(children) = node.children
-                && (reachable <= self.budget || completing)
+                && (reachable <= matcher.budget || completing)
             {
                 let children = self.dictionary.array(children)?;
                 self.visit(children, &node_rows, word)?;
@@ -219,9 +240,45 @@ impl Search<'_> {
     }
 }
 
+/// How often a word has to be kept before it counts as learned.
+const LEARNED: u32 = 2;
+
+/// The frequency a learned word ranks with: that of a common word, since
+/// it is one of the user's.
+const LEARNED_FREQUENCY: f32 = 180.0;
+
+/// The dictionaries suggestions come from, plus the words learned from what
+/// the user keeps typing that no dictionary has.
+#[derive(Default)]
+pub struct Lexicon {
+    pub dictionaries: Vec<Dictionary>,
+    learned: HashMap<String, u32>,
+}
+
+impl Lexicon {
+    pub fn new(dictionaries: Vec<Dictionary>) -> Self {
+        Self { dictionaries, learned: HashMap::new() }
+    }
+
+    /// Counts `word` as kept `times` more times; returns how often it now has been.
+    pub fn learn(&mut self, word: &str, times: u32) -> u32 {
+        let count = self.learned.entry(word.to_owned()).or_insert(0);
+        *count = count.saturating_add(times);
+        *count
+    }
+
+    pub fn forget(&mut self) {
+        self.learned.clear();
+    }
+
+    fn knows(&self, word: &str) -> bool {
+        self.learned.get(word).is_some_and(|&times| times >= LEARNED)
+    }
+}
+
 /// Suggestions for `typed` after the word `previous`, best first.
 pub fn suggest(
-    dictionaries: &[Dictionary],
+    lexicon: &Lexicon,
     typed: &str,
     previous: Option<&str>,
     substitution: Substitution,
@@ -231,17 +288,18 @@ pub fn suggest(
     if folded.is_empty() {
         return Ok(Vec::new());
     }
+    let matcher = Matcher { budget: budget(folded.len()), typed: folded, substitution };
     let mut found: HashMap<String, Found> = HashMap::new();
-    for dictionary in dictionaries {
-        let rows = Rows {
-            row: (0..=folded.len()).map(|j| j as f32 * GAP).collect(),
-            previous: None,
-            last: None,
-            prefix: f32::MAX,
-        };
-        let mut search =
-            Search { dictionary, typed: folded.clone(), substitution, budget: budget(folded.len()), found: HashMap::new() };
-        search.visit(dictionary.root()?, &rows, &mut String::new())?;
+    for (word, &times) in &lexicon.learned {
+        if times >= LEARNED
+            && let Some(match_) = matcher.word(word, LEARNED_FREQUENCY)
+        {
+            found.insert(word.clone(), match_);
+        }
+    }
+    for dictionary in &lexicon.dictionaries {
+        let mut search = Search { dictionary, matcher: &matcher, found: HashMap::new() };
+        search.visit(dictionary.root()?, &matcher.start(), &mut String::new())?;
         // A word that often follows the previous one ranks by how often it does.
         if let Some(previous) = previous {
             for (word, frequency) in next_words(dictionary, previous)? {
@@ -286,9 +344,9 @@ pub fn suggest(
 }
 
 /// What usually follows `previous`, best first, before anything is typed.
-pub fn predict(dictionaries: &[Dictionary], previous: &str, limit: usize) -> Result<Vec<String>, Error> {
+pub fn predict(lexicon: &Lexicon, previous: &str, limit: usize) -> Result<Vec<String>, Error> {
     let mut found: HashMap<String, u8> = HashMap::new();
-    for dictionary in dictionaries {
+    for dictionary in &lexicon.dictionaries {
         for (word, frequency) in next_words(dictionary, previous)? {
             let entry = found.entry(word).or_insert(0);
             *entry = (*entry).max(frequency);
@@ -323,6 +381,8 @@ pub struct Strip {
     /// punctuation follows it: the best candidate, when the typed word is
     /// not a word and the candidate corrects rather than completes it.
     pub correction: Option<String>,
+    /// The word being typed, when it is not a word yet; what learning counts.
+    pub unknown: Option<String>,
 }
 
 /// Letters and the marks inside words; what the word at the cursor is made of.
@@ -335,7 +395,7 @@ fn in_word(c: char) -> bool {
 /// dictionary spells that way, the word as typed stays on the left so it
 /// can be kept; otherwise the left and right slots hold the runners-up.
 /// After a word and a space, the slots offer what usually comes next.
-pub fn strip(dictionaries: &[Dictionary], before: &str, substitution: Substitution) -> Result<Strip, Error> {
+pub fn strip(lexicon: &Lexicon, before: &str, substitution: Substitution) -> Result<Strip, Error> {
     let start = before.char_indices().rev().take_while(|&(_, c)| in_word(c)).last().map_or(before.len(), |(i, _)| i);
     let (rest, typed) = before.split_at(start);
     let previous = rest.trim_end().rsplit(|c: char| !in_word(c)).next().filter(|word| !word.is_empty());
@@ -344,15 +404,15 @@ pub fn strip(dictionaries: &[Dictionary], before: &str, substitution: Substituti
         if rest.ends_with(' ')
             && let Some(previous) = previous
         {
-            let words = predict(dictionaries, previous, 3)?;
+            let words = predict(lexicon, previous, 3)?;
             for (slot, word) in [1, 0, 2].into_iter().zip(words) {
                 slots[slot] = word;
             }
         }
-        return Ok(Strip { slots, replaces: 0, correction: None });
+        return Ok(Strip { slots, replaces: 0, correction: None, unknown: None });
     }
-    let found = suggest(dictionaries, typed, previous, substitution, 3)?;
-    let known = spelled(dictionaries, typed)?;
+    let found = suggest(lexicon, typed, previous, substitution, 3)?;
+    let known = spelled(lexicon, typed)?;
     let correction = found.first().filter(|best| !known && !best.completion).map(|best| best.word.clone());
     let mut words: Vec<String> = found.into_iter().map(|s| s.word).filter(|word| word != typed).collect();
     if known {
@@ -366,15 +426,19 @@ pub fn strip(dictionaries: &[Dictionary], before: &str, substitution: Substituti
             slots[slot] = word;
         }
     }
-    Ok(Strip { slots, replaces: typed.chars().count(), correction })
+    let unknown = (!known).then(|| typed.to_owned());
+    Ok(Strip { slots, replaces: typed.chars().count(), correction, unknown })
 }
 
-/// Whether a dictionary spells `word` exactly so, or with a lower-case first
+/// Whether a dictionary, or what was learned, spells `word` exactly so, or with a lower-case first
 /// letter where the word was capitalised to start a sentence.
-fn spelled(dictionaries: &[Dictionary], word: &str) -> Result<bool, Error> {
+fn spelled(lexicon: &Lexicon, word: &str) -> Result<bool, Error> {
     let mut chars = word.chars();
     let lowered: String = chars.next().into_iter().flat_map(char::to_lowercase).chain(chars).collect();
-    for dictionary in dictionaries {
+    if lexicon.knows(word) || lexicon.knows(&lowered) {
+        return Ok(true);
+    }
+    for dictionary in &lexicon.dictionaries {
         for form in [word, &lowered] {
             if dictionary.find(form)?.is_some_and(|node| !node.hidden) {
                 return Ok(true);
@@ -386,7 +450,7 @@ fn spelled(dictionaries: &[Dictionary], word: &str) -> Result<bool, Error> {
 
 /// Whether any dictionary has `word`, as typed or with its first letter
 /// lowered or raised.
-pub fn is_word(dictionaries: &[Dictionary], word: &str) -> Result<bool, Error> {
+pub fn is_word(lexicon: &Lexicon, word: &str) -> Result<bool, Error> {
     let lower = word.to_lowercase();
     let mut capital = String::new();
     let mut chars = lower.chars();
@@ -394,7 +458,10 @@ pub fn is_word(dictionaries: &[Dictionary], word: &str) -> Result<bool, Error> {
         capital.extend(first.to_uppercase());
         capital.push_str(chars.as_str());
     }
-    for dictionary in dictionaries {
+    if [word, &lower, &capital].iter().any(|form| lexicon.knows(form)) {
+        return Ok(true);
+    }
+    for dictionary in &lexicon.dictionaries {
         for form in [word, &lower, &capital] {
             if dictionary.find(form)?.is_some_and(|node| !node.hidden) {
                 return Ok(true);
@@ -430,11 +497,11 @@ mod tests {
         if a == b { 0.0 } else { 1.0 }
     }
 
-    fn words(dictionaries: &[Dictionary], typed: &str, previous: Option<&str>) -> Vec<String> {
-        suggest(dictionaries, typed, previous, &plain, 3).unwrap().into_iter().map(|s| s.word).collect()
+    fn words(lexicon: &Lexicon, typed: &str, previous: Option<&str>) -> Vec<String> {
+        suggest(lexicon, typed, previous, &plain, 3).unwrap().into_iter().map(|s| s.word).collect()
     }
 
-    fn german() -> Vec<Dictionary> {
+    fn german() -> Lexicon {
         let words = [
             ("Haus", 200),
             ("Hause", 180),
@@ -447,7 +514,7 @@ mod tests {
             ("Stadt", 200),
             ("hallo", 150),
         ];
-        vec![Dictionary::new(encode(&words, &[("die", "Polizei", 15), ("die", "Stadt", 3)])).unwrap()]
+        Lexicon::new(vec![Dictionary::new(encode(&words, &[("die", "Polizei", 15), ("die", "Stadt", 3)])).unwrap()])
     }
 
     #[test]
@@ -462,7 +529,7 @@ mod tests {
 
     #[test]
     fn apostrophes_may_be_left_out() {
-        let english = vec![Dictionary::new(encode(&[("don't", 200), ("done", 150)], &[])).unwrap()];
+        let english = Lexicon::new(vec![Dictionary::new(encode(&[("don't", 200), ("done", 150)], &[])).unwrap()]);
         let found = suggest(&english, "dont", None, &plain, 3).unwrap();
         assert_eq!((found[0].word.as_str(), found[0].exact), ("don't", true));
     }
@@ -521,6 +588,21 @@ mod tests {
         assert_eq!(strip.slots, ["Stadt".to_owned(), "Polizei".to_owned(), String::new()]);
         assert_eq!(strip.replaces, 0);
         assert_eq!(strip.correction, None);
+    }
+
+    #[test]
+    fn a_word_kept_twice_is_learned() {
+        let mut german = german();
+        assert_eq!(strip(&german, "beim Blorb", &plain).unwrap().unknown.as_deref(), Some("Blorb"));
+        german.learn("Blorb", 1);
+        assert!(!is_word(&german, "Blorb").unwrap(), "once is not enough");
+        german.learn("Blorb", 1);
+        assert!(is_word(&german, "Blorb").unwrap());
+        let strip = strip(&german, "beim Blorb", &plain).unwrap();
+        assert_eq!((strip.unknown, strip.correction), (None, None));
+        assert_eq!(words(&german, "blirb", None)[0], "Blorb", "and suggested");
+        german.forget();
+        assert!(!is_word(&german, "Blorb").unwrap());
     }
 
     #[test]

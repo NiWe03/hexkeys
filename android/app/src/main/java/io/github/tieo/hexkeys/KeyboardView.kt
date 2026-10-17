@@ -50,6 +50,10 @@ class KeyboardView(
     /** What autocorrect would put in place of the word being typed, with how many code points it replaces. */
     var correction: Pair<String, Int>? = null
         private set
+
+    /** The word being typed when no dictionary has it, which learning counts. */
+    var unknown: String? = null
+        private set
     /** The slot a finger went down on, or -1 when the touch is not in the strip. */
     private var stripTouch = -1
 
@@ -122,6 +126,7 @@ class KeyboardView(
         slots = arrayOf(strip[0], strip[1], strip[2])
         replaces = strip[3].toInt()
         correction = strip[4].takeIf { it.isNotEmpty() }?.let { it to replaces }
+        unknown = strip[5].takeIf { it.isNotEmpty() }
         invalidate()
     }
 
@@ -129,6 +134,7 @@ class KeyboardView(
         slots = arrayOf("", "", "")
         replaces = 0
         correction = null
+        unknown = null
         invalidate()
     }
 

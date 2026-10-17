@@ -60,9 +60,17 @@ object Core {
     external fun lexiconAdd(lexicon: Long, bytes: ByteArray): Boolean
     external fun lexiconClear(lexicon: Long)
 
+    /** Counts [word] as kept [times] more times; returns how often it now has been. */
+    external fun lexiconLearn(lexicon: Long, word: String, times: Int): Int
+
+    /** Drops every learned word. */
+    external fun lexiconForget(lexicon: Long)
+
     /**
      * The suggestion strip for the text before the cursor: left, middle and
-     * right word (empty when unused), then how many code points a choice replaces.
+     * right word (empty when unused), how many code points a choice replaces,
+     * the autocorrection, and the typed word when it is not a word yet
+     * (both empty when none).
      */
     external fun strip(lexicon: Long, keyboard: Long, before: String): Array<String>
 }

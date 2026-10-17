@@ -64,6 +64,14 @@ class SettingsActivity : Activity() {
         column.addView(heading("Typing"))
         column.addView(toggle("Autocorrect", Dictionaries.AUTOCORRECT))
         column.addView(toggle("Learn new words", Dictionaries.LEARNING))
+        column.addView(Button(this).apply {
+            text = "Delete learned words"
+            setOnClickListener {
+                Dictionaries.deleteLearned(context)
+                isEnabled = false
+            }
+            isEnabled = Dictionaries.learned(context).isNotEmpty()
+        })
 
         column.addView(heading("Languages"))
         val filter = EditText(this).apply {

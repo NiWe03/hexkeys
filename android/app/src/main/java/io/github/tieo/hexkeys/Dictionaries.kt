@@ -24,6 +24,9 @@ object Dictionaries {
     const val AUTOCORRECT = "autocorrect"
     const val LEARNING = "learning"
 
+    /** Bumped when the learned words are deleted, so the keyboard drops them too. */
+    const val LEARNED_RESET = "learned_reset"
+
     fun preferences(context: Context): SharedPreferences =
         context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -84,6 +87,28 @@ object Dictionaries {
             connection.disconnect()
             partial.delete()
         }
+    }
+
+    private fun learnedFile(context: Context) = File(context.filesDir, "learned.tsv")
+
+    /** Words learned from typing, with how often each was kept. */
+    fun learned(context: Context): Map<String, Int> {
+        val file = learnedFile(context)
+        if (!file.exists()) return emptyMap()
+        return file.readLines().mapNotNull { line ->
+            val (word, times) = line.split('\t').takeIf { it.size == 2 } ?: return@mapNotNull null
+            times.toIntOrNull()?.let { word to it }
+        }.toMap()
+    }
+
+    fun saveLearned(context: Context, words: Map<String, Int>) {
+        learnedFile(context).writeText(words.entries.joinToString("") { "${it.key}\t${it.value}\n" })
+    }
+
+    fun deleteLearned(context: Context) {
+        learnedFile(context).delete()
+        val preferences = preferences(context)
+        preferences.edit().putInt(LEARNED_RESET, preferences.getInt(LEARNED_RESET, 0) + 1).apply()
     }
 
     fun delete(context: Context, file: String) {

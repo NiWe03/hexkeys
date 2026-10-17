@@ -6,6 +6,7 @@
 //! talks to the app being typed into.
 
 use hexkeys::dictionary::Dictionary;
+use hexkeys::suggest::Lexicon;
 use hexkeys::{Action, Keyboard, Point, suggest};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
@@ -276,22 +277,22 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_cellWidth(
     keyboard(handle).layout.cell_width
 }
 
-/// The dictionaries suggestions come from, kept apart from the keyboard,
-/// which is rebuilt whenever its size changes.
-fn lexicon<'a>(handle: jlong) -> &'a mut Vec<Dictionary> {
+/// The dictionaries and learned words suggestions come from, kept apart from
+/// the keyboard, which is rebuilt whenever its size changes.
+fn lexicon<'a>(handle: jlong) -> &'a mut Lexicon {
     // SAFETY: as for `keyboard`, with the handle from `lexiconCreate`.
-    unsafe { &mut *(handle as *mut Vec<Dictionary>) }
+    unsafe { &mut *(handle as *mut Lexicon) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconCreate(_env: JNIEnv, _class: JClass) -> jlong {
-    Box::into_raw(Box::new(Vec::<Dictionary>::new())) as jlong
+    Box::into_raw(Box::new(Lexicon::default())) as jlong
 }
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconDestroy(_env: JNIEnv, _class: JClass, handle: jlong) {
     // SAFETY: see `lexicon`; the Kotlin side drops the handle after this.
-    drop(unsafe { Box::from_raw(handle as *mut Vec<Dictionary>) });
+    drop(unsafe { Box::from_raw(handle as *mut Lexicon) });
 }
 
 /// Adds a `.dict` file's contents; false when they are not a dictionary
@@ -306,7 +307,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconAdd(
     let Ok(bytes) = env.convert_byte_array(&bytes) else { return 0 };
     match Dictionary::new(bytes) {
         Ok(dictionary) => {
-            lexicon(handle).push(dictionary);
+            lexicon(handle).dictionaries.push(dictionary);
             1
         }
         Err(_) => 0,
@@ -315,12 +316,31 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconAdd(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconClear(_env: JNIEnv, _class: JClass, handle: jlong) {
-    lexicon(handle).clear();
+    lexicon(handle).dictionaries.clear();
+}
+
+/// Counts `word` as kept `times` more times; returns how often it now has been.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconLearn(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    word: JString,
+    times: jint,
+) -> jint {
+    let word: String = env.get_string(&word).map(Into::into).unwrap_or_default();
+    lexicon(handle).learn(&word, times.max(0) as u32) as jint
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconForget(_env: JNIEnv, _class: JClass, handle: jlong) {
+    lexicon(handle).forget();
 }
 
 /// The suggestion strip for the text before the cursor, as the left,
 /// middle and right slot (empty when unused), the number of code points
-/// a choice replaces, and the autocorrection (empty when none).
+/// a choice replaces, the autocorrection, and the typed word when it is not
+/// a word yet (both empty when none).
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
     mut env: JNIEnv,
@@ -333,15 +353,17 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
     let keyboard = keyboard(keyboard_handle);
     let substitution = |typed: char, meant: char| keyboard.substitution(typed, meant);
     let strip = suggest::strip(lexicon(lexicon_handle), &before, &substitution)
-        .unwrap_or(suggest::Strip { slots: Default::default(), replaces: 0, correction: None });
+        .unwrap_or(suggest::Strip { slots: Default::default(), replaces: 0, correction: None, unknown: None });
     let replaces = strip.replaces.to_string();
     let correction = strip.correction.unwrap_or_default();
+    let unknown = strip.unknown.unwrap_or_default();
     let values = [
         strip.slots[0].as_str(),
         strip.slots[1].as_str(),
         strip.slots[2].as_str(),
         replaces.as_str(),
         correction.as_str(),
+        unknown.as_str(),
     ];
     let array = env
         .new_object_array(values.len() as i32, "java/lang/String", jni::objects::JObject::null())
