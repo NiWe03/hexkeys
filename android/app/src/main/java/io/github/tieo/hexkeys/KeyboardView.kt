@@ -199,11 +199,6 @@ class KeyboardView(
     private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         strokeCap = Paint.Cap.ROUND
     }
-    private val spinnerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 2.5f * density
-        strokeCap = Paint.Cap.ROUND
-    }
     private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 5f * density
@@ -229,7 +224,6 @@ class KeyboardView(
         hintPaint.alpha = 0xA8
         stripPaint.color = theme.label
         dividerPaint.color = theme.other
-        spinnerPaint.color = theme.accent
         trailPaint.color = theme.accent
         trailPaint.alpha = 0xB0
     }
@@ -465,13 +459,6 @@ class KeyboardView(
             drawIcon(canvas, R.drawable.icon_stop_circle, micX, middle, iconSize * 1.15f, theme.accent)
         } else {
             drawIcon(canvas, R.drawable.icon_mic, micX, middle, iconSize, theme.label)
-        }
-        if (recognising > 0) {
-            // A turning arc around the button while speech is still being turned into text.
-            val radius = iconSize * 0.8f
-            val turn = (SystemClock.uptimeMillis() % 1000) * 0.36f
-            canvas.drawArc(micX - radius, middle - radius, micX + radius, middle + radius, turn, 100f, false, spinnerPaint)
-            postInvalidateOnAnimation()
         }
         if (listening || recognising > 0) {
             drawDictation(canvas, middle)
