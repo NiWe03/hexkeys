@@ -7,7 +7,7 @@
 
 use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::Lexicon;
-use hexkeys::{Action, Keyboard, Point, honeycomb, suggest, swipe, space_middle};
+use hexkeys::{Action, Capital, Keyboard, Point, honeycomb, suggest, swipe, space_middle};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
@@ -135,18 +135,20 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchDown(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchMove(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
     x: jfloat,
     y: jfloat,
     time: jlong,
-) {
-    keyboard(handle).touch_move(Point { x, y }, time as u64);
+) -> jobjectArray {
+    let result = keyboard(handle).touch_move(Point { x, y }, time as u64);
+    action(&mut env, result)
 }
 
 /// What lifting the finger means, as `[kind, text]` with kind one of
-/// `commit`, `backspace`, `enter`, `redraw`, `nothing`, `swipe`.
+/// `commit`, `backspace`, `enter`, `redraw`, `nothing`, `swipe`, or
+/// `delete` with text "pieces words started", the last two 0 or 1.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchUp(
     mut env: JNIEnv,
@@ -205,6 +207,9 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Redraw => ("redraw", String::new()),
         Action::Nothing => ("nothing", String::new()),
         Action::Swipe => ("swipe", String::new()),
+        Action::Delete { pieces, words, started } => {
+            ("delete", format!("{pieces} {} {}", words as u8, started as u8))
+        }
     };
     let array = env
         .new_object_array(2, "java/lang/String", jni::objects::JObject::null())
@@ -429,4 +434,25 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_swipe(
         env.set_object_array_element(&array, i as i32, string).expect("fill string array");
     }
     array.into_raw()
+}
+
+/// Sets up the gestures: delete swipes from the left edge instead of the
+/// right, and the capital gesture as 0 flick up, 1 up and back, 2 flick
+/// down, 3 hold.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_configure(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    delete_from_left: jboolean,
+    capital: jint,
+) {
+    let gestures = &mut keyboard(handle).gestures;
+    gestures.delete_from_left = delete_from_left != 0;
+    gestures.capital = match capital {
+        1 => Capital::UpAndBack,
+        2 => Capital::FlickDown,
+        3 => Capital::Hold,
+        _ => Capital::FlickUp,
+    };
 }

@@ -19,6 +19,9 @@ class HexInputMethod : InputMethodService() {
     private data class Correction(val typed: String, val inserted: String)
     private var lastCorrection: Correction? = null
 
+    /** What the delete swipe under way has deleted, last piece last, to put back when it slides back. */
+    private val deleted = ArrayDeque<String>()
+
     /** The word a swipe just put in, while its alternatives show in the strip. */
     private var swiped: String? = null
 
@@ -27,7 +30,7 @@ class HexInputMethod : InputMethodService() {
         when (key) {
             Dictionaries.ENABLED -> loadDictionaries()
             Theme.KEY -> keyboard?.theme = Theme.current(this)
-            KeyboardView.LAYOUT -> keyboard?.requestLayout()
+            KeyboardView.LAYOUT, KeyboardView.DELETE_FROM_LEFT, KeyboardView.CAPITAL -> keyboard?.requestLayout()
             Dictionaries.LEARNED_RESET -> {
                 Core.lexiconForget(lexicon)
                 learned.clear()
@@ -71,6 +74,25 @@ class HexInputMethod : InputMethodService() {
             val justSwiped = swiped
             swiped = null
             when (kind) {
+                "delete" -> {
+                    val (pieces, words, started) = text.split(" ").map { it.toInt() }
+                    if (started == 1) deleted.clear()
+                    var before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                    connection.beginBatchEdit()
+                    while (deleted.size < pieces && before.isNotEmpty()) {
+                        // A word goes with the spaces after it, as ctrl and backspace take it.
+                        val piece = if (words == 1) {
+                            WORD_AT_END.find(before)?.value?.takeIf { it.isNotEmpty() } ?: before.takeLast(1)
+                        } else {
+                            before.substring(before.offsetByCodePoints(before.length, -1))
+                        }
+                        connection.deleteSurroundingText(piece.length, 0)
+                        before = before.dropLast(piece.length)
+                        deleted.addLast(piece)
+                    }
+                    while (deleted.size > pieces) connection.commitText(deleted.removeLast(), 1)
+                    connection.endBatchEdit()
+                }
                 "swipe" -> {
                     val view = keyboard ?: return@KeyboardView
                     if (!suggesting) return@KeyboardView
@@ -204,6 +226,9 @@ class HexInputMethod : InputMethodService() {
 
         /** What ends a word and so triggers autocorrect. */
         val SEPARATORS = setOf(" ", ".", ",", "!", "?", ";", ":")
+
+        /** The last word before the cursor with the spaces after it. */
+        val WORD_AT_END = Regex("\\S*\\s*$")
 
         /** What a swiped word follows without a space. */
         const val OPENING = "([{\"'¿¡"

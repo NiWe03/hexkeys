@@ -33,7 +33,10 @@ object Core {
 
     /** Touches with their [android.os.SystemClock.uptimeMillis] time. */
     external fun touchDown(handle: Long, x: Float, y: Float, time: Long)
-    external fun touchMove(handle: Long, x: Float, y: Float, time: Long)
+    external fun touchMove(handle: Long, x: Float, y: Float, time: Long): Array<String>
+
+    /** Delete swipes from the left edge instead of the right; the capital gesture as 0 flick up, 1 up and back, 2 flick down, 3 hold. */
+    external fun configure(handle: Long, deleteFromLeft: Boolean, capital: Int)
 
     /** What lifting means, as kind (commit, backspace, enter, redraw, nothing) and text. */
     external fun touchUp(handle: Long, x: Float, y: Float, time: Long): Array<String>

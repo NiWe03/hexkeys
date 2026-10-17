@@ -138,7 +138,7 @@ pub struct Layout {
 const NUMBER_ROW: usize = usize::MAX;
 
 /// Height of the number row in cell heights.
-const NUMBER_BAND: f32 = 0.9;
+const NUMBER_BAND: f32 = 1.0;
 
 /// The share of the number row's height over which its two rows interlock.
 const NUMBER_INTERLOCK: f32 = 0.4;
@@ -151,10 +151,13 @@ impl Layout {
         let cell_height = cell_width * 2.0 / 3f32.sqrt() * stretch;
         let row_pitch = cell_height * 0.75;
         let numbers_bottom = if spec.numbers.is_some() { cell_height * NUMBER_BAND } else { 0.0 };
+        // Under a number row the honeycomb starts at the top row's shoulders,
+        // so those keys are no taller than the rest.
+        let top = if spec.numbers.is_some() { numbers_bottom - cell_height / 4.0 } else { 0.0 };
 
         let mut keys = Vec::new();
         for (row, row_spec) in spec.rows.iter().enumerate() {
-            let y = numbers_bottom + cell_height / 2.0 + row as f32 * row_pitch;
+            let y = top + cell_height / 2.0 + row as f32 * row_pitch;
             let mut column = row_spec.start_column as f32 + spec.shift(row);
             for key_spec in &row_spec.keys {
                 let cells: Vec<Point> = (0..key_spec.span)
@@ -190,7 +193,7 @@ impl Layout {
         }
 
         for (row, row_spec) in spec.rows.iter().enumerate() {
-            let y = numbers_bottom + cell_height / 2.0 + row as f32 * row_pitch;
+            let y = top + cell_height / 2.0 + row as f32 * row_pitch;
             let left = keys.iter().position(|key| key.row == row);
             let right = keys.iter().rposition(|key| key.row == row);
             let (Some(left), Some(right)) = (left, right) else { continue };
@@ -259,7 +262,14 @@ impl Layout {
             }
         }
 
-        let height = numbers_bottom + cell_height + (spec.rows.len().saturating_sub(1)) as f32 * row_pitch;
+        // A top row cut at its shoulders shows only its lower part.
+        if spec.numbers.is_some() {
+            for key in keys.iter_mut().filter(|key| key.row == 0) {
+                key.label_at.y += cell_height / 8.0;
+            }
+        }
+
+        let height = top + cell_height + (spec.rows.len().saturating_sub(1)) as f32 * row_pitch;
         Self { keys, cell_width, cell_height, width, height, numbers_bottom }
     }
 
@@ -539,30 +549,19 @@ pub fn honeycomb() -> LayoutSpec {
     }
 }
 
-/// the reference layout's arrangement with nothing but letters among the letters and
-/// space at the bottom. Its rows of six and seven hold exactly the 26
-/// letters in four rows: x c v b move up from below the reference layout's last letter
-/// row into it, and the four letters they push out move up into the cells
-/// the reference layout gives its two spaces. Of the placements that move letters the
-/// least from where the reference layout has them, this one keeps the QWERTZ order:
-/// s d f n h j where QWERTZ has s d f g h j, and y x c v b m in QWERTZ's
-/// bottom row order. Shift and backspace fill the half cells at the ends of
-/// the row above, comma and full stop share the cell right of a three cell
-/// space, and a number row runs along the top. For trying how the
-/// original's arrangement feels next to [`honeycomb`]; it is a registered
-/// design and stays out of any release.
+/// the reference layout's arrangement, with its two spaces between the letters, plus
+/// a number row along the top. There are no shift or backspace keys: a
+/// gesture types capitals and a slide in from the edge deletes. For trying
+/// how the original feels next to [`honeycomb`]; it is a registered design
+/// and stays out of any release.
 pub fn space_middle() -> LayoutSpec {
-    let mut middle = row(0, letters("sdfnhj"));
-    middle.left_edge = Some("⇧".into());
-    middle.right_edge = Some("⌫".into());
-    let bottom = vec![KeySpec::new("?123", 1), KeySpec::new("space", 3), KeySpec::halves(",", "."), KeySpec::new("⏎", 1)];
     LayoutSpec {
         rows: vec![
             row(0, letters("wetzio")),
             row(0, letters("qargulp")),
-            middle,
-            row(0, letters("yxcvbmk")),
-            row(0, bottom),
+            row(0, keys(&[(".", 1), ("space", 1), ("f", 1), ("h", 1), ("space", 1), ("?", 1)])),
+            row(0, letters("ysdnmjk")),
+            row(0, keys(&[("x", 1), ("c", 1), ("v", 1), ("b", 1), ("?123", 1), ("⏎", 1)])),
         ],
         first_row_shifted: true,
         numbers: Some("1234567890".into()),
@@ -607,6 +606,12 @@ pub enum Action {
     /// A path was drawn across the letters; [`Keyboard::swiped`] has it for
     /// the decoder.
     Swipe,
+    /// A delete swipe now has `pieces` deleted before the cursor, counted
+    /// from where it started: more delete, fewer put back what was deleted
+    /// last. Pieces added since the last action are whole words when
+    /// `words` is set, otherwise characters. `started` marks the first
+    /// action of a delete swipe.
+    Delete { pieces: u32, words: bool, started: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -635,21 +640,72 @@ const FLICK: f32 = 0.35;
 /// How far a finger may drift and still count as holding still, in key widths.
 const STILL: f32 = 0.25;
 
-/// Pause between repeated backspaces while a left flick is held, in ms.
-const REPEAT_MS: u64 = 50;
+/// How near the delete edge a touch has to start to be a delete swipe, in
+/// key widths: a finger sliding in from the edge lands right at it.
+const EDGE: f32 = 0.2;
+
+/// How far a delete swipe moves inwards per character deleted, and back
+/// outwards per piece put back, in key widths. Putting back takes more
+/// movement, so a finger easing back does not undo more than it means to.
+const DELETE_STEP: f32 = 0.3;
+const RESTORE_STEP: f32 = 0.45;
+
+/// Pause between whole words deleted while a delete swipe holds still, in ms.
+const WORD_REPEAT_MS: u64 = 300;
+
+/// The gesture that types a capital letter. Several are offered to find
+/// the one that is least often mistaken for swipe typing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Capital {
+    /// A short flick up from the letter.
+    FlickUp,
+    /// A short flick up and back to the letter.
+    UpAndBack,
+    /// A short flick down from the letter.
+    FlickDown,
+    /// Holding the letter: its popup opens with the capital chosen.
+    Hold,
+}
+
+/// How gestures are set up, from the settings.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gestures {
+    /// Delete swipes come in from the left edge instead of the right.
+    pub delete_from_left: bool,
+    pub capital: Capital,
+}
+
+impl Default for Gestures {
+    fn default() -> Self {
+        Self { delete_from_left: false, capital: Capital::FlickUp }
+    }
+}
 
 /// What a touch amounts to so far.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Gesture {
     Tap,
-    /// A short flick up: the touched letter as a capital.
+    /// A short flick up.
     Up,
-    /// A short flick left: backspace, repeating while the finger holds still.
-    Left,
+    /// A short flick down.
+    Down,
+    /// A short flick up, then back to where it started.
+    UpAndBack,
     /// A flick another way, or one pulled back to where it started: nothing.
     Aborted,
     /// Movement longer than a key: a swipe-typing path.
     Path,
+    /// A slide in from the delete edge: deleting as it goes.
+    Delete,
+}
+
+/// A delete swipe under way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Deleting {
+    /// Pieces deleted so far: characters while sliding, words while holding.
+    pieces: u32,
+    /// How far inwards the finger was when `pieces` last changed.
+    mark: f32,
 }
 
 /// One finger on the keyboard. Times are in milliseconds on any clock that
@@ -659,15 +715,19 @@ struct Touch {
     key: usize,
     start: Point,
     at: Point,
-    /// The farthest the finger has been from `start`.
+    /// The farthest the finger has been from `start`, and where that was.
     extent: f32,
+    farthest: Point,
     /// Where and since when the finger has held still.
     anchor: Point,
     anchor_time: u64,
-    /// When the next repeated backspace is due, once repeating has begun.
+    /// When the next word is due while a delete swipe holds still.
     repeat_at: Option<u64>,
     /// Every point the finger has been, for swipe typing.
     path: Vec<Point>,
+    /// Went down at the delete edge, so sliding inwards deletes.
+    at_edge: bool,
+    deleting: Option<Deleting>,
 }
 
 /// A finished swipe across the letters.
@@ -697,6 +757,7 @@ pub struct Keyboard {
     layer: usize,
     /// The last swipe, until the next one.
     pub swiped: Option<Swiped>,
+    pub gestures: Gestures,
 }
 
 impl Keyboard {
@@ -716,10 +777,21 @@ impl Keyboard {
             long_press_ms,
             layer: 0,
             swiped: None,
+            gestures: Gestures::default(),
         }
     }
 
+    /// How far inwards from the delete edge a point is, relative to where
+    /// the touch started.
+    fn inwards(&self, touch: &Touch, at: Point) -> f32 {
+        let dx = at.x - touch.start.x;
+        if self.gestures.delete_from_left { dx } else { -dx }
+    }
+
     fn gesture(&self, touch: &Touch) -> Gesture {
+        if touch.deleting.is_some() {
+            return Gesture::Delete;
+        }
         let w = self.layout.cell_width;
         if touch.extent >= w {
             return Gesture::Path;
@@ -728,55 +800,106 @@ impl Keyboard {
             return Gesture::Tap;
         }
         let (dx, dy) = (touch.at.x - touch.start.x, touch.at.y - touch.start.y);
+        let (fx, fy) = (touch.farthest.x - touch.start.x, touch.farthest.y - touch.start.y);
         if dx.hypot(dy) < FLICK * w {
-            Gesture::Aborted
+            // Pulled back: up and back when it went up, otherwise nothing.
+            if fy < 0.0 && fy.abs() > fx.abs() { Gesture::UpAndBack } else { Gesture::Aborted }
         } else if dx.abs() >= dy.abs() {
-            if dx < 0.0 { Gesture::Left } else { Gesture::Aborted }
+            Gesture::Aborted
         } else if dy < 0.0 {
             Gesture::Up
         } else {
-            Gesture::Aborted
+            Gesture::Down
         }
     }
 
+    /// Whether a gesture on a letter is the one set up to type its capital.
+    fn is_capital(&self, gesture: Gesture) -> bool {
+        matches!(
+            (self.gestures.capital, gesture),
+            (Capital::FlickUp, Gesture::Up) | (Capital::UpAndBack, Gesture::UpAndBack) | (Capital::FlickDown, Gesture::Down)
+        )
+    }
+
     /// The key the finger went down on, which every gesture belongs to;
-    /// none while swiping, where the trail shows the path instead.
+    /// none while swiping or deleting, which do not belong to a key.
     pub fn pressed(&self) -> Option<usize> {
-        self.touch.as_ref().filter(|_| self.trail().is_empty()).map(|touch| touch.key)
+        self.touch
+            .as_ref()
+            .filter(|touch| self.trail().is_empty() && touch.deleting.is_none())
+            .map(|touch| touch.key)
     }
 
     pub fn touch_down(&mut self, at: Point, time: u64) {
         self.popup = None;
+        let edge = EDGE * self.layout.cell_width;
+        let at_edge = if self.gestures.delete_from_left { at.x < edge } else { at.x > self.layout.width - edge };
         self.touch = self.key_at(at).map(|key| Touch {
             key,
             start: at,
             at,
             extent: 0.0,
+            farthest: at,
             anchor: at,
             anchor_time: time,
             repeat_at: None,
             path: vec![at],
+            at_edge,
+            deleting: None,
         });
     }
 
-    pub fn touch_move(&mut self, at: Point, time: u64) {
+    /// Follows the finger. Only a delete swipe acts while the finger moves;
+    /// everything else waits for it to lift.
+    pub fn touch_move(&mut self, at: Point, time: u64) -> Action {
         if self.popup.is_some() {
             self.popup_move(at);
-            return;
+            return Action::Nothing;
         }
-        let still = STILL * self.layout.cell_width;
-        let Some(touch) = &mut self.touch else { return };
+        let w = self.layout.cell_width;
+        let Some(mut touch) = self.touch.clone() else { return Action::Nothing };
         touch.at = at;
         touch.path.push(at);
-        touch.extent = touch.extent.max(distance(at, touch.start));
-        if distance(at, touch.anchor) > still {
+        let from_start = distance(at, touch.start);
+        if from_start > touch.extent {
+            touch.extent = from_start;
+            touch.farthest = at;
+        }
+        if distance(at, touch.anchor) > STILL * w {
             touch.anchor = at;
             touch.anchor_time = time;
+            touch.repeat_at = None;
         }
-        let touch = touch.clone();
-        if self.gesture(&touch) != Gesture::Left {
-            self.touch.as_mut().expect("touch").repeat_at = None;
+        let inwards = self.inwards(&touch, at);
+        let mut action = Action::Nothing;
+        let mut started = false;
+        if touch.deleting.is_none()
+            && touch.at_edge
+            && inwards >= FLICK * w
+            && (at.x - touch.start.x).abs() >= (at.y - touch.start.y).abs()
+        {
+            touch.deleting = Some(Deleting { pieces: 0, mark: 0.0 });
+            started = true;
         }
+        if let Some(deleting) = &mut touch.deleting {
+            let before = deleting.pieces;
+            while inwards >= deleting.mark + DELETE_STEP * w {
+                deleting.pieces += 1;
+                deleting.mark += DELETE_STEP * w;
+            }
+            while deleting.pieces > 0 && inwards <= deleting.mark - RESTORE_STEP * w {
+                deleting.pieces -= 1;
+                deleting.mark -= RESTORE_STEP * w;
+            }
+            if deleting.pieces == 0 {
+                deleting.mark = deleting.mark.min(inwards);
+            }
+            if started || deleting.pieces != before {
+                action = Action::Delete { pieces: deleting.pieces, words: false, started };
+            }
+        }
+        self.touch = Some(touch);
+        action
     }
 
     pub fn touch_up(&mut self, at: Point, time: u64) -> Action {
@@ -784,20 +907,61 @@ impl Keyboard {
             self.touch = None;
             return self.popup_release();
         }
-        self.touch_move(at, time);
-        let Some(touch) = self.touch.take() else { return Action::Nothing };
-        match self.gesture(&touch) {
+        let moved = self.touch_move(at, time);
+        let Some(touch) = self.touch.take() else { return moved };
+        let gesture = self.gesture(&touch);
+        let label = self.layout.keys[touch.key].label.clone();
+        match gesture {
+            Gesture::Delete => moved,
             Gesture::Tap => self.press(touch.key),
-            Gesture::Up if is_letter(&self.layout.keys[touch.key].label) => {
+            _ if is_letter(&label) && self.is_capital(gesture) => {
                 self.shift = Shift::Off;
-                Action::Commit(upper(&self.layout.keys[touch.key].label))
+                Action::Commit(upper(&label))
             }
-            Gesture::Left if touch.repeat_at.is_none() => Action::Backspace,
             Gesture::Path if self.is_swipe(&touch) => {
                 self.swiped = Some(Swiped { path: touch.path, capital: self.shift == Shift::Once });
                 self.shift = Shift::Off;
                 Action::Swipe
             }
+            _ => Action::Nothing,
+        }
+    }
+
+    pub fn touch_cancel(&mut self) {
+        self.touch = None;
+        self.popup = None;
+    }
+
+    /// When `tick` next has something to do, if ever: the end of a hold that
+    /// would open a popup or start deleting words, or the next word.
+    pub fn deadline(&self) -> Option<u64> {
+        if self.popup.is_some() {
+            return None;
+        }
+        let touch = self.touch.as_ref()?;
+        match self.gesture(touch) {
+            Gesture::Delete => Some(touch.repeat_at.unwrap_or(touch.anchor_time + self.long_press_ms)),
+            Gesture::Tap if !self.choices(touch.key).is_empty() => Some(touch.anchor_time + self.long_press_ms),
+            _ => None,
+        }
+    }
+
+    /// Acts on a hold that has lasted long enough: opens the popup of a key
+    /// held still, or deletes a whole word while a delete swipe holds still.
+    pub fn tick(&mut self, time: u64) -> Action {
+        let Some(touch) = self.touch.clone() else { return Action::Nothing };
+        if self.popup.is_some() || self.deadline().is_none_or(|due| time < due) {
+            return Action::Nothing;
+        }
+        match self.gesture(&touch) {
+            Gesture::Delete => {
+                let touch = self.touch.as_mut().expect("touch");
+                touch.repeat_at = Some(time + WORD_REPEAT_MS);
+                let deleting = touch.deleting.as_mut().expect("deleting");
+                deleting.pieces += 1;
+                Action::Delete { pieces: deleting.pieces, words: true, started: false }
+            }
+            Gesture::Tap if self.long_press(touch.key) => Action::Redraw,
             _ => Action::Nothing,
         }
     }
@@ -827,42 +991,6 @@ impl Keyboard {
         swipe::Keys { letters, width: self.layers[0].cell_width }
     }
 
-    pub fn touch_cancel(&mut self) {
-        self.touch = None;
-        self.popup = None;
-    }
-
-    /// When `tick` next has something to do, if ever: the end of a hold that
-    /// would open a popup or start repeating, or the next repeat.
-    pub fn deadline(&self) -> Option<u64> {
-        if self.popup.is_some() {
-            return None;
-        }
-        let touch = self.touch.as_ref()?;
-        match self.gesture(touch) {
-            Gesture::Left => Some(touch.repeat_at.unwrap_or(touch.anchor_time + self.long_press_ms)),
-            Gesture::Tap if !self.choices(touch.key).is_empty() => Some(touch.anchor_time + self.long_press_ms),
-            _ => None,
-        }
-    }
-
-    /// Acts on a hold that has lasted long enough: opens the popup of a key
-    /// held still, or deletes again while a left flick is held.
-    pub fn tick(&mut self, time: u64) -> Action {
-        let Some(touch) = self.touch.clone() else { return Action::Nothing };
-        if self.popup.is_some() || self.deadline().is_none_or(|due| time < due) {
-            return Action::Nothing;
-        }
-        match self.gesture(&touch) {
-            Gesture::Left => {
-                self.touch.as_mut().expect("touch").repeat_at = Some(time + REPEAT_MS);
-                Action::Backspace
-            }
-            Gesture::Tap if self.long_press(touch.key) => Action::Redraw,
-            _ => Action::Nothing,
-        }
-    }
-
     /// What typing `typed` for `meant` costs, judged on the letter layer
     /// whichever layer is showing.
     pub fn substitution(&self, typed: char, meant: char) -> f32 {
@@ -888,7 +1016,12 @@ impl Keyboard {
         let first = (center.x - (n - 1.0) / 2.0 * w).clamp(w / 2.0, layout.width - w / 2.0 - (n - 1.0) * w);
         let y = center.y - layout.cell_height * 0.75;
         let cells: Vec<Point> = (0..choices.len()).map(|i| Point { x: first + i as f32 * w, y }).collect();
-        let selected = nearest_by_x(&cells, center.x);
+        // Holding a letter for its capital starts on the capital.
+        let selected = if self.holds_for_capital(index) {
+            choices.iter().position(|choice| *choice == upper(&layout.keys[index].label)).unwrap_or(0)
+        } else {
+            nearest_by_x(&cells, center.x)
+        };
         self.popup = Some(Popup { choices, cells, selected });
         true
     }
@@ -896,10 +1029,19 @@ impl Keyboard {
     /// The key's long-press alternatives in the current shift state.
     fn choices(&self, index: usize) -> Vec<String> {
         let shifted = self.shift == Shift::Once;
-        alternates(&self.layout.keys[index].label)
-            .iter()
-            .map(|c| if shifted { upper(c) } else { (*c).to_owned() })
-            .collect()
+        let label = &self.layout.keys[index].label;
+        let mut choices: Vec<String> =
+            alternates(label).iter().map(|c| if shifted { upper(c) } else { (*c).to_owned() }).collect();
+        if self.holds_for_capital(index) {
+            choices.insert(0, upper(label));
+        }
+        choices
+    }
+
+    /// Whether holding this key offers its capital: a letter, with holding
+    /// set up as the capital gesture.
+    fn holds_for_capital(&self, index: usize) -> bool {
+        self.gestures.capital == Capital::Hold && is_letter(&self.layout.keys[index].label)
     }
 
     /// Follows the finger along an open popup.
@@ -936,11 +1078,12 @@ impl Keyboard {
     /// up shows the capital it will type.
     pub fn label(&self, index: usize) -> String {
         let label = &self.layout.keys[index].label;
-        let flicked_up = self
-            .touch
-            .as_ref()
-            .is_some_and(|touch| touch.key == index && self.gesture(touch) == Gesture::Up);
-        if is_letter(label) && (self.shift == Shift::Once || flicked_up) { upper(label) } else { label.clone() }
+        let flicked = self.touch.as_ref().is_some_and(|touch| {
+            let gesture = self.gesture(touch);
+            touch.key == index
+                && (self.is_capital(gesture) || (self.gestures.capital == Capital::UpAndBack && gesture == Gesture::Up))
+        });
+        if is_letter(label) && (self.shift == Shift::Once || flicked) { upper(label) } else { label.clone() }
     }
 
     /// The QWERTZ row of the key's letter, for themes; None for other keys.
@@ -996,7 +1139,8 @@ fn alternates(label: &str) -> &'static [&'static str] {
         "u" => &["ú", "ù", "û"],
         "c" => &["ç"],
         "n" => &["ñ"],
-        "." => &["…", "!", "?"],
+        "." => &[",", "…", "!", "?"],
+        "?" => &["!", "¿", "¡"],
         "," => &[";", ":", "'", "\"", "-"],
         _ => &[],
     }
@@ -1237,10 +1381,31 @@ mod tests {
     }
 
     #[test]
-    fn flick_left_deletes_from_any_key() {
+    fn a_slide_from_the_right_edge_deletes_and_sliding_back_puts_back() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
-        assert_eq!(gesture(&mut keyboard, "g", &[(-0.3, 0.0), (-0.6, 0.1)]), Action::Backspace);
-        assert_eq!(gesture(&mut keyboard, "space", &[(-0.6, 0.0)]), Action::Backspace);
+        let w = keyboard.layout.cell_width;
+        let y = keyboard.layout.find("l").center().y;
+        let at = |x: f32| Point { x, y };
+        keyboard.touch_down(at(1007.0), 0);
+        assert_eq!(keyboard.touch_move(at(1007.0 - 0.2 * w), 10), Action::Nothing, "not yet a slide");
+        assert_eq!(keyboard.touch_move(at(1007.0 - 0.4 * w), 20), Action::Delete { pieces: 1, words: false, started: true });
+        assert_eq!(keyboard.touch_move(at(1007.0 - 1.0 * w), 30), Action::Delete { pieces: 3, words: false, started: false });
+        assert_eq!(keyboard.touch_move(at(1007.0 - 0.8 * w), 40), Action::Nothing, "easing back a little keeps them");
+        assert_eq!(keyboard.touch_move(at(1007.0 - 0.4 * w), 50), Action::Delete { pieces: 2, words: false, started: false });
+        assert_eq!(keyboard.pressed(), None);
+        assert_eq!(keyboard.touch_up(at(1007.0 - 0.4 * w), 60), Action::Nothing);
+        // From inside the keyboard the same slide is a flick that does nothing.
+        assert_eq!(gesture(&mut keyboard, "g", &[(-0.3, 0.0), (-0.6, 0.1)]), Action::Nothing);
+    }
+
+    #[test]
+    fn left_handed_delete_slides_in_from_the_left() {
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        keyboard.gestures.delete_from_left = true;
+        let w = keyboard.layout.cell_width;
+        let y = keyboard.layout.find("a").center().y;
+        keyboard.touch_down(Point { x: 1.0, y }, 0);
+        assert_eq!(keyboard.touch_move(Point { x: 1.0 + 0.4 * w, y }, 10), Action::Delete { pieces: 1, words: false, started: true });
     }
 
     #[test]
@@ -1262,16 +1427,35 @@ mod tests {
     }
 
     #[test]
-    fn holding_a_left_flick_repeats_backspace() {
+    fn holding_a_delete_slide_deletes_whole_words() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
-        keyboard.touch_down(near(&keyboard, "g", 0.0, 0.0), 0);
-        keyboard.touch_move(near(&keyboard, "g", -0.6, 0.0), 50);
+        let w = keyboard.layout.cell_width;
+        let y = keyboard.layout.find("l").center().y;
+        keyboard.touch_down(Point { x: 1007.0, y }, 0);
+        keyboard.touch_move(Point { x: 1007.0 - 0.4 * w, y }, 50);
         assert_eq!(keyboard.deadline(), Some(450));
         assert_eq!(keyboard.tick(449), Action::Nothing);
-        assert_eq!(keyboard.tick(450), Action::Backspace);
-        assert_eq!(keyboard.deadline(), Some(500));
-        assert_eq!(keyboard.tick(500), Action::Backspace);
-        assert_eq!(keyboard.touch_up(near(&keyboard, "g", -0.6, 0.0), 520), Action::Nothing, "no extra delete on lift");
+        assert_eq!(keyboard.tick(450), Action::Delete { pieces: 2, words: true, started: false });
+        assert_eq!(keyboard.deadline(), Some(750));
+        assert_eq!(keyboard.tick(750), Action::Delete { pieces: 3, words: true, started: false });
+    }
+
+    #[test]
+    fn each_capital_gesture_types_a_capital_and_only_that_one() {
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        let up = [(0.0, -0.6)];
+        let up_and_back = [(0.0, -0.6), (0.0, -0.1)];
+        let down = [(0.0, 0.6)];
+        keyboard.gestures.capital = Capital::UpAndBack;
+        assert_eq!(gesture(&mut keyboard, "g", &up_and_back), Action::Commit("G".into()));
+        assert_eq!(gesture(&mut keyboard, "g", &up), Action::Nothing);
+        keyboard.gestures.capital = Capital::FlickDown;
+        assert_eq!(gesture(&mut keyboard, "g", &down), Action::Commit("G".into()));
+        assert_eq!(gesture(&mut keyboard, "g", &up), Action::Nothing);
+        keyboard.gestures.capital = Capital::Hold;
+        keyboard.touch_down(near(&keyboard, "g", 0.0, 0.0), 0);
+        assert_eq!(keyboard.tick(400), Action::Redraw);
+        assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.0, 0.0), 450), Action::Commit("G".into()));
     }
 
     #[test]
@@ -1333,13 +1517,18 @@ mod tests {
 
     #[test]
     fn halves_split_their_cell_and_numbers_zigzag() {
-        let layout = Layout::fit(&space_middle(), 1008.0, 1.0);
-        let comma = layout.find(",");
+        let mut spec = space_middle();
+        spec.rows[4] = row(0, vec![KeySpec::new("?123", 1), KeySpec::new("space", 3), KeySpec::halves(",", "."), KeySpec::new("⏎", 1)]);
+        let layout = Layout::fit(&spec, 1008.0, 1.0);
+        let comma = layout.keys.iter().find(|key| key.half == Some(Half::Left)).unwrap();
         let cell = comma.cells[0];
         let w = layout.cell_width;
         assert_eq!(layout.key_at(Point { x: cell.x - w / 4.0, y: cell.y }).unwrap().label, ",");
-        assert_eq!(layout.key_at(Point { x: cell.x + w / 4.0, y: cell.y }).unwrap().label, ".");
-        assert!((polygon_area(&layout.outline(comma)) - polygon_area(&layout.outline(layout.find(".")))).abs() < 1.0);
+        assert_eq!(layout.key_at(Point { x: cell.x + w / 4.0, y: cell.y }).unwrap().half, Some(Half::Right));
+        let dot = layout.keys.iter().find(|key| key.half == Some(Half::Right)).unwrap();
+        assert!((polygon_area(&layout.outline(comma)) - polygon_area(&layout.outline(dot))).abs() < 1.0);
+        let area: f32 = layout.keys.iter().map(|key| polygon_area(&layout.outline(key))).sum();
+        assert!((area - layout.width * layout.height).abs() / (layout.width * layout.height) < 1e-4);
         let (one, two) = (layout.find("1").cells[0], layout.find("2").cells[0]);
         assert!(two.y > one.y && two.x > one.x);
         for digit in ["1", "2", "5", "0"] {

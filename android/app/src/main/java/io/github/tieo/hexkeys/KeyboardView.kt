@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -125,7 +126,13 @@ class KeyboardView(
         setOnApplyWindowInsetsListener { _, insets ->
             // Below Android 11 the input method window ends above the navigation bar.
             val bottom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                insets.getInsets(WindowInsets.Type.navigationBars()).bottom
+                // The navigation bar inset covers only the gesture handle; the
+                // back and keyboard switch buttons the system draws for an
+                // input method need the taller tappable inset.
+                maxOf(
+                    insets.getInsets(WindowInsets.Type.navigationBars()).bottom,
+                    insets.getInsets(WindowInsets.Type.tappableElement()).bottom,
+                )
             } else {
                 0
             }
@@ -140,11 +147,31 @@ class KeyboardView(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         if (handle != 0L) Core.destroy(handle)
-        val space_middle = Dictionaries.preferences(context).getString(LAYOUT, null) == SPACE_MIDDLE
+        val preferences = Dictionaries.preferences(context)
+        val space_middle = preferences.getString(LAYOUT, null) == SPACE_MIDDLE
         handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), space_middle)
+        Core.configure(
+            handle,
+            preferences.getBoolean(DELETE_FROM_LEFT, false),
+            CAPITALS.indexOf(preferences.getString(CAPITAL, null)).coerceAtLeast(0),
+        )
         headroom = Core.headroom(handle).toInt()
         loadOutlines()
         setMeasuredDimension(width, keysTop + Core.height(handle).toInt() + navigationBar)
+    }
+
+    /**
+     * The keys along the delete edge are kept from the system's back
+     * gesture, so a slide in from that edge reaches the keyboard. Android
+     * honours this for at most 200 dp of an edge's height.
+     */
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val band = (EXCLUSION_WIDTH * density).toInt()
+        val fromLeft = Dictionaries.preferences(context).getBoolean(DELETE_FROM_LEFT, false)
+        val x = if (fromLeft) 0 else width - band
+        systemGestureExclusionRects = listOf(Rect(x, keysTop, x + band, height - navigationBar))
     }
 
     /** Shows the strip the core computes for the text before the cursor. */
@@ -301,7 +328,8 @@ class KeyboardView(
                 if (at < 0) return true
                 fingerX = event.getX(at)
                 fingerY = event.getY(at) - keysTop
-                Core.touchMove(handle, fingerX, fingerY, time)
+                val action = Core.touchMove(handle, fingerX, fingerY, time)
+                if (action[0] != "nothing") act(action)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val x = event.getX(index)
@@ -351,8 +379,18 @@ class KeyboardView(
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f
 
+        /** Width of the delete edge kept from the back gesture, in dp. */
+        private const val EXCLUSION_WIDTH = 32
+
         /** Preference naming the letter layout; [SPACE_MIDDLE] or anything else for the hexkeys one. */
         const val LAYOUT = "layout"
         const val SPACE_MIDDLE = "space_middle"
+
+        /** Preference: delete swipes come in from the left edge. */
+        const val DELETE_FROM_LEFT = "delete_from_left"
+
+        /** Preference naming the capital gesture, one of [CAPITALS] in the core's order. */
+        const val CAPITAL = "capital"
+        val CAPITALS = listOf("flick_up", "up_and_back", "flick_down", "hold")
     }
 }

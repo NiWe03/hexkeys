@@ -79,21 +79,16 @@ class SettingsActivity : Activity() {
         })
 
         column.addView(heading("Layout"))
-        val layouts = listOf("hexkeys" to "Hexkeys", KeyboardView.SPACE_MIDDLE to "the reference layout (test)")
-        val layoutGroup = RadioGroup(this)
-        val layoutChosen = Dictionaries.preferences(this).getString(KeyboardView.LAYOUT, "hexkeys")
-        for ((id, name) in layouts) {
-            layoutGroup.addView(RadioButton(this).apply {
-                text = name
-                textSize = 17f
-                minimumHeight = dp(48)
-                isChecked = id == layoutChosen
-                setOnClickListener {
-                    Dictionaries.preferences(this@SettingsActivity).edit().putString(KeyboardView.LAYOUT, id).apply()
-                }
-            })
-        }
-        column.addView(layoutGroup)
+        column.addView(choice(KeyboardView.LAYOUT, listOf("hexkeys" to "Hexkeys", KeyboardView.SPACE_MIDDLE to "the reference layout (test)")))
+
+        column.addView(heading("Delete by sliding in from"))
+        column.addView(choice(KeyboardView.DELETE_FROM_LEFT + "_choice", listOf("right" to "Right edge", "left" to "Left edge")) { id ->
+            Dictionaries.preferences(this).edit().putBoolean(KeyboardView.DELETE_FROM_LEFT, id == "left").apply()
+        })
+
+        column.addView(heading("Capital letters"))
+        val capitalNames = listOf("Flick up", "Flick up and back", "Flick down", "Hold")
+        column.addView(choice(KeyboardView.CAPITAL, KeyboardView.CAPITALS.zip(capitalNames)))
 
         column.addView(heading("Theme"))
         val themeButtons = mutableListOf<RadioButton>()
@@ -185,6 +180,28 @@ class SettingsActivity : Activity() {
         setTextColor(0xFF8AB4F8.toInt())
         setPadding(0, dp(24), 0, dp(8))
     }
+
+    /**
+     * Radio buttons for a preference holding one of `options` (id to name),
+     * the first chosen by default; `chosen` runs on top of storing the id.
+     */
+    private fun choice(key: String, options: List<Pair<String, String>>, chosen: (String) -> Unit = {}) =
+        RadioGroup(this).apply {
+            val preferences = Dictionaries.preferences(context)
+            val current = preferences.getString(key, options.first().first)
+            for ((id, name) in options) {
+                addView(RadioButton(context).apply {
+                    text = name
+                    textSize = 17f
+                    minimumHeight = dp(48)
+                    isChecked = id == current
+                    setOnClickListener {
+                        preferences.edit().putString(key, id).apply()
+                        chosen(id)
+                    }
+                })
+            }
+        }
 
     private fun toggle(label: String, key: String) = Switch(this).apply {
         text = label
