@@ -473,7 +473,7 @@ class Film:
             q = in_expo(span(b, exit_at + i * stagger * 0.5, exit_at + i * stagger * 0.5 + 0.4)) if exit_at is not None else 0
             return (0, (1 - p) * size * 1.1 - q * size * 1.1, 1, 0, 1 if 0 < p and q < 1 else 0)
         ctx.save()
-        ctx.rectangle(0, y - size * 1.0, W, size * 1.28)
+        ctx.rectangle(-W, y - size * 1.0, 3 * W, size * 1.28)
         ctx.clip()
         font.text(ctx, text, x, y, size, colour, align=align, tracking=tracking, each=each, alpha=alpha)
         ctx.restore()
