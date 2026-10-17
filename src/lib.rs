@@ -1348,16 +1348,16 @@ impl Keyboard {
         let center = layout.keys[index].center();
         let (w, h) = (layout.cell_width * POPUP_SCALE, layout.cell_height * POPUP_SCALE);
         let holding = self.holds_for_capital(index);
-        // The most used straight above the key, the next to its right, then left,
-        // and so on outwards; the row is pushed inwards where it would leave the sides.
-        let offsets: Vec<f32> = (0..choices.len())
-            .map(|i| if i == 0 { 0.0 } else if i % 2 == 1 { i.div_ceil(2) as f32 } else { -((i / 2) as f32) })
-            .collect();
-        let (lowest, highest) = offsets.iter().fold((0f32, 0f32), |(lo, hi), &o| (lo.min(o), hi.max(o)));
+        // A small honeycomb above the key: the most used straight above it, the
+        // next to its right, then left; more go into an interlocking row above.
+        // It is pushed inwards where it would leave the sides.
+        let places = popup_places(choices.len());
+        let (lowest, highest) = places.iter().fold((0f32, 0f32), |(lo, hi), &(o, _)| (lo.min(o), hi.max(o)));
         let shift = (w / 2.0 - (center.x + lowest * w)).max(0.0) - (center.x + highest * w - (layout.width - w / 2.0)).max(0.0);
         // Overlapping the key's top point a little, as the honeycomb's rows overlap.
         let y = center.y - layout.cell_height / 2.0 - h / 4.0;
-        let cells: Vec<Point> = offsets.iter().map(|o| Point { x: center.x + o * w + shift, y }).collect();
+        let cells: Vec<Point> =
+            places.iter().map(|&(o, row)| Point { x: center.x + o * w + shift, y: y - row as f32 * h * 0.75 }).collect();
         // The most used choice comes first and starts chosen, wherever it sits.
         let selected = if holding { None } else { Some(0) };
         let origin = self.touch.as_ref().map_or(center, |touch| touch.at);
@@ -1410,7 +1410,7 @@ impl Keyboard {
             if popup.moved {
                 // Back down on the key, a held capital is kept after all.
                 let back = popup.replaces.is_some() && touch.y > popup.cells[0].y + key_top;
-                popup.selected = if back { None } else { Some(nearest_by_x(&popup.cells, touch.x)) };
+                popup.selected = if back { None } else { Some(nearest(&popup.cells, touch)) };
             }
         }
     }
@@ -1520,8 +1520,24 @@ fn upper(text: &str) -> String {
     if text == "ß" { "ẞ".to_owned() } else { text.to_uppercase() }
 }
 
-fn nearest_by_x(cells: &[Point], x: f32) -> usize {
-    (0..cells.len()).min_by(|&a, &b| (cells[a].x - x).abs().total_cmp(&(cells[b].x - x).abs())).unwrap_or(0)
+/// The cell nearest to a point.
+fn nearest(cells: &[Point], at: Point) -> usize {
+    (0..cells.len()).min_by(|&a, &b| distance(cells[a], at).total_cmp(&distance(cells[b], at))).unwrap_or(0)
+}
+
+/// Where a popup's choices go, in cell widths across from the key and rows
+/// up: three to the first row (above the key, right, left), four to the
+/// next, shifted half a cell to interlock (right of centre, left, then
+/// outer right and left), and so on.
+fn popup_places(count: usize) -> Vec<(f32, usize)> {
+    let mut places = Vec::new();
+    let mut row = 0;
+    while places.len() < count {
+        let offsets: &[f32] = if row % 2 == 0 { &[0.0, 1.0, -1.0] } else { &[0.5, -0.5, 1.5, -1.5] };
+        places.extend(offsets.iter().map(|&o| (o, row)).take(count - places.len()));
+        row += 1;
+    }
+    places
 }
 
 fn is_letter(label: &str) -> bool {
