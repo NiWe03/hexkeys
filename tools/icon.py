@@ -9,7 +9,7 @@ Usage:
   cargo run -q --release --example outlines > /tmp/outlines.tsv
   nix shell --impure --expr 'with import (builtins.getFlake "nixpkgs") {}; python3.withPackages (p: [ p.shapely p.fonttools ])' \\
     -c python3 -I tools/icon.py /tmp/outlines.tsv FONT.ttf
-with FONT.ttf Roboto Regular. Writes res/drawable/ic_launcher_foreground.xml,
+with FONT.ttf Nunito (nixpkgs#nunito, Nunito[wght].ttf), set to weight 800. Writes res/drawable/ic_launcher_foreground.xml,
 res/drawable/ic_launcher_monochrome.xml, res/mipmap-anydpi/ic_launcher.xml and
 the background colour in res/values/ic_launcher.xml.
 """
@@ -18,9 +18,11 @@ import math
 import pathlib
 import sys
 
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
+from fontTools.varLib import instancer
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
@@ -45,6 +47,9 @@ REACH = 30
 # and the letters' size.
 CORNER, OUTLINE, SEAM, LETTER = 0.25, 0.1, 0.06, 0.6
 
+# The letters' weight where the font has a range of them.
+WEIGHT = 800
+
 
 def outlines(path: pathlib.Path) -> tuple[float, dict[str, Polygon]]:
     lines = path.read_text().splitlines()
@@ -61,18 +66,19 @@ def path_data(coords, scale, ox, oy, close=True) -> str:
 
 
 def glyph(font: TTFont, letter: str, cx: float, cy: float, size: float, angle: float) -> str:
-    """The letter's outline centred on cx with its x-height centred on cy,
-    turned clockwise by `angle` degrees about that centre."""
+    """The letter's outline with the middle of its ink at cx, cy, turned
+    clockwise by `angle` degrees about that middle."""
     glyphs = font.getGlyphSet()
     name = font.getBestCmap()[ord(letter)]
     scale = size / font["head"].unitsPerEm
-    width = glyphs[name].width * scale
-    x_height = font["OS/2"].sxHeight * scale
+    bounds = BoundsPen(glyphs)
+    glyphs[name].draw(bounds)
+    left, bottom, right, top = bounds.bounds
     pen = SVGPathPen(glyphs)
     turn = math.radians(angle)
     cos, sin = math.cos(turn), math.sin(turn)
-    # Font units to the centre, flipped to y down, then turned about the centre.
-    dx, dy = -width / 2, x_height / 2
+    # Font units to the middle of the ink, flipped to y down, then turned about it.
+    dx, dy = -(left + right) / 2 * scale, (bottom + top) / 2 * scale
     glyphs[name].draw(TransformPen(pen, (
         scale * cos, scale * sin, scale * sin, -scale * cos,
         cx + dx * cos - dy * sin, cy + dx * sin + dy * cos,
@@ -123,6 +129,8 @@ def filled(data: str, flow: str) -> str:
 def main() -> None:
     cell, shapes = outlines(pathlib.Path(sys.argv[1]))
     font = TTFont(sys.argv[2])
+    if "fvar" in font:
+        instancer.instantiateVariableFont(font, {"wght": WEIGHT}, inplace=True)
     polys = [shapes[key] for key, _, _, _ in KEYS]
     whole = unary_union(polys)
     minx, miny, maxx, maxy = whole.bounds
