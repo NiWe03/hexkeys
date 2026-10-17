@@ -580,22 +580,56 @@ fn bottom_row(switch: &str) -> RowSpec {
     row(0, keys(&[(switch, 1), (",", 1), ("space", 3), (".", 1), ("⏎", 1)]))
 }
 
-fn symbol_rows(top: [&str; 4], left_edge: &str) -> Vec<RowSpec> {
-    let mut rows: Vec<RowSpec> = top.iter().map(|&symbols| row(0, letters(symbols))).collect();
-    rows[3].left_edge = Some(left_edge.into());
-    rows[3].right_edge = Some("⌫".into());
-    rows.push(bottom_row("ABC"));
-    rows
-}
+/// Symbols for the first symbol page, most used first.
+const SYMBOLS: &str = "@#€&-+()/*\"':;!_%=$<>[]{}\\|~^°";
 
-/// Digits in order along the top, then the symbols typed most.
-pub fn symbols() -> LayoutSpec {
-    LayoutSpec { rows: symbol_rows(["1234567", "890@#€", "-+()/&%", "?!\"':;"], "=\\<"), first_row_shifted: false, numbers: None }
-}
+/// Rarer symbols for the second page.
+const MORE_SYMBOLS: &str = "§¢£¥₹©®™✓•¶∆π√÷×±≈≠≤≥‰¿¡«»„“”–—…`";
 
-/// The rarer symbols, behind the key in shift's place.
-pub fn more_symbols() -> LayoutSpec {
-    LayoutSpec { rows: symbol_rows(["~`|•√π÷", "׶∆£¥$", "^°={}\\[", "]<>_¢*"], "?123"), first_row_shifted: false, numbers: None }
+/// The key that turns to the second symbol page, and on it back to the first.
+const MORE: &str = "=\\<";
+
+/// A symbol page shaped exactly like `letters`: the number row, space,
+/// enter, backspace and the punctuation keys stay where they are, the key
+/// to the symbols turns into the key back to the letters in the same
+/// place, and the letter cells hold symbols not already on the letters,
+/// in reading order. Shift's place, or the last letter cell where there is
+/// no shift, turns to the other page. `page` 0 is the first page, 1 the rarer.
+pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
+    let mut spec = letters.clone();
+    let on_letters: Vec<String> = spec
+        .rows
+        .iter()
+        .flat_map(|row| row.keys.iter().map(|key| key.label.clone()))
+        .filter(|label| !is_letter(label))
+        .collect();
+    let pool = if page == 0 { SYMBOLS } else { MORE_SYMBOLS };
+    let mut symbols = pool.chars().map(String::from).filter(|symbol| !on_letters.contains(symbol));
+    let has_shift = spec.rows.iter().any(|row| row.left_edge.as_deref() == Some("⇧"));
+    let turn = if page == 0 { MORE } else { "?123" };
+    let last_letter = spec
+        .rows
+        .iter()
+        .enumerate()
+        .flat_map(|(r, row)| row.keys.iter().enumerate().filter(|(_, key)| is_letter(&key.label)).map(move |(k, _)| (r, k)))
+        .last();
+    for (r, row) in spec.rows.iter_mut().enumerate() {
+        for (k, key) in row.keys.iter_mut().enumerate() {
+            if key.label == "?123" {
+                key.label = "ABC".into();
+            } else if is_letter(&key.label) {
+                key.label = if !has_shift && Some((r, k)) == last_letter {
+                    turn.into()
+                } else {
+                    symbols.next().unwrap_or_default()
+                };
+            }
+        }
+        if row.left_edge.as_deref() == Some("⇧") {
+            row.left_edge = Some(turn.into());
+        }
+    }
+    spec
 }
 
 /// What a key press asks the app to do.
@@ -836,7 +870,8 @@ pub struct Keyboard {
 impl Keyboard {
     /// A keyboard with `letters` as its letter layer.
     pub fn new(letters: LayoutSpec, width: f32, stretch: f32, long_press_ms: u64) -> Self {
-        let mut layers = [letters, symbols(), more_symbols()].map(|spec| Layout::fit(&spec, width, stretch));
+        let pages = [symbol_layer(&letters, 0), symbol_layer(&letters, 1)];
+        let mut layers = [letters, pages[0].clone(), pages[1].clone()].map(|spec| Layout::fit(&spec, width, stretch));
         let height = layers.iter().map(|layer| layer.height).fold(0.0, f32::max);
         for layer in &mut layers {
             layer.lower_to(height);
@@ -1449,8 +1484,9 @@ mod tests {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         let symbols = keyboard_index(&keyboard, "?123");
         assert_eq!(keyboard.press(symbols), Action::Redraw);
-        let one = keyboard_index(&keyboard, "1");
-        assert_eq!(keyboard.press(one), Action::Commit("1".into()));
+        let at = keyboard_index(&keyboard, "@");
+        assert_eq!(keyboard.press(at), Action::Commit("@".into()));
+        assert!(keyboard.layout.keys.iter().all(|key| !is_letter(&key.label)), "no letters left");
         let more = keyboard_index(&keyboard, "=\\<");
         keyboard.press(more);
         let pi = keyboard_index(&keyboard, "π");
@@ -1462,7 +1498,7 @@ mod tests {
 
     #[test]
     fn every_layer_tiles_the_keyboard() {
-        for spec in [symbols(), more_symbols(), space_middle()] {
+        for spec in [symbol_layer(&honeycomb(), 0), symbol_layer(&space_middle(), 1), space_middle()] {
             let layout = Layout::fit(&spec, 1008.0, 1.0);
             let area: f32 = layout.keys.iter().map(|key| polygon_area(&layout.outline(key))).sum();
             let expected = layout.width * layout.height;
@@ -1718,5 +1754,25 @@ mod tests {
         keyboard.touch_down(o, 0);
         keyboard.touch_move(Point { x: o.x - 0.7 * w, y: o.y }, 50);
         assert_eq!(keyboard.touch_up(Point { x: o.x - 1.4 * w, y: o.y + 0.1 * w }, 100), Action::Delete { pieces: 1, words: false, started: true }, "a flick takes one");
+    }
+
+    #[test]
+    fn symbol_pages_keep_every_key_but_the_letters_in_place() {
+        for letters in [honeycomb(), space_middle()] {
+            let keyboard = Keyboard::new(letters, 1008.0, 1.0, 400);
+            let [plain, symbols, more] = &keyboard.layers;
+            for (key, symbol) in plain.keys.iter().zip(&symbols.keys) {
+                assert_eq!(key.cells, symbol.cells, "{} and {} share a place", key.label, symbol.label);
+                if key.label == "?123" {
+                    assert_eq!(symbol.label, "ABC");
+                } else if !is_letter(&key.label) && key.label != "⇧" {
+                    assert_eq!(key.label, symbol.label);
+                }
+            }
+            assert!(symbols.keys.iter().any(|key| key.label == MORE));
+            assert!(more.keys.iter().any(|key| key.label == "?123"));
+            let on_letters: Vec<&str> = plain.keys.iter().map(|key| key.label.as_str()).collect();
+            assert!(symbols.keys.iter().filter(|key| !on_letters.contains(&key.label.as_str())).count() >= 20);
+        }
     }
 }

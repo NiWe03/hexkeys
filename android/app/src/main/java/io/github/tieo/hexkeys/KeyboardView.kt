@@ -353,7 +353,7 @@ class KeyboardView(
     private fun drawLabel(canvas: Canvas, label: String, position: FloatArray, cellWidth: Float) {
         val single = label.codePointCount(0, label.length) == 1
         labelPaint.textSize = cellWidth * if (single) 0.36f else 0.24f
-        if (single && !label[0].isLetterOrDigit()) {
+        if (single && label in INK_CENTRED) {
             drawCentred(canvas, label, position[0], position[1], labelPaint)
             return
         }
@@ -531,6 +531,9 @@ class KeyboardView(
     companion object {
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f
+
+        /** Marks that sit high or low on the line and look misplaced unless centred on their ink. */
+        private val INK_CENTRED = setOf(".", ",", ";", ":", "'", "\"", "…", "!", "?", "¡", "¿")
 
         /** Height of the suggestion strip in dp. */
         const val STRIP_DP = 44
