@@ -348,7 +348,10 @@ class KeyboardView(
         if (barProgress == 0f || inKeys < 0) return inKeys
         // Below the bar during the search are the letters, where they always are.
         if (barAboveLetters && inKeys >= numbersHeight) return inKeys
-        return ((inKeys - barTop) / barScale).coerceAtLeast(0f)
+        // The bar stands for the number row, and a finger leaving it stays on the row's
+        // edge: its height counts two and a half times, which would send the cursor
+        // to other lines at the slightest drift.
+        return ((inKeys - barTop) / barScale).coerceIn(0f, numbersHeight - 1f)
     }
 
     /** A label of the page shown, to tell a page change from other redraws, and the page's fade-in. */
@@ -569,15 +572,11 @@ class KeyboardView(
             // Above the thumb, where it is not hidden under it.
             drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerDrawnY - cellWidth * 0.9f, cellWidth * (if (far) 0.6f else 0.45f), theme.label)
         }
-        // Moving the cursor tints the keys in the accent colour and washes it stronger
-        // between where the hold began and the finger, as a delete slide washes what it
-        // crossed; the cursor's mark sits above the thumb.
+        // Moving the cursor tints the keys in the accent colour, the cursor's mark above the thumb.
         if (Core.movingCursor(handle)) {
             cursorPaint.color = theme.accent
-            cursorPaint.alpha = 0x30
+            cursorPaint.alpha = 0x50
             canvas.drawRect(0f, 0f, width.toFloat(), Core.height(handle), cursorPaint)
-            cursorPaint.alpha = 0x60
-            canvas.drawRect(minOf(downX, fingerX), 0f, maxOf(downX, fingerX), Core.height(handle), cursorPaint)
             drawIcon(canvas, R.drawable.icon_arrow_range, fingerX, fingerDrawnY - cellWidth * 0.9f, cellWidth * 0.5f, theme.label)
         }
         val trail = Core.trail(handle)
@@ -942,8 +941,6 @@ class KeyboardView(
     /** Where the finger is on screen below the strip, for what is drawn at it: under the bar it differs from [fingerY]. */
     private var fingerDrawnY = 0f
 
-    /** Where the finger went down across the keys. */
-    private var downX = 0f
 
     /**
      * Touches go to the core, which tells taps, flicks and holds apart; the
@@ -978,7 +975,6 @@ class KeyboardView(
                 fingerX = x
                 fingerY = y
                 fingerDrawnY = event.getY(index) - keysTop
-                downX = x
                 Core.touchDown(handle, x, y, time)
                 startRecord(x, y, time)
             }

@@ -933,8 +933,14 @@ struct Cursor {
 }
 
 /// How far the finger moves for the cursor to move one character, in key
-/// widths, and one line, in rows.
+/// widths.
 const CURSOR_STEP: f32 = 0.3;
+
+/// How far the finger moves up or down for the cursor to move one line, in
+/// cell heights: far enough that a thumb drifting while it slides sideways
+/// does not send the cursor to another line, which in a short text is the
+/// start or the end.
+const CURSOR_LINE: f32 = 1.5;
 
 /// A finished swipe across the letters.
 #[derive(Clone, Debug, PartialEq)]
@@ -1162,7 +1168,7 @@ impl Keyboard {
         touch.last_time = time;
         if let Some(cursor) = &mut touch.cursor {
             let dx = ((at.x - cursor.origin.x) / (CURSOR_STEP * w)).trunc() as i32;
-            let dy = ((at.y - cursor.origin.y) / (self.layout.cell_height * 0.75)).trunc() as i32;
+            let dy = ((at.y - cursor.origin.y) / (self.layout.cell_height * CURSOR_LINE)).trunc() as i32;
             let moved = Action::Cursor { dx: dx - cursor.dx, dy: dy - cursor.dy };
             let changed = dx != cursor.dx || dy != cursor.dy;
             (cursor.dx, cursor.dy) = (dx, dy);
