@@ -1250,7 +1250,7 @@ impl Keyboard {
             _ if touch.capital_typed => None,
             Gesture::Tap if self.layout.keys[touch.key].label == "⇧" => Some(touch.anchor_time + self.long_press_ms),
             Gesture::Tap if self.holds_for_capital(touch.key) => Some(touch.anchor_time + CAPITAL_HOLD_MS),
-            Gesture::Tap if matches!(self.layout.keys[touch.key].label.as_str(), "⏎" | "space") => {
+            Gesture::Tap if matches!(self.layout.keys[touch.key].label.as_str(), "⏎" | "space") || self.in_cursor_zone(touch.start) => {
                 Some(touch.anchor_time + self.long_press_ms)
             }
             Gesture::Tap if !self.choices(touch.key).is_empty() => Some(touch.anchor_time + self.long_press_ms),
@@ -1302,7 +1302,8 @@ impl Keyboard {
                 self.shift = Shift::Locked;
                 Action::Redraw
             }
-            Gesture::Tap if self.layout.keys[touch.key].label == "space" => {
+            // Holding space, or the number row's middle, makes the keys a touchpad for the cursor.
+            Gesture::Tap if self.layout.keys[touch.key].label == "space" || self.in_cursor_zone(touch.start) => {
                 let touch = self.touch.as_mut().expect("touch");
                 touch.capital_typed = true;
                 touch.cursor = Some(Cursor { origin: touch.at, dx: 0, dy: 0 });
@@ -1533,17 +1534,15 @@ fn alternates(label: &str) -> &'static [&'static str] {
         "." => &[",", ":", "-", ";", "…"],
         "?" => &["!", "'", "\"", "¿", "¡"],
         "," => &[":", "-", ";", "'", "\""],
-        // Digits offer their superscript and the fractions they start, as other keyboards do.
-        "1" => &["¹", "½", "⅓", "¼", "⅛"],
-        "2" => &["²", "⅔"],
-        "3" => &["³", "¾", "⅜"],
-        "4" => &["⁴"],
-        "5" => &["⁵", "⅝"],
-        "6" => &["⁶"],
-        "7" => &["⁷", "⅞"],
-        "8" => &["⁸", "∞"],
-        "9" => &["⁹"],
-        "0" => &["⁰", "∅", "ⁿ"],
+        // Digits offer the fractions they start and a sign like them; superscripts
+        // looked like the digit again.
+        "1" => &["½", "⅓", "¼", "⅛"],
+        "2" => &["⅔"],
+        "3" => &["¾", "⅜"],
+        "5" => &["⅝"],
+        "7" => &["⅞"],
+        "8" => &["∞"],
+        "0" => &["∅", "ⁿ"],
         _ => &[],
     }
 }
@@ -1991,6 +1990,9 @@ mod tests {
         assert_eq!(keyboard.touch_move(Point { x: 504.0 - 0.35 * w, y }, 200), Action::Cursor { dx: -3, dy: 0 });
         assert_eq!(keyboard.touch_up(Point { x: 504.0 - 0.35 * w, y }, 300), Action::Redraw, "no digit typed");
         assert!(matches!(gesture(&mut keyboard, "5", &[]), Action::Commit(_)), "a tap still types its digit");
+        keyboard.touch_down(Point { x: 504.0, y }, 1000);
+        assert_eq!(keyboard.tick(1400), Action::Redraw);
+        assert!(keyboard.moving_cursor(), "holding there makes the keys a touchpad as space does");
     }
 
     #[test]
