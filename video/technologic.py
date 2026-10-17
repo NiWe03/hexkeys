@@ -38,11 +38,15 @@ from render import (  # noqa: E402
 # Bars where the next keyboard takes over: typewriter, buckling spring,
 # keypad, touchscreen, hexkeys. Bar 12 keeps the touchscreen and turns it to
 # swipe typing.
-ERA_BARS = [13, 14, 15, 16]
-FIRST_BAR = 12
-HEX_BAR = 16
-JUMP_BAR = 24
+ERA_BARS = [25, 26, 27, 28]
+FIRST_BAR = 24
+HEX_BAR = 28
 CHORUS_BAR = 32
+DROP_BAR = 36
+END_BAR = 38
+# What each hexkeys bar shows; the chorus bars carry one sung word each, so
+# their hits fall on the beats.
+FEATURES = {28: "arrival", 29: "slide", 30: "swipe", 31: "hold", 32: "flick", 33: "glide", 34: "languages", 35: "speak"}
 
 YEARS = ["1873", "1985", "1999", "2007", "2026"]
 NAMES = ["TYPE-WRITER", "BUCKLING SPRING", "T9 KEYPAD", "TOUCHSCREEN", "HEXKEYS"]
@@ -82,8 +86,18 @@ class Song:
         return [t for b in self.bars[first:last] for t in b["onsets"]]
 
     def hits(self, bar):
-        """The onsets of the main words of a bar: every second word."""
-        return self.bars[bar]["onsets"][::2] if bar < len(self.bars) else []
+        """The onsets of a bar's main words, every second word; its beats
+        where it has fewer than four words."""
+        onsets = self.bars[bar]["onsets"] if bar < len(self.bars) else []
+        return onsets[::2] if len(onsets) >= 8 else self.beats[4 * bar:4 * bar + 4]
+
+    def eighths(self, bar):
+        """A bar's word onsets, or its eighth notes where it has fewer than eight words."""
+        onsets = self.bars[bar]["onsets"] if bar < len(self.bars) else []
+        if len(onsets) >= 8:
+            return onsets
+        b = self.beats[4 * bar:4 * bar + 5]
+        return [v for i in range(4) for v in (b[i], (b[i] + b[i + 1]) / 2)]
 
 
 class Camera:
@@ -113,12 +127,8 @@ class Camera:
 
 class Cut(render.Film):
     def song_time(self, v):
-        """The song's time at video time v: bars 12 to 23, then the chorus from bar 32."""
-        first = self.song.bar_time(FIRST_BAR)
-        jump = self.song.bar_time(JUMP_BAR) - first
-        if v < jump:
-            return first + v
-        return self.song.bar_time(CHORUS_BAR) + (v - jump)
+        """The song's time at video time v: one stretch from bar 24 on."""
+        return self.song.bar_time(FIRST_BAR) + v
 
     def frame(self, v, scale):
         return super().frame(self.song_time(v), scale)
@@ -131,7 +141,7 @@ class Cut(render.Film):
         beat_map.write_text(json.dumps({"beat": beat, "sections": [{"name": "song", "bar": 0}]}))
         super().__init__(outlines, beat_map, fonts)
         self.song = song
-        self.length = (song.bar_time(JUMP_BAR) - song.bar_time(FIRST_BAR)) + (song.bar_time(CHORUS_BAR + 4) - song.bar_time(CHORUS_BAR)) + 1.5
+        self.length = song.bar_time(END_BAR) - song.bar_time(FIRST_BAR) + 0.7
         self.morph_at = [song.bar_time(b) for b in ERA_BARS]
         self.events = self.typing()
         self.camera = self.shots()
@@ -141,7 +151,7 @@ class Cut(render.Film):
     def typing(self):
         """Key strikes of the past, one per sung word, each era typing its script."""
         events = []
-        spans = [(12, 13), (13, 14), (14, 15)]
+        spans = [(24, 25), (25, 26), (26, 27)]
         for era, ((first, last), script) in enumerate(zip(spans, SCRIPTS)):
             for t, ch in zip(self.song.onsets(first, last), script):
                 events.append((t, ch, era))
@@ -152,34 +162,31 @@ class Cut(render.Film):
         together, leans in on the bars that need it, and at hexkeys glides
         down to the keyboard and back up to the icon."""
         s = self.song.bar_time
-        h = self.song.hits
         keys = [
-            (s(12) - 0.5, 960, 520, 1.12, -0.02),
-            (s(13) - 0.2, 960, 520, 1.04, 0.0),
-            (s(13) + 0.3, 960, 510, 1.1, 0.012),
-            (s(14) - 0.2, 960, 540, 1.02, 0.0),
-            (s(14) + 0.3, 960, 540, 1.1, -0.01),
-            (s(15) - 0.2, 960, 560, 1.04, 0.0),
-            (s(15) + 0.4, 960, 600, 1.14, 0.01),
-            (s(16) - 0.3, 960, 560, 1.0, 0.0),
+            (s(24) - 0.5, 960, 520, 1.12, -0.02),
+            (s(25) - 0.2, 960, 520, 1.04, 0.0),
+            (s(25) + 0.3, 960, 510, 1.1, 0.012),
+            (s(26) - 0.2, 960, 540, 1.02, 0.0),
+            (s(26) + 0.3, 960, 540, 1.1, -0.01),
+            (s(27) - 0.2, 960, 560, 1.04, 0.0),
+            (s(27) + 0.4, 960, 600, 1.14, 0.01),
+            (s(28) - 0.3, 960, 560, 1.0, 0.0),
             # hexkeys: the camera leans towards each bar's gesture.
-            (s(16) + 0.6, 960, 560, 1.0, 0.0),
-            (s(17), 960, 540, 1.08, 0.0),
-            (s(17) + 1.6, 960, 560, 1.12, 0.006),
-            (s(18), 1000, 470, 1.18, 0.0),
-            (s(19) - 0.1, 1000, 470, 1.22, -0.006),
-            (s(19) + 0.2, 960, 450, 1.2, 0.0),
-            (s(20) - 0.1, 960, 470, 1.14, 0.0),
-            (s(20) + 0.3, 960, 600, 1.0, 0.0),
-            (s(21) - 0.1, 960, 600, 1.04, 0.0),
-            (s(21) + 0.3, 960, 520, 1.12, 0.0),
-            (s(22) - 0.1, 960, 560, 1.06, 0.0),
-            (s(22) + 0.3, 960, 640, 1.08, -0.008),
-            (s(23) - 0.1, 960, 600, 1.0, 0.0),
-            (s(23) + 0.4, 960, 500, 1.0, 0.0),
-            (s(24), 960, 540, 1.0, 0.0),
-            (s(32), 960, 540, 1.0, 0.0),
-            (s(36), 960, 540, 1.06, 0.0),
+            (s(28) + 0.6, 960, 560, 1.0, 0.0),
+            (s(29), 1000, 470, 1.16, 0.0),
+            (s(30) - 0.1, 1000, 470, 1.2, -0.006),
+            (s(30) + 0.3, 960, 600, 1.0, 0.0),
+            (s(31) - 0.1, 960, 600, 1.04, 0.0),
+            (s(31) + 0.3, 960, 520, 1.12, 0.0),
+            (s(32) - 0.1, 960, 540, 1.06, 0.0),
+            (s(32) + 1.6, 960, 560, 1.12, 0.006),
+            (s(33), 960, 450, 1.2, 0.0),
+            (s(34) - 0.1, 960, 470, 1.14, 0.0),
+            (s(34) + 0.3, 960, 640, 1.08, -0.008),
+            (s(35) - 0.1, 960, 600, 1.0, 0.0),
+            (s(35) + 0.4, 960, 500, 1.0, 0.0),
+            (s(36), 960, 540, 1.0, 0.0),
+            (s(38), 960, 540, 1.07, 0.0),
         ]
         return Camera(keys)
 
@@ -482,17 +489,40 @@ class Cut(render.Film):
             ctx.fill()
         return x0
 
-    def hexkeys(self, ctx, t, bar):
-        ctx.set_source_rgb(*INK)
+    # Each feature bar's colour field, and where the next one opens from: the
+    # spot the previous bar's gesture ended on, in frame coordinates.
+    FIELDS = {28: INK, 29: (0.17, 0.05, 0.09), 30: (0.02, 0.02, 0.03), 31: (0.13, 0.06, 0.18),
+              32: (0.07, 0.09, 0.22), 33: (0.03, 0.14, 0.12), 34: (0.93, 0.93, 0.95), 35: (0.04, 0.05, 0.12)}
+    OPEN_FROM = {29: (960, 300), 30: (700, 300), 31: (960, 300), 32: (960, 330), 33: (1000, 380), 34: (900, 330), 35: (960, 300)}
+
+    def field(self, ctx, t, bar):
+        """The bar's colour, opening as a hexagon from where the last gesture ended."""
+        start = self.song.bar_time(bar)
+        prev = self.FIELDS.get(bar - 1, INK)
+        ctx.set_source_rgb(*prev)
         ctx.paint()
+        k = out_expo(span(t, start - 0.08, start + 0.3))
+        x, y = self.OPEN_FROM.get(bar, (960, 540))
+        hexagon(ctx, x, y, 2300 * k, (1 - k) * 0.8)
+        ctx.set_source_rgb(*self.FIELDS.get(bar, INK))
+        ctx.fill()
+        # A rim in the flow colours riding the edge of the opening.
+        if 0 < k < 1:
+            hexagon(ctx, x, y, 2300 * k, (1 - k) * 0.8)
+            ctx.set_source_rgba(*flow((bar % 8) / 7), 0.9 * (1 - k))
+            ctx.set_line_width(14 * (1 - k) + 2)
+            ctx.stroke()
+
+    def hexkeys(self, ctx, t, bar):
+        self.field(ctx, t, bar)
         ctx.save()
         self.camera.apply(ctx, t)
         h = self.song.hits(bar)
-        o = self.song.bars[bar]["onsets"]
+        o = self.song.eighths(bar)
         end = self.song.bar_time(bar + 1)
         place = self.PLACE
         presses, fx = {}, None
-        getattr(self, f"bar_{bar}")(ctx, t, h, o, end, place)
+        getattr(self, FEATURES[bar])(ctx, t, h, o, end, place)
         ctx.restore()
 
     def press_map(self, t, taps):
@@ -502,7 +532,7 @@ class Cut(render.Film):
                 out[label] = max(out.get(label, 0), math.exp(-(t - at) * 12))
         return out
 
-    def bar_16(self, ctx, t, h, o, end, place):
+    def arrival(self, ctx, t, h, o, end, place):
         """It arrives: the keys land in a wave, the name lands over them."""
         def key_fx(key):
             d = math.hypot(key["centre"][0] - self.kb.width / 2, key["centre"][1] - self.kb.height / 2) / 700
@@ -519,7 +549,7 @@ class Cut(render.Film):
                 ctx.stroke()
         self.feature_word(ctx, t, "hexkeys", 960, 300, 170, h[1], end - 0.15)
 
-    def bar_17(self, ctx, t, h, o, end, place):
+    def flick(self, ctx, t, h, o, end, place):
         """Flick up: a capital, four times, each big over the key it came from."""
         letters = "hexk"
         taps = list(zip(h, letters))
@@ -540,7 +570,7 @@ class Cut(render.Film):
         self.text_line(ctx, typed, 250, 64, centre_on="HEXK")
         self.mono.text(ctx, "FLICK UP · CAPITAL", 960, 290, 22, DIM, align=0.5, alpha=span(t, h[0], h[0] + 0.2) * (1 - span(t, end - 0.2, end)))
 
-    def bar_18(self, ctx, t, h, o, end, place):
+    def slide(self, ctx, t, h, o, end, place):
         """Slide in from the number row's right: the text goes letter by letter, then words."""
         text = "typed on the wrong keyboard"
         cx, cy, width = place
@@ -579,7 +609,7 @@ class Cut(render.Film):
         self.finger(ctx, fxp, y, 1, span(t, o[0] - 0.2, o[0]) * (1 - span(t, end - 0.25, end)))
         self.feature_word(ctx, t, "slide", fxp, y - 70, 64, h[0], end - 0.2, colour=(1, 0.45, 0.52))
 
-    def bar_19(self, ctx, t, h, o, end, place):
+    def glide(self, ctx, t, h, o, end, place):
         """Glide along the number row's middle: the caret walks, a step per word."""
         text = "hexagons are the bestagons"
         mid = self.key_xy("5", place)
@@ -608,7 +638,7 @@ class Cut(render.Film):
         cx = x0 + self.sans_bold.width(text[:caret], 58)
         self.feature_word(ctx, t, "glide", cx, 160, 64, h[0], end - 0.2, colour=GREEN)
 
-    def bar_20(self, ctx, t, h, o, end, place):
+    def swipe(self, ctx, t, h, o, end, place):
         """Swipe: two words, one stroke each, the strip offering what the path spells."""
         words = [("keyboard", h[0], h[1] + 0.1), ("faster", h[2], h[3] + 0.1)]
         self.hex_keyboard(ctx, place, t)
@@ -626,7 +656,7 @@ class Cut(render.Film):
                     self.finger(ctx, *tip, 1, fade)
                     self.feature_word(ctx, t, "swipe", tip[0], tip[1] - 60, 54, s0, s1 + 0.2, colour=PAPER)
 
-    def bar_21(self, ctx, t, h, o, end, place):
+    def hold(self, ctx, t, h, o, end, place):
         """Hold for the letters a key also writes: a honeycomb of them opens."""
         holds = [("e", "éèêëė", h[0], h[1], 0), ("1", "½⅓¼⅕⅙⅛", h[2], h[3], 0)]
         text = "caf"
@@ -665,7 +695,7 @@ class Cut(render.Film):
                 ctx.stroke()
             self.feature_word(ctx, t, "hold", kx, ky - 1.4 * kw - 90, 64, t0, t1 + 0.3, colour=PAPER)
 
-    def bar_22(self, ctx, t, h, o, end, place):
+    def languages(self, ctx, t, h, o, end, place):
         """A sideways flick on space for the next language: each one's word, big."""
         steps = [("DE", "Haus"), ("VI", "việt"), ("FR", "ça"), ("EN", "I'm")]
         code, word, at = "EN", "", None
@@ -678,7 +708,7 @@ class Cut(render.Film):
             self.heavy.text(ctx, word, 960, 300, 200 * max(p, 0.01), flow(h.index(at) / 3), align=0.5)
         self.mono.text(ctx, "47 LANGUAGES · FLICK SPACE SIDEWAYS", 960, 345, 22, DIM, align=0.5, alpha=span(t, h[0], h[0] + 0.2) * (1 - span(t, end - 0.2, end)))
 
-    def bar_23(self, ctx, t, h, o, end, place):
+    def speak(self, ctx, t, h, o, end, place):
         """Speak: the mic rises out of the strip, the voice rings round it, words land."""
         rise = out_expo(span(t, h[0] - 0.15, h[0] + 0.25))
         sink = in_out_expo(span(t, h[0] - 0.2, h[0] + 0.2))
@@ -724,12 +754,15 @@ class Cut(render.Film):
 
     # ------------------------------------------------ the chorus: the icon
 
-    def chorus(self, ctx, t):
-        """Four sung words, four hits: the three keys lock, their letters pop,
-        the name rises, the address types."""
+    def finale(self, ctx, t):
+        """The drop after the chorus: on its downbeat the three keys lock into
+        the icon, its letters pop on the next beat, the name rises on the next
+        bar and the address types after it; round it everything shown before,
+        a word a beat."""
         ctx.set_source_rgb(*INK)
         ctx.paint()
-        hits = [self.song.bars[b]["onsets"][0] for b in range(CHORUS_BAR, CHORUS_BAR + 4)]
+        d = self.song.beats[4 * DROP_BAR:4 * END_BAR + 1]
+        hits = [d[0], d[1], d[4], d[5]]
         ctx.save()
         self.camera.apply(ctx, t)
         kb = self.kb
@@ -737,7 +770,7 @@ class Cut(render.Film):
         mx = sum(k["centre"][0] for k in keys) / 3
         my = sum(k["centre"][1] for k in keys) / 3
         s = 2.6
-        start = self.song.bar_time(CHORUS_BAR)
+        start = hits[0] - 0.25
         # Until the first hit the keyboard is still there, its other keys falling away.
         fall = in_expo(span(t, start, hits[0]))
         place = self.PLACE
@@ -748,6 +781,39 @@ class Cut(render.Film):
                 seed = (hash(key["label"]) % 97) / 97
                 return (0, fall * (400 + 600 * seed), fall * (seed - 0.5) * 3, 1, 1 - fall)
             self.hex_keyboard(ctx, place, t, key_fx=key_fx, case_alpha=1 - fall)
+        # A honeycomb drawing itself outwards behind the icon, pulsing on the beat.
+        beats = [bt for bt in self.song.beats if hits[0] <= bt <= self.song.bar_time(END_BAR)]
+        pulse = max([math.exp(-(t - bt) * 8) for bt in beats if bt <= t] or [0])
+        reach = out_cubic(span(t, hits[0], hits[0] + 3.0)) * 1300
+        r = 64
+        for row in range(-9, 10):
+            for col in range(-11, 12):
+                cx = 960 + col * r * math.sqrt(3) + (r * math.sqrt(3) / 2 if row % 2 else 0)
+                cy = 500 + row * r * 1.5
+                d = math.hypot(cx - 960, cy - 500)
+                if d > reach or d < 230:
+                    continue
+                fade = clamp((reach - d) / 250)
+                hexagon(ctx, cx, cy, r * (0.94 - 0.06 * pulse * math.exp(-d / 600)))
+                ctx.set_source_rgba(*flow(clamp(d / 1100)), (0.10 + 0.25 * pulse * math.exp(-d / 500)) * fade)
+                ctx.set_line_width(1.5)
+                ctx.stroke()
+        # Everything shown before, a word per beat, in cells round the icon.
+        recap = ["FLICK", "SLIDE", "GLIDE", "SWIPE", "HOLD", "47 LANGUAGES", "SPEAK", "PASSWORDS", "CLIPBOARD", "EMOJI", "THEMES", "OPEN SOURCE"]
+        spots = [(-560, -260), (560, -260), (-700, 20), (700, 20), (-560, 300), (560, 300), (-330, -420), (330, -420), (-330, 430), (330, 430), (-800, -150), (800, -150)]
+        after = [bt for bt in beats if bt >= hits[0] + 0.2]
+        for i, (word, (dx, dy)) in enumerate(zip(recap, spots)):
+            if i >= len(after) or t < after[i]:
+                continue
+            p = out_back(span(t, after[i], after[i] + 0.25), 2.2)
+            dim = 1 - 0.55 * span(t, after[i] + 0.4, after[i] + 1.0)
+            out = 1.0
+            self.heavy.text(ctx, word, 960 + dx, 500 + dy + 16, 40 * max(p, 0.01), mix(PAPER, flow(i / 11), 0.5), align=0.5, alpha=dim * out)
+        breathe = 1 + 0.035 * pulse
+        ctx.translate(960, 500)
+        ctx.scale(breathe, breathe)
+        ctx.rotate(0.02 * math.sin(t * 1.3))
+        ctx.translate(-960, -500)
         settle = out_expo(span(t, hits[0] - 0.15, hits[0] + 0.3))
         for i, (k, letter, angle) in enumerate(zip(keys, "ehx", (0, -30, 30))):
             sx, sy = self.key_xy(k["label"], place)
@@ -795,17 +861,16 @@ class Cut(render.Film):
             for m in self.morph_at:
                 if m - 0.05 <= t:
                     hit = max(hit, 0.5 * math.exp(-(t - m) * 9))
-        elif bar < JUMP_BAR:
+        elif bar < DROP_BAR:
             self.hexkeys(ctx, t, bar)
             if bar == HEX_BAR:
                 hit = max(hit, 0.6 * math.exp(-(t - self.song.bar_time(HEX_BAR)) * 6))
         else:
-            self.chorus(ctx, t)
-            for b in range(CHORUS_BAR, CHORUS_BAR + 4):
-                at = self.song.bars[b]["onsets"][0]
-                if at <= t:
-                    hit = max(hit, 0.5 * math.exp(-(t - at) * 7))
-            fade = span(t, self.song.bar_time(CHORUS_BAR + 4) + 0.3, self.song.bar_time(CHORUS_BAR + 4) + 1.4)
+            self.finale(ctx, t)
+            drop = self.song.bar_time(DROP_BAR)
+            hit = max(hit, 0.7 * math.exp(-(t - drop) * 6)) if t >= drop else hit
+            end = self.song.bar_time(END_BAR)
+            fade = span(t, end + 0.15, end + 0.65)
             if fade > 0:
                 ctx.set_source_rgba(*INK, fade)
                 ctx.paint()

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the trailer into video/out/trailer.mp4: the key outlines from the
-# layout, the track cut to song bars 12 to 23 and its chorus (bars 32 to 35),
-# the picture timed to the sung words' onsets, then both together.
+# layout, the track from song bar 24 to the downbeat of bar 38 (the full
+# beat, the chorus and the drop after it), the picture timed to the sung
+# words' onsets, then both together.
 #
 # Needs, in video/out/track (ignored by git): the track as technologic.wav
 # and its word timings as verse1.json, written by video/align.py. Arguments
@@ -25,13 +26,12 @@ cargo run -q --release --example outlines > "$out/outlines.tsv"
 run python3 -I video/technologic.py "$out/outlines.tsv" "$track/verse1.json" "$out/fonts" "$out/picture.mp4" "$@"
 case " $* " in *" --sheet "*) exit 0 ;; esac
 
-# The music: bars 12 to 23, then the chorus, joined on its downbeat and faded out.
-read -r a0 a1 c0 c1 < <(python3 -c "
+# The music: bars 24 to 38 in one stretch, ending on bar 38's downbeat with
+# a short ring-out.
+read -r a0 a1 < <(python3 -c "
 import json; b = json.load(open('$track/verse1.json'))['beats']
-print(b[48], b[96], b[128], b[144] + 1.5)")
-fade=$(python3 -c "print($c1 - $c0 - 1.6)")
-run ffmpeg -loglevel error -y -i "$track/technologic.wav" -filter_complex \
-  "[0]atrim=$a0:$a1,asetpts=PTS-STARTPTS[a];[0]atrim=$c0:$c1,asetpts=PTS-STARTPTS,afade=t=out:st=$fade:d=1.6[c];[a][c]acrossfade=d=0.03:c1=tri:c2=tri" \
-  "$out/music.wav"
+print(b[96], b[152] + 0.7)")
+fade=$(python3 -c "print($a1 - $a0 - 0.5)")
+run ffmpeg -loglevel error -y -i "$track/technologic.wav" -af "atrim=$a0:$a1,asetpts=PTS-STARTPTS,afade=t=out:st=$fade:d=0.5" "$out/music.wav"
 run ffmpeg -loglevel error -y -i "$out/picture.mp4" -i "$out/music.wav" -c:v copy -c:a aac -b:a 192k -shortest "$out/trailer.mp4"
 echo "$out/trailer.mp4"
