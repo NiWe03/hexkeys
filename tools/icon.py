@@ -1,8 +1,8 @@
 """Writes the app icon as Android vector drawables from the keyboard's own key
 outlines: three hexagon keys of the space-at-the-bottom layout, one over two,
 merged into one rounded outline with seams where the keys meet, drawn in a
-blue, green and purple flow, with e on top and h and x below leaning towards
-the middle, each with its baseline along the seam beside it; and the same outline without letters as the
+blue, green and purple flow, with e on top and h and x below, each turned so
+its baseline runs along the seam between e and the other one; and the same outline without letters as the
 monochrome layer Android tints for themed icons.
 
 Usage:
@@ -27,9 +27,10 @@ from shapely.ops import unary_union
 RES = pathlib.Path(__file__).resolve().parent.parent / "android/app/src/main/res"
 
 # The keys the icon is made of, by their label in the layout, the letter each
-# shows, and how far that letter turns clockwise, in degrees: the seams
-# between the top key and the two below run 30 degrees from level.
-KEYS = [("r", "e", 0), ("d", "h", 30), ("f", "x", -30)]
+# shows, how far that letter turns clockwise, in degrees (the seams between
+# the top key and the two below run 30 degrees from level), and how far it
+# sits below its key's middle, in key widths, nearer the other two.
+KEYS = [("r", "e", 0, 0.1), ("d", "h", -30, 0), ("f", "x", 30, 0)]
 BACKGROUND = "#FF1B1B1F"
 FLOW = ["#FF5F72D9", "#FF3FA393", "#FFA465B8"]
 
@@ -40,7 +41,7 @@ SIZE = 72 * 0.6
 
 # In key widths: the outline's corner radius and stroke, the seams' stroke,
 # and the letters' size.
-CORNER, OUTLINE, SEAM, LETTER = 0.25, 0.1, 0.06, 0.5
+CORNER, OUTLINE, SEAM, LETTER = 0.25, 0.1, 0.06, 0.6
 
 
 def outlines(path: pathlib.Path) -> tuple[float, dict[str, Polygon]]:
@@ -120,7 +121,7 @@ def filled(data: str, flow: str) -> str:
 def main() -> None:
     cell, shapes = outlines(pathlib.Path(sys.argv[1]))
     font = TTFont(sys.argv[2])
-    polys = [shapes[key] for key, _, _ in KEYS]
+    polys = [shapes[key] for key, _, _, _ in KEYS]
     whole = unary_union(polys)
     minx, miny, maxx, maxy = whole.bounds
     scale = SIZE / max(maxx - minx, maxy - miny)
@@ -137,8 +138,10 @@ def main() -> None:
                 if line.length > 1:
                     seams.append(path_data(line.coords, scale, ox, oy, close=False))
     flow = gradient(minx * scale + ox, miny * scale + oy, maxx * scale + ox, maxy * scale + oy)
-    letters = [glyph(font, text, poly.centroid.x * scale + ox, poly.centroid.y * scale + oy, cell * LETTER * scale, angle)
-               for (_, text, angle), poly in zip(KEYS, polys)]
+    letters = [
+        glyph(font, text, poly.centroid.x * scale + ox, (poly.centroid.y + lower * cell) * scale + oy, cell * LETTER * scale, angle)
+        for (_, text, angle, lower), poly in zip(KEYS, polys)
+    ]
 
     colour = [stroked(outline, cell * OUTLINE * scale, None, flow)]
     colour += [stroked(seam, cell * SEAM * scale, None, flow) for seam in seams]
