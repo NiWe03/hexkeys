@@ -546,7 +546,7 @@ pub fn honeycomb() -> LayoutSpec {
             bottom_row("?123"),
         ],
         first_row_shifted: false,
-        numbers: None,
+        numbers: Some("1234567890".into()),
     }
 }
 
@@ -1279,8 +1279,13 @@ fn is_letter(label: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The honeycomb without its number row, whose cells are whole hexagons up to the top edge.
+    fn plain() -> LayoutSpec {
+        LayoutSpec { numbers: None, ..honeycomb() }
+    }
+
     fn layout() -> Layout {
-        Layout::fit(&honeycomb(), 1008.0, 1.0)
+        Layout::fit(&plain(), 1008.0, 1.0)
     }
 
     #[test]
@@ -1419,7 +1424,7 @@ mod tests {
 
     #[test]
     fn popup_follows_the_finger_and_stays_on_screen() {
-        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.3, 400);
+        let mut keyboard = Keyboard::new(plain(), 1008.0, 1.3, 400);
         keyboard.accents.insert('u', vec!['ü', 'ú', 'û']);
         let q = keyboard_index(&keyboard, "q");
         assert!(!keyboard.long_press(q), "q has no alternatives");

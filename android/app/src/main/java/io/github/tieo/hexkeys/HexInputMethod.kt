@@ -119,6 +119,12 @@ class HexInputMethod : InputMethodService() {
                     if (started == 1) deleted.clear()
                     var before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
                     connection.beginBatchEdit()
+                    // A selection goes first, as one piece, as backspace takes it.
+                    val selected = connection.getSelectedText(0)?.toString().orEmpty()
+                    if (deleted.isEmpty() && pieces > 0 && selected.isNotEmpty()) {
+                        connection.commitText("", 1)
+                        deleted.addLast(selected)
+                    }
                     while (deleted.size < pieces && before.isNotEmpty()) {
                         // A word goes with the spaces after it, as ctrl and backspace take it.
                         val piece = if (words == 1) {

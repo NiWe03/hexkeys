@@ -99,6 +99,9 @@ class KeyboardView(
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
     }
+    /** Whether flicking down rather than up types a key's alternative, which then shows below its sign. */
+    private var hintBelow = false
+
     /** The small sign on a punctuation key for what flicking it types. */
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
@@ -132,7 +135,7 @@ class KeyboardView(
         selectedPaint.color = theme.accent
         labelPaint.color = theme.label
         hintPaint.color = theme.label
-        hintPaint.alpha = 0x99
+        hintPaint.alpha = 0xA8
         stripPaint.color = theme.label
         dividerPaint.color = theme.other
         trailPaint.color = theme.accent
@@ -185,6 +188,7 @@ class KeyboardView(
             preferences.getBoolean(DELETE_FROM_LEFT, false),
             CAPITALS.indexOf(preferences.getString(CAPITAL, null)).coerceAtLeast(0),
         )
+        hintBelow = preferences.getString(CAPITAL, null) == "flick_down"
         headroom = Core.headroom(handle).toInt()
         loadOutlines()
         setMeasuredDimension(width, keysTop + Core.height(handle).toInt() + navigationBar)
@@ -262,11 +266,16 @@ class KeyboardView(
             canvas.drawPath(path, keyPaint)
             canvas.drawPath(path, gapPaint)
             val position = Core.labelPosition(handle, index)
-            drawLabel(canvas, Core.label(handle, index), position, cellWidth)
             val hint = Core.keyHint(handle, index)
-            if (hint.isNotEmpty()) {
-                hintPaint.textSize = cellWidth * 0.2f
-                canvas.drawText(hint, position[0] + cellWidth * 0.22f, position[1] - cellWidth * 0.14f, hintPaint)
+            if (hint.isEmpty()) {
+                drawLabel(canvas, Core.label(handle, index), position, cellWidth)
+            } else {
+                // The alternative sits on the side the flick goes to, the key's own sign moved off it.
+                val side = if (hintBelow) 1f else -1f
+                val shifted = floatArrayOf(position[0], position[1] - side * cellWidth * 0.12f)
+                drawLabel(canvas, Core.label(handle, index), shifted, cellWidth)
+                hintPaint.textSize = cellWidth * 0.36f
+                drawCentred(canvas, hint, position[0], position[1] + side * cellWidth * 0.2f, hintPaint)
             }
         }
         val choices = Core.popupCount(handle)
@@ -342,9 +351,25 @@ class KeyboardView(
 
     /** Single characters large, words such as "space" smaller so they fit their key. */
     private fun drawLabel(canvas: Canvas, label: String, position: FloatArray, cellWidth: Float) {
-        labelPaint.textSize = cellWidth * if (label.codePointCount(0, label.length) == 1) 0.36f else 0.24f
+        val single = label.codePointCount(0, label.length) == 1
+        labelPaint.textSize = cellWidth * if (single) 0.36f else 0.24f
+        if (single && !label[0].isLetterOrDigit()) {
+            drawCentred(canvas, label, position[0], position[1], labelPaint)
+            return
+        }
         val baseline = position[1] - (labelPaint.descent() + labelPaint.ascent()) / 2
         canvas.drawText(label, position[0], baseline, labelPaint)
+    }
+
+    private val glyphBounds = Rect()
+
+    /**
+     * Draws text centred on its own ink rather than on the line it sits on:
+     * a full stop or comma sits low on the line and would look misplaced.
+     */
+    private fun drawCentred(canvas: Canvas, text: String, x: Float, y: Float, paint: Paint) {
+        paint.getTextBounds(text, 0, text.length, glyphBounds)
+        canvas.drawText(text, x, y - glyphBounds.exactCenterY(), paint)
     }
 
     private fun path(corners: FloatArray) = Path().apply {

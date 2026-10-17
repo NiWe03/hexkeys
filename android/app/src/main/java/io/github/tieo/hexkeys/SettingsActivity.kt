@@ -77,7 +77,7 @@ class SettingsActivity : Activity() {
         column.addView(ui.card(
             ui.label("Layout"),
             ui.segmented(
-                listOf("hexkeys" to "Hexkeys", KeyboardView.SPACE_MIDDLE to "the reference layout test"),
+                listOf("hexkeys" to "Space at the bottom", KeyboardView.SPACE_MIDDLE to "Space and marks in the middle"),
                 ui.preferences.getString(KeyboardView.LAYOUT, null) ?: "hexkeys",
             ) { id -> ui.preferences.edit().putString(KeyboardView.LAYOUT, id).apply() },
             ui.label("Theme"),
