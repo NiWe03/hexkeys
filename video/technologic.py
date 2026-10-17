@@ -39,12 +39,12 @@ FIRST_BAR = 16
 CHORUS_BAR = 32
 END_BAR = 36
 # What each bar of the full beat shows, one thing hexkeys does per bar.
-FEATURES = {16: "arrival", 17: "swipe", 18: "flick", 19: "suggestions", 20: "slide", 21: "glide", 22: "hold", 23: "languages",
-            24: "speak", 25: "speak", 26: "clipboard", 27: "passwords", 28: "emoji_search", 29: "punctuation", 30: "themes", 31: "source"}
+FEATURES = {16: "arrival", 17: "swipe", 18: "flick", 19: "suggestions", 20: "glide", 21: "hold", 22: "clipboard", 23: "speak",
+            24: "speak", 25: "slide", 26: "languages", 27: "emoji_search", 28: "send", 29: "themes", 30: "themes", 31: "source"}
 # Where each bar's gesture happens, for the camera: centre and zoom.
-FOCUS = {16: (960, 560, 1.0), 17: (960, 560, 1.06), 18: (960, 520, 1.1), 19: (960, 420, 1.14), 20: (1000, 470, 1.18),
-         21: (960, 450, 1.2), 22: (960, 520, 1.12), 23: (960, 620, 1.08), 24: (960, 500, 1.0), 25: (960, 470, 1.06),
-         26: (900, 500, 1.06), 27: (960, 500, 1.06), 28: (960, 560, 1.04), 29: (960, 500, 1.08), 30: (960, 560, 1.0), 31: (960, 540, 1.0)}
+FOCUS = {16: (960, 560, 1.0), 17: (960, 520, 1.04), 18: (960, 500, 1.06), 19: (960, 420, 1.1), 20: (960, 380, 1.14),
+         21: (960, 420, 1.1), 22: (960, 400, 1.08), 23: (960, 460, 1.0), 24: (960, 460, 1.02), 25: (1000, 400, 1.12),
+         26: (960, 500, 1.04), 27: (960, 520, 1.02), 28: (960, 460, 1.04), 29: (960, 520, 1.0), 30: (960, 520, 1.0), 31: (960, 540, 1.0)}
 
 
 class Song:
@@ -112,9 +112,14 @@ class Camera:
 
 
 class Cut(render.Film):
+    def start(self):
+        """Where the cut starts in the song: just before the first sung word of
+        bar 16, which comes a little ahead of the bar line, so text can land on it."""
+        return min(self.song.bar_time(FIRST_BAR), self.song.bars[FIRST_BAR]["onsets"][0]) - 0.06
+
     def song_time(self, v):
-        """The song's time at video time v: one stretch from bar 16 on."""
-        return self.song.bar_time(FIRST_BAR) + v
+        """The song's time at video time v: one stretch from just before bar 16 on."""
+        return self.start() + v
 
     def frame(self, v, scale):
         return super().frame(self.song_time(v), scale)
@@ -127,8 +132,9 @@ class Cut(render.Film):
         beat_map.write_text(json.dumps({"beat": beat, "sections": [{"name": "song", "bar": 0}]}))
         super().__init__(outlines, beat_map, fonts)
         self.song = song
-        self.length = song.bar_time(END_BAR) - song.bar_time(FIRST_BAR)
+        self.length = song.bar_time(END_BAR) - self.start()
         self.camera = self.shots()
+        self.write_story()
 
     # ------------------------------------------------ timing
 
@@ -148,7 +154,7 @@ class Cut(render.Film):
 
     # ------------------------------------------------ hexkeys
 
-    PLACE = (960, 680, 700)
+    PLACE = (960, 730, 680)
 
     def feature_word(self, ctx, t, word, x, y, size, at, until, colour=PAPER, font=None):
         """A bar's word, set right where its gesture happens, rising in glyph by
@@ -169,11 +175,11 @@ class Cut(render.Film):
 
     # Each feature bar's colour field, and where the next one opens from: the
     # spot the previous bar's gesture ended on, in frame coordinates.
-    FIELDS = {16: INK, 17: (0.02, 0.02, 0.03), 18: (0.07, 0.09, 0.22), 19: (0.05, 0.05, 0.07), 20: (0.17, 0.05, 0.09),
-              21: (0.03, 0.14, 0.12), 22: (0.13, 0.06, 0.18), 23: (0.93, 0.93, 0.95), 24: (0.04, 0.05, 0.12), 25: (0.04, 0.05, 0.12),
-              26: (0.12, 0.40, 0.36), 27: (0.20, 0.24, 0.52), 28: (0.40, 0.22, 0.46), 29: (0.92, 0.92, 0.94), 30: (0.118, 0.102, 0.094), 31: INK}
-    OPEN_FROM = {17: (960, 300), 18: (960, 560), 19: (960, 300), 20: (960, 300), 21: (700, 380), 22: (960, 420), 23: (960, 420),
-                 24: (900, 330), 25: (960, 560), 26: (960, 600), 27: (960, 400), 28: (960, 400), 29: (960, 560), 30: (960, 500), 31: (960, 540)}
+    FIELDS = {16: INK, 17: (0.02, 0.02, 0.03), 18: (0.07, 0.09, 0.22), 19: (0.05, 0.05, 0.07), 20: (0.03, 0.14, 0.12),
+              21: (0.13, 0.06, 0.18), 22: (0.12, 0.40, 0.36), 23: (0.04, 0.05, 0.12), 24: (0.04, 0.05, 0.12), 25: (0.17, 0.05, 0.09),
+              26: (0.93, 0.93, 0.95), 27: (0.40, 0.22, 0.46), 28: (0.20, 0.24, 0.52), 29: INK, 30: INK, 31: INK}
+    OPEN_FROM = {17: (960, 270), 18: (960, 560), 19: (960, 270), 20: (700, 380), 21: (960, 420), 22: (960, 400), 23: (960, 600),
+                 25: (960, 270), 26: (900, 420), 27: (700, 900), 28: (960, 300), 29: (1300, 600), 31: (960, 540)}
 
     def field(self, ctx, t, bar):
         """The bar's colour, opening as a hexagon from where the last gesture ended."""
@@ -213,13 +219,18 @@ class Cut(render.Film):
         return out
 
     def arrival(self, ctx, t, h, o, end, place):
-        """It arrives: the keys land in a wave, the name lands over them."""
+        """It arrives: the keys land in a wave on the first sung word and the
+        name is typed on them, a key per letter, each letter landing big over
+        the keyboard as its key is struck."""
+        name = "hexkeys"
+        step = 0.115
+        taps = [(h[0] + i * step, c) for i, c in enumerate(name)]
+
         def key_fx(key):
             d = math.hypot(key["centre"][0] - self.kb.width / 2, key["centre"][1] - self.kb.height / 2) / 700
-            p = out_back(span(t, h[0] + d * 0.25, h[0] + d * 0.25 + 0.35), 2.2)
-            return (0, 0, 0, max(p, 0.01), 1) if t > h[0] else (0, 0, 0, 1, 1)
-        self.hex_keyboard(ctx, place, t, self.press_map(t, [(at, l) for at, l in zip(o[1:], "hexkeys")]), key_fx=key_fx)
-        # Rings of hexagons from the middle on every main word.
+            p = out_back(span(t, h[0] - 0.1 + d * 0.2, h[0] - 0.1 + d * 0.2 + 0.3), 2.2)
+            return (0, 0, 0, max(p, 0.01), 1)
+        self.hex_keyboard(ctx, place, t, self.press_map(t, taps), key_fx=key_fx)
         for i, at in enumerate(h):
             k = span(t, at, at + 0.9)
             if 0 < k < 1:
@@ -227,114 +238,208 @@ class Cut(render.Film):
                 ctx.set_source_rgba(*flow(i / 3), 0.7 * (1 - k))
                 ctx.set_line_width(5 * (1 - k) + 1)
                 ctx.stroke()
-        self.feature_word(ctx, t, "hexkeys", 960, 300, 170, h[1], end - 0.15)
-
-    def flick(self, ctx, t, h, o, end, place):
-        """Flick up: a capital, four times, each big over the key it came from."""
-        letters = "hexk"
-        taps = list(zip(h, letters))
-        self.hex_keyboard(ctx, place, t, self.press_map(t, taps))
+        size = 170
+        x = 960 - self.heavy.width(name, size) / 2
+        leave = in_expo(span(t, end - 0.3, end - 0.05))
         for at, c in taps:
-            x, y = self.key_xy(c, place)
-            k = span(t, at - 0.05, at + 0.4)
-            if 0 < k < 1:
-                rise = out_expo(span(t, at - 0.05, at + 0.1))
-                self.trail(ctx, [(x, y), (x, y - rise * 60)], GREEN, 18, 1 - span(k, 0.6, 1), fade=False)
-                self.finger(ctx, x, y - rise * 60, 1, 1 - span(k, 0.4, 0.7))
-            p = out_back(span(t, at, at + 0.25), 2.4)
-            q = span(t, at + 0.35, at + 0.5) if at != h[-1] else span(t, end - 0.25, end - 0.05)
-            if p > 0 and q < 1:
-                size = 260 * max(p, 0.01)
-                self.heavy.text(ctx, c.upper(), x, y - 120 - 140 * p, size, flow(letters.index(c) / 3), align=0.5, alpha=1 - q)
-        typed = "".join(c.upper() for at, c in taps if at <= t)
-        self.text_line(ctx, typed, 250, 64, centre_on="HEXK")
-        self.mono.text(ctx, "FLICK UP · CAPITAL", 960, 290, 22, DIM, align=0.5, alpha=span(t, h[0], h[0] + 0.2) * (1 - span(t, end - 0.2, end)))
-
-    def slide(self, ctx, t, h, o, end, place):
-        """Slide in from the number row's right: the text goes letter by letter, then words."""
-        text = "typed on the wrong keyboard"
-        cx, cy, width = place
-        x_start = self.key_xy("9", place)[0]
-        x_end = self.key_xy("1", place)[0]
-        y = self.key_xy("9", place)[1] + 16
-        k = in_out_cubic(span(t, o[0] - 0.1, o[-1]))
-        fxp = lerp(x_start, x_end, k)
-        gone = sum(1 for at in o if at <= t)
-        cut = [0, 1, 2, 4, 6, 9, 14, 20, 27][min(8, gone)]
-        shown = text[:max(0, len(text) - cut)]
-        presses = {}
-        for key in self.kb.keys:
-            if key["label"].isdigit():
-                presses[key["label"]] = math.exp(-abs(self.key_xy(key["label"], place)[0] - fxp) / 40) * 0.9
-        self.hex_keyboard(ctx, place, t, presses)
-        x0 = self.text_line(ctx, shown, 250, 58, caret=len(shown), centre_on=text)
-        # The letters that went, flying off as small hexagons.
-        for i, at in enumerate(o):
-            if at > t:
-                continue
-            kk = span(t, at, at + 0.8)
-            if kk >= 1:
-                continue
-            a = [0, 1, 2, 4, 6, 9, 14, 20, 27][i]
-            b = [0, 1, 2, 4, 6, 9, 14, 20, 27][i + 1]
-            for j in range(len(text) - b, len(text) - a):
-                px = x0 + self.sans_bold.width(text[:j], 58)
-                seed = (j * 37) % 97 / 97
-                ang = -math.pi / 2 + (seed - 0.5) * 2.2
-                d = out_expo(kk) * (120 + seed * 260)
-                rounded_hexagon(ctx, px + math.cos(ang) * d, 230 + math.sin(ang) * d + kk * kk * 200, 18 * (1 - kk), 0.2)
-                ctx.set_source_rgba(*flow(seed), 1 - kk)
-                ctx.fill()
-        self.trail(ctx, [(x_start, y), (fxp, y)], lambda f: mix(PURPLE, (1, 0.35, 0.45), f), 18, 1 - span(t, end - 0.25, end))
-        self.finger(ctx, fxp, y, 1, span(t, o[0] - 0.2, o[0]) * (1 - span(t, end - 0.25, end)))
-        self.feature_word(ctx, t, "slide", fxp, y - 70, 64, h[0], end - 0.2, colour=(1, 0.45, 0.52))
-
-    def glide(self, ctx, t, h, o, end, place):
-        """Glide along the number row's middle: the caret walks, a step per word."""
-        text = "hexagons are the bestagons"
-        mid = self.key_xy("5", place)
-        y = mid[1] + 16
-        steps = sum(1 for at in o if at <= t)
-        caret = len(text) - steps * 2
-        kw = place[2] / self.kb.width * self.kb.cell
-        glide = len(text) - caret
-        fxp = mid[0] - glide * 0.3 * kw * 0.5
-        presses = {}
-        for key in self.kb.keys:
-            if key["label"].isdigit():
-                presses[key["label"]] = math.exp(-abs(self.key_xy(key["label"], place)[0] - fxp) / 40) * 0.9
-        self.hex_keyboard(ctx, place, t, presses)
-        x0 = self.text_line(ctx, text, 250, 58, caret=caret)
-        # A ruler over the number row, a tick per character.
-        top = y - 90
-        for i in range(-14, 15):
-            x = mid[0] + i * 0.15 * kw
-            big = i % 5 == 0
-            ctx.set_source_rgba(*(GREEN if big else DIM), 0.9 if big else 0.5)
-            ctx.rectangle(x - 1, top - (16 if big else 8), 2, 16 if big else 8)
+            adv = self.heavy.advance(c, size)
+            p = out_back(span(t, at, at + 0.14), 2.6)
+            if p > 0:
+                ctx.save()
+                ctx.translate(x + adv / 2, 300 - size * 0.35 - leave * 200)
+                ctx.scale(max(p, 0.01), max(p, 0.01))
+                self.heavy.text(ctx, c, -adv / 2, size * 0.35, size, PAPER, alpha=1 - leave)
+                ctx.restore()
+            x += adv
+        # The cursor after the last letter typed.
+        typed = sum(1 for at, _ in taps if at <= t)
+        if t >= h[0] - 0.05 and leave < 1 and (typed < len(name) or int(t * 3) % 2 == 0):
+            cx = 960 - self.heavy.width(name, size) / 2 + self.heavy.width(name[:typed], size)
+            ctx.set_source_rgba(*ERAS[4]["accent"], 1 - leave)
+            ctx.rectangle(cx + 6, 300 - size * 0.75 - leave * 200, 10, size * 0.85)
             ctx.fill()
-        self.trail(ctx, [mid[:1] + (y,), (fxp, y)], GREEN, 16, 1 - span(t, end - 0.25, end))
-        self.finger(ctx, fxp, y, 1, span(t, o[0] - 0.2, o[0]) * (1 - span(t, end - 0.25, end)))
-        cx = x0 + self.sans_bold.width(text[:caret], 58)
-        self.feature_word(ctx, t, "glide", cx, 160, 64, h[0], end - 0.2, colour=GREEN)
+
+    # ------------------------------------------------ the message
+
+    COMPOSER = (520, 60, 880, 250)
+
+    def write_story(self):
+        """The one message the trailer writes, as (time, text, caret) states:
+        swiped, capitalised, finished from the strip, corrected in the middle,
+        given an address, dictated, trimmed, signed off in German, given a bee
+        and sent; Sam's reply comes after."""
+        song = self.song
+        o = song.eighths
+        h = song.hits
+        b = song.beats
+        states = [(0.0, "", 0)]
+
+        def put(t, text, caret=None):
+            states.append((t, text, len(text) if caret is None else caret))
+
+        # 17 swipe
+        self.swiped = []
+        text = ""
+        for i, word in enumerate("see you at the hive".split()):
+            s0 = o(17)[0] + i * 0.19
+            self.swiped.append((word, s0, s0 + 0.16))
+            text = (text + " " + word).strip()
+            put(s0 + 0.16, text)
+        # 18 flick: the capital S
+        self.flick_at = h(18)[0]
+        text = "S" + text[1:]
+        put(self.flick_at + 0.05, text)
+        # 19 suggestions: " tomor", then tomorrow from the strip
+        sixteenth = (o(19)[1] - o(19)[0]) / 2
+        self.suggest_taps = [(o(19)[0] + i * sixteenth, c) for i, c in enumerate(" tomor")]
+        for k, (at, c) in enumerate(self.suggest_taps):
+            put(at, text + " tomor"[:k + 1])
+        self.suggest_pick = h(19)[2]
+        text = text + " tomorrow"
+        put(self.suggest_pick, text)
+        # 20 glide: the caret walks back to after "hive", a character per step
+        back = len(" tomorrow")
+        self.glide_steps = []
+        for k in range(back):
+            at = o(20)[0] + k * (o(20)[5] - o(20)[0]) / back
+            self.glide_steps.append(at)
+            put(at, text, len(text) - k - 1)
+        caret = len(text) - back
+        # 21 hold: " caf" typed there, é from a hold, then ? at the end
+        sixteenth = (o(21)[1] - o(21)[0]) / 2
+        self.hold_taps = [(o(21)[0] + i * sixteenth, c) for i, c in enumerate(" caf")]
+        for k, (at, c) in enumerate(self.hold_taps):
+            ins = " caf"[:k + 1]
+            put(at, text[:caret] + ins + text[caret:], caret + len(ins))
+        self.hold_at = (h(21)[1] - 0.05, h(21)[2] - 0.08)
+        text = text[:caret] + " café" + text[caret:]
+        put(self.hold_at[1], text, caret + len(" café"))
+        self.question_at = h(21)[3] - 0.1
+        text += "?"
+        put(self.question_at, text)
+        # 22 clipboard: the address pasted on its own line
+        self.paste_at = h(22)[1]
+        text += "\nWabengasse 6"
+        put(self.paste_at, text)
+        # 23, 24 speak: the next line dictated, a stretch at a time, on beats
+        self.stretches = [("Bring the", b[92]), ("board game", b[94]), ("and snacks", b[96]), ("for later.", b[98])]
+        line = ""
+        for words, at in self.stretches:
+            line = (line + " " + words).strip()
+            put(at, text + "\n" + line)
+        text += "\n" + line
+        # 25 slide: " and snacks for later." goes, faster as the finger goes on
+        cut = " and snacks for later."
+        counts = [1, 2, 4, 7, 11, 16, 22, len(cut)]
+        self.slide_cuts = []
+        for at, n in zip(o(25), counts):
+            self.slide_cuts.append((at, n))
+            put(at, text[:len(text) - n])
+        text = text[:len(text) - len(cut)]
+        # 26 languages: flick to German, "Bis dann" on a new line
+        self.language_at = h(26)[0]
+        sixteenth = (o(26)[1] - o(26)[0]) / 2
+        self.german_taps = [(o(26)[1] + i * sixteenth, c) for i, c in enumerate("\nBis dann")]
+        for k, (at, c) in enumerate(self.german_taps):
+            put(at, text + "\nBis dann"[:k + 1])
+        text += "\nBis dann"
+        # 27 emoji: a bee, found by name
+        self.bee_at = h(27)[3] - 0.1
+        text += " 🐝"
+        put(self.bee_at, text)
+        # 28 send: a flick up on enter
+        self.send_at = h(28)[1]
+        self.message = text
+        put(self.send_at, "", 0)
+        self.reply_at = h(29)[1]
+        self.states = states
+
+    def state(self, t):
+        best = self.states[0]
+        for st in self.states:
+            if st[0] <= t:
+                best = st
+            else:
+                break
+        return best[1], best[2]
+
+    def draw_text(self, ctx, text, x, y, size, colour, caret=None, line_height=1.25, alpha=1.0, accent=None):
+        """Multi-line text, emoji drawn from the emoji font, with an optional
+        caret; returns where the caret is."""
+        caret_xy = None
+        lx, ly = x, y
+        for i, ch in enumerate(text):
+            if caret == i:
+                caret_xy = (lx, ly)
+            if ch == "\n":
+                lx, ly = x, ly + size * line_height
+                continue
+            if ord(ch) > 0x2600:
+                self.emoji.text(ctx, ch, lx, ly, size, colour, alpha=alpha)
+                lx += self.emoji.advance(ch, size)
+                continue
+            self.sans_bold.text(ctx, ch, lx, ly, size, colour, alpha=alpha)
+            lx += self.sans_bold.advance(ch, size)
+        if caret is not None and caret >= len(text):
+            caret_xy = (lx, ly)
+        if caret_xy:
+            ctx.set_source_rgba(*(accent or ERAS[4]["accent"]), alpha)
+            ctx.rectangle(caret_xy[0] + 1, caret_xy[1] - size * 0.8, 4, size)
+            ctx.fill()
+        return caret_xy
+
+    def message_layout(self, text, caret, big=64, small=34):
+        """Where the message's characters go: the line with the caret big and
+        centred, the lines before it small and dim above it, the lines after
+        it small below. Returns per line (text, x, y, size, alpha) and the
+        caret's point."""
+        lines = text.split("\n")
+        before = text[:caret].split("\n")
+        current = len(before) - 1
+        out, caret_xy = [], None
+        width = lambda line, size: sum(self.emoji.advance(c, size) if ord(c) > 0x2600 else self.sans_bold.advance(c, size) for c in line)
+        y_current = 270
+        for i, line in enumerate(lines):
+            if i == current:
+                size, y, alpha = big, y_current, 1.0
+            elif i < current:
+                size, y, alpha = small, y_current - big * 0.95 - (current - 1 - i) * small * 1.3, 0.55
+            else:
+                size, y, alpha = small, y_current + small * 1.4 + (i - current - 1) * small * 1.3, 0.55
+            x = 960 - width(line, size) / 2
+            out.append((line, x, y, size, alpha))
+            if i == current:
+                caret_xy = (x + width(before[-1], size), y)
+        return out, caret_xy
+
+    def composer(self, ctx, t, alpha=1.0, light=False):
+        """The message as it stands, floating at the focus: the line being
+        written big, the rest small round it."""
+        text, caret = self.state(t)
+        rows, caret_xy = self.message_layout(text, caret)
+        ink = INK if light else PAPER
+        for line, x, y, size, a in rows:
+            self.draw_text(ctx, line, x, y, size, ink, alpha=alpha * a)
+        blink = int(t * 3) % 2 == 0 or any(abs(t - st[0]) < 0.3 for st in self.states)
+        if caret_xy and blink and text:
+            ctx.set_source_rgba(*ERAS[4]["accent"], alpha)
+            ctx.rectangle(caret_xy[0] + 2, caret_xy[1] - 64 * 0.8, 5, 64)
+            ctx.fill()
+        return caret_xy
+
+    def caret_point(self, t):
+        text, caret = self.state(t)
+        return self.message_layout(text, caret)[1] or (960, 270)
+
+    # ------------------------------------------------ the bars
 
     def swipe(self, ctx, t, h, o, end, place):
-        """Swipe: a stroke per word, five words on the bar's words."""
-        plan = [("type", "type", 0, 2), ("faster", "faster", 2, 4), ("and", "and", 4, 5), ("more", "more", 5, 6), ("hexact", "(h)exact!", 6, 7)]
-        words = [(path, shown, o[a], o[b] - 0.03 if b < len(o) else end - 0.2) for path, shown, a, b in plan]
+        """Swipe: the first words, a stroke each."""
         self.hex_keyboard(ctx, place, t)
-        done = [shown for path, shown, s0, s1 in words if t >= s1]
-        text = " ".join(done)
-        full = "type faster and more (h)exact!"
-        size = 68
-        x0 = self.text_line(ctx, text, 250, size, centre_on=full)
-        # The (h)ex of (h)exact in the accent colour.
-        if text.endswith("(h)exact!"):
-            hx = x0 + self.sans_bold.width(text[:len(text) - len("(h)exact!")], size)
-            self.sans_bold.text(ctx, "(h)ex", hx, 250, size, GREEN)
-        for path_word, shown, s0, s1 in words:
+        self.composer(ctx, t)
+        for word, s0, s1 in self.swiped:
             if s0 - 0.08 <= t <= s1 + 0.35:
-                path = smooth_path([self.key_xy(c, place) for c in path_word], 14)
+                path = smooth_path([self.key_xy(c, place) for c in word], 14)
                 path = [(x + 8 * math.sin(i * 0.4), y + 6 * math.cos(i * 0.3)) for i, (x, y) in enumerate(path)]
                 k = in_out_cubic(span(t, s0, s1))
                 tip, part = along(path, k)
@@ -342,68 +447,129 @@ class Cut(render.Film):
                 self.trail(ctx, part, flow, 18, fade)
                 if k < 1:
                     self.finger(ctx, *tip, 1, fade)
-        self.feature_word(ctx, t, "swipe", 960, 160, 70, o[0], end - 0.15, colour=PAPER)
+        self.feature_word(ctx, t, "swipe", 960, 405, 64, o[0], end - 0.15)
+
+    def flick(self, ctx, t, h, o, end, place):
+        """Flick up on s: its capital, big over the key, then in the text."""
+        at = self.flick_at
+        self.hex_keyboard(ctx, place, t, self.press_map(t, [(at, "s")]))
+        self.composer(ctx, t)
+        x, y = self.key_xy("s", place)
+        rise = out_expo(span(t, at - 0.08, at + 0.08))
+        if t < at + 0.4:
+            self.trail(ctx, [(x, y), (x, y - rise * 70)], GREEN, 18, 1 - span(t, at + 0.2, at + 0.4), fade=False)
+            self.finger(ctx, x, y - rise * 70, 1, 1 - span(t, at + 0.15, at + 0.3))
+        p = out_back(span(t, at, at + 0.25), 2.4)
+        q = span(t, end - 0.3, end - 0.1)
+        if p > 0 and q < 1:
+            self.heavy.text(ctx, "S", x, y - 120 - 120 * p, 280 * max(p, 0.01), GREEN, align=0.5, alpha=1 - q)
+        self.feature_word(ctx, t, "flick", 960, 405, 64, at, end - 0.15, colour=GREEN)
+
+    def suggestions(self, ctx, t, h, o, end, place):
+        """Suggestions: the strip answers each letter, as the app's strip() does; tomorrow is tapped."""
+        strips = {"t": ("t", "the", "to"), "to": ("town", "to", "too"), "tom": ("to", "tom", "Tom"),
+                  "tomo": ("tomo", "too", "tomorrow"), "tomor": ("tomor", "tomorrow", "honor")}
+        typed = "".join(c for at, c in self.suggest_taps if at <= t).strip()
+        slots = strips.get(typed, ("", "", "")) if t < self.suggest_pick + 0.15 else ("", "", "")
+        self.hex_keyboard(ctx, place, t, self.press_map(t, [(at, render.key_of(c)) for at, c in self.suggest_taps]))
+        x, y, w, hh = self.strip_words(ctx, place, slots, highlight=1 if self.suggest_pick - 0.12 <= t <= self.suggest_pick + 0.15 else None)
+        self.composer(ctx, t)
+        for at, c in self.suggest_taps:
+            if at - 0.05 <= t <= at + 0.08 and c != " ":
+                self.finger(ctx, *self.key_xy(c, place), 1, 1 - span(t, at, at + 0.08))
+        if self.suggest_pick - 0.2 <= t <= self.suggest_pick + 0.15:
+            self.finger(ctx, x + w / 2, y + hh / 2, 1, span(t, self.suggest_pick - 0.2, self.suggest_pick - 0.1) * (1 - span(t, self.suggest_pick, self.suggest_pick + 0.15)))
+        self.feature_word(ctx, t, "suggest", 960, 160, 60, o[0], end - 0.15, colour=GREEN)
+
+    def glide(self, ctx, t, h, o, end, place):
+        """Glide along the number row's middle: the caret walks back, a step per 0.3 keys."""
+        mid = self.key_xy("5", place)
+        y = mid[1] + 16
+        kw = place[2] / self.kb.width * self.kb.cell
+        steps = sum(1 for at in self.glide_steps if at <= t)
+        fxp = mid[0] - steps * 0.3 * kw * 0.55
+        presses = {}
+        for key in self.kb.keys:
+            if key["label"].isdigit():
+                presses[key["label"]] = math.exp(-abs(self.key_xy(key["label"], place)[0] - fxp) / 40) * 0.9
+        self.hex_keyboard(ctx, place, t, presses)
+        self.composer(ctx, t)
+        live = o[0] - 0.15 <= t <= end - 0.15
+        if live:
+            self.trail(ctx, [(mid[0], y), (fxp, y)], GREEN, 16, 1)
+            self.finger(ctx, fxp, y, 1, span(t, o[0] - 0.15, o[0]) * (1 - span(t, end - 0.3, end - 0.15)))
+        cx, cy = self.caret_point(t)
+        self.feature_word(ctx, t, "glide", cx, cy - 60, 54, o[0], end - 0.15, colour=GREEN)
 
     def hold(self, ctx, t, h, o, end, place):
-        """Hold for the letters a key also writes: a honeycomb of them opens."""
-        holds = [("e", "éèêëė", h[0], h[1], 0), ("1", "½⅓¼⅕⅙⅛", h[2], h[3], 0)]
-        text = "caf"
-        for label, choices, t0, t1, pick in holds:
-            if t >= t1:
-                text += choices[pick] if label == "e" else " " + choices[pick]
-        presses = {label: 1.0 for label, _, t0, t1, _ in holds if t0 <= t <= t1 + 0.1}
+        """Hold e: the letters it also writes open as a honeycomb; é is picked."""
+        t0, t1 = self.hold_at
+        taps = [(at, render.key_of(c)) for at, c in self.hold_taps] + [(self.question_at, "?")]
+        presses = self.press_map(t, taps)
+        if t0 <= t <= t1 + 0.1:
+            presses["e"] = 1.0
         self.hex_keyboard(ctx, place, t, presses)
-        self.text_line(ctx, text, 250, 72, centre_on="café ½")
+        self.composer(ctx, t)
         kw = place[2] / self.kb.width * self.kb.cell
         r = 0.72 * kw / math.sqrt(3)
-        for label, choices, t0, t1, pick in holds:
-            if not t0 - 0.05 <= t <= t1 + 0.3:
+        kx, ky = self.key_xy("e", place)
+        choices = "éèêëė"
+        open_ = out_back(span(t, t0 + 0.08, t0 + 0.28), 2.0) * (1 - span(t, t1 + 0.05, t1 + 0.3))
+        cells = [(kx + (i - (len(choices) - 1) / 2) * r * math.sqrt(3), ky - 1.4 * kw) for i in range(len(choices))]
+        for i, (ch, (px, py)) in enumerate(zip(choices, cells)):
+            if open_ <= 0.01:
                 continue
-            kx, ky = self.key_xy(label, place)
-            open_ = out_back(span(t, t0 + 0.1, t0 + 0.3), 2.0) * (1 - span(t, t1 + 0.05, t1 + 0.3))
-            cells = [(kx + (i - (len(choices) - 1) / 2) * r * math.sqrt(3), ky - 1.4 * kw) for i in range(len(choices))]
-            for i, (ch, (px, py)) in enumerate(zip(choices, cells)):
-                if open_ <= 0.01:
-                    continue
-                ctx.save()
-                ctx.translate(lerp(kx, px, open_), lerp(ky, py, open_))
-                ctx.scale(max(open_, 0.01), max(open_, 0.01))
-                rounded_hexagon(ctx, 0, 0, r * 0.95, 0.15)
-                ctx.set_source_rgb(*(ERAS[4]["accent"] if i == pick and t > t0 + 0.3 else mix(DUSK_OTHER, DUSK_LABEL, 0.12)))
-                ctx.fill()
-                self.sans.text(ctx, ch, 0, 15, 42, DUSK_LABEL, align=0.5)
-                ctx.restore()
-            m = in_out_cubic(span(t, t0 + 0.3, t1 - 0.05))
-            self.finger(ctx, lerp(kx, cells[pick][0], m), lerp(ky, cells[pick][1], m), 1, 1 - span(t, t1, t1 + 0.12))
-            ring = span(t, t0, t0 + 0.2)
+            ctx.save()
+            ctx.translate(lerp(kx, px, open_), lerp(ky, py, open_))
+            ctx.scale(max(open_, 0.01), max(open_, 0.01))
+            rounded_hexagon(ctx, 0, 0, r * 0.95, 0.15)
+            ctx.set_source_rgb(*(ERAS[4]["accent"] if i == 0 and t > t0 + 0.25 else mix(DUSK_OTHER, DUSK_LABEL, 0.12)))
+            ctx.fill()
+            self.sans.text(ctx, ch, 0, 15, 42, DUSK_LABEL, align=0.5)
+            ctx.restore()
+        if t0 - 0.05 <= t <= t1 + 0.12:
+            m = in_out_cubic(span(t, t0 + 0.25, t1 - 0.03))
+            self.finger(ctx, lerp(kx, cells[0][0], m), lerp(ky, cells[0][1], m), 1, 1 - span(t, t1, t1 + 0.12))
+            ring = span(t, t0, t0 + 0.15)
             if ring < 1:
                 ctx.arc(kx, ky, 56, -math.pi / 2, -math.pi / 2 + ring * 2 * math.pi)
                 ctx.set_source_rgb(*GREEN)
                 ctx.set_line_width(6)
                 ctx.stroke()
-            self.feature_word(ctx, t, "hold", kx, ky - 1.4 * kw - 90, 64, t0, t1 + 0.3, colour=PAPER)
+        for at, c in self.hold_taps:
+            if at - 0.05 <= t <= at + 0.08 and c != " ":
+                self.finger(ctx, *self.key_xy(c, place), 1, 1 - span(t, at, at + 0.08))
+        self.feature_word(ctx, t, "hold", kx, ky - 1.4 * kw - 80, 60, t0, end - 0.15)
 
-    def languages(self, ctx, t, h, o, end, place):
-        """A sideways flick on space for the next language: each one's word, big."""
-        steps = [("DE", "Haus"), ("VI", "việt"), ("FR", "ça"), ("EN", "I'm")]
-        code, word, at = "EN", "", None
-        for (c, w), hit in zip(steps, h):
-            if t >= hit:
-                code, word, at = c, w, hit
-        self.paper_keyboard(ctx, place, {}, code, t, [(hit, c) for (c, w), hit in zip(steps, h)])
-        if at is not None:
-            p = out_back(span(t, at, at + 0.2), 2.4)
-            self.heavy.text(ctx, word, 960, 300, 200 * max(p, 0.01), flow(h.index(at) / 3), align=0.5)
-        self.mono.text(ctx, "47 LANGUAGES · FLICK SPACE SIDEWAYS", 960, 345, 22, DIM, align=0.5, alpha=span(t, h[0], h[0] + 0.2) * (1 - span(t, end - 0.2, end)))
+    def clipboard(self, ctx, t, h, o, end, place):
+        """Clipboard: the address just copied waits in the strip; a tap puts it in."""
+        self.hex_keyboard(ctx, place, t)
+        x, y, w, hh = self.strip_bar(ctx, place)
+        at = self.paste_at
+        pill = out_back(span(t, o[0] - 0.1, o[0] + 0.15)) * (1 - span(t, at + 0.05, at + 0.2))
+        if pill > 0.01:
+            ctx.save()
+            ctx.translate(x + w / 2, y + hh / 2)
+            ctx.scale(pill, pill)
+            rounded_rect_path(ctx, -170, -22, 340, 44, 22)
+            ctx.set_source_rgb(*mix(DUSK_OTHER, PAPER, 0.15))
+            ctx.fill()
+            self.sans.text(ctx, "Wabengasse 6", 0, 8, 24, PAPER, align=0.5)
+            ctx.restore()
+        if at - 0.25 <= t <= at + 0.1:
+            self.finger(ctx, x + w / 2, y + hh / 2, 1, span(t, at - 0.25, at - 0.15) * (1 - span(t, at, at + 0.1)))
+        self.composer(ctx, t)
+        self.feature_word(ctx, t, "paste", x + w / 2, y - 40, 60, o[0], end - 0.15, colour=(0.55, 0.95, 0.85))
 
     def speak(self, ctx, t, h, o, end, place):
-        """Speak, over two bars: the mic rises out of the strip, the voice
-        rings round it, and the line appears a word per sung word, in place."""
-        first, second = self.song.eighths(24), self.song.eighths(25)
+        """Speak, over two bars: the mic rises out of the strip and rings with
+        the voice; the line comes in as the app writes it, a stretch at a time."""
+        first, second = self.song.eighths(23), self.song.eighths(24)
         rise = out_expo(span(t, first[0] - 0.15, first[0] + 0.3))
         sink = in_out_expo(span(t, first[0] - 0.2, first[0] + 0.25))
         if sink < 1:
-            self.hex_keyboard(ctx, (960, 680 + sink * 700, 700), t)
+            self.hex_keyboard(ctx, (960, place[1] + sink * 700, place[2]), t)
+        self.composer(ctx, t)
         hx, hy, r = 960, lerp(330, 640, rise), lerp(30, 120, rise)
         lv = 0.0
         for at in first[:7] + second[:7]:
@@ -437,40 +603,185 @@ class Cut(render.Film):
         ctx.line_to(0, 52)
         ctx.stroke()
         ctx.restore()
-        # LIVE, its dot pulsing, beside the mic.
-        la = rise * (1 - span(t, self.song.bar_time(26) - 0.2, self.song.bar_time(26)))
-        if la > 0:
-            dot = 0.55 + 0.45 * math.cos(t * 9)
-            ctx.arc(hx + 200, hy - 6, 11, 0, 2 * math.pi)
-            ctx.set_source_rgba(1, 0.27, 0.32, la * dot)
+        dot = 0.55 + 0.45 * math.cos(t * 9)
+        ctx.arc(hx + 200, hy - 6, 11, 0, 2 * math.pi)
+        ctx.set_source_rgba(1, 0.27, 0.32, rise * dot)
+        ctx.fill()
+        self.heavy.text(ctx, "LIVE", hx + 224, hy + 12, 50, PAPER, alpha=rise)
+        self.mono.text(ctx, "ON THE PHONE · 25 LANGUAGES", 960, 880, 22, DIM, align=0.5, alpha=rise)
+        # The keyboard comes back up at the end of the second bar.
+        back = out_expo(span(t, self.song.bar_time(25) - 0.35, self.song.bar_time(25)))
+        if back > 0:
+            self.hex_keyboard(ctx, (960, place[1] + (1 - back) * 700, place[2]), t)
+
+    def slide(self, ctx, t, h, o, end, place):
+        """Slide in from the number row's right: the end of the line goes, faster as it goes on."""
+        x_start = self.key_xy("9", place)[0]
+        x_end = self.key_xy("1", place)[0]
+        y = self.key_xy("9", place)[1] + 16
+        k = in_out_cubic(span(t, o[0] - 0.1, o[-1]))
+        fxp = lerp(x_start, x_end, k)
+        presses = {}
+        for key in self.kb.keys:
+            if key["label"].isdigit():
+                presses[key["label"]] = math.exp(-abs(self.key_xy(key["label"], place)[0] - fxp) / 40) * 0.9
+        self.hex_keyboard(ctx, place, t, presses)
+        self.composer(ctx, t)
+        live = o[0] - 0.2 <= t <= end - 0.1
+        if live:
+            self.trail(ctx, [(x_start, y), (fxp, y)], lambda f: mix(PURPLE, (1, 0.35, 0.45), f), 18, 1 - span(t, end - 0.25, end - 0.1))
+            self.finger(ctx, fxp, y, 1, span(t, o[0] - 0.2, o[0]) * (1 - span(t, end - 0.25, end - 0.1)))
+        # What goes flies off the caret as small hexagons.
+        cx, cy = self.caret_point(t)
+        for i, (at, n) in enumerate(self.slide_cuts):
+            kk = span(t, at, at + 0.7)
+            if 0 < kk < 1:
+                for j in range(3):
+                    seed = ((i * 7 + j * 13) % 29) / 29
+                    ang = -math.pi / 2 + (seed - 0.5) * 2.4
+                    d = out_expo(kk) * (80 + seed * 220)
+                    rounded_hexagon(ctx, cx + math.cos(ang) * d, cy - 15 + math.sin(ang) * d + kk * kk * 160, 14 * (1 - kk), 0.2)
+                    ctx.set_source_rgba(*flow(seed), 1 - kk)
+                    ctx.fill()
+        self.feature_word(ctx, t, "slide", fxp, y - 70, 60, o[0], end - 0.15, colour=(1, 0.45, 0.52))
+
+    def languages(self, ctx, t, h, o, end, place):
+        """A sideways flick on space: German, and the sign-off in it."""
+        at = self.language_at
+        code = "DE" if t >= at else "EN"
+        self.paper_keyboard(ctx, place, self.press_map(t, [(a, render.key_of(c)) for a, c in self.german_taps if c != "\n"]), code, t, [(at, "DE")])
+        self.composer(ctx, t, light=True)
+        p = out_back(span(t, at, at + 0.2), 2.4)
+        sx, sy = self.key_xy("space", place)
+        if p > 0:
+            self.heavy.text(ctx, "Deutsch", sx, sy - 330, 110 * max(p, 0.01), (0.29, 0.36, 0.78), align=0.5, alpha=1 - span(t, end - 0.3, end - 0.1))
+
+    def emoji_search(self, ctx, t, h, o, end, place):
+        """Emoji: a flick up on @#€ opens them as a honeycomb; "bee" finds the bee; it goes in."""
+        sym = self.key_xy("@#€", place)
+        open_ = out_expo(span(t, h[0], h[0] + 0.4)) * (1 - out_expo(span(t, self.bee_at + 0.15, self.bee_at + 0.5)))
+        self.hex_keyboard(ctx, place, t, key_fx=lambda key: (0, open_ * 700, 0, 1, 1 - open_), case_alpha=1 - open_)
+        self.composer(ctx, t)
+        if t < h[0] + 0.3:
+            m = out_expo(span(t, h[0] - 0.05, h[0] + 0.1))
+            self.finger(ctx, sym[0], sym[1] - m * 50, 1, 1 - span(t, h[0] + 0.1, h[0] + 0.3))
+        emoji = [e for e in "😀😍🤔😎🥳😭👍🙏🔥✨🎉🐝🍯🌍🍕☕🚀🎈🌈🐱🐶🦊🐢🍀⚡🎧📷💡🧩🔑⏰🐞🪲😊🤖🌻🍩"]
+        r = 54
+        cells = sorted(((r * math.sqrt(3) * (q + rr / 2), r * 1.5 * rr) for q in range(-3, 4) for rr in range(-3, 4) if abs(q + rr) <= 3),
+                       key=lambda c: (math.hypot(*c), math.atan2(c[1], c[0])))
+        centre = place[0], place[1] + 40
+        query = "bee"[:int(span(t, h[1], h[1] + 0.3) * 3 + 1e-6)] if t >= h[1] else ""
+        found = "🐝🐞🪲"
+        bee_xy = None
+        for i, ((px, py), e) in enumerate(zip(cells, emoji)):
+            d = math.hypot(px, py) / 500
+            k = out_back(span(t, h[0] + 0.1 + d * 0.4, h[0] + 0.4 + d * 0.4), 2.2) * (1 - span(t, self.bee_at + 0.1, self.bee_at + 0.4))
+            if k <= 0:
+                continue
+            match = query == "bee" and e in found
+            dimmed = 0.25 if query == "bee" and not match else 1
+            gx, gy = centre[0] + px * k, centre[1] + py * k
+            if e == "🐝":
+                bee_xy = (gx, gy)
+            rounded_hexagon(ctx, gx, gy, r * 0.92 * min(k, 1.2) * (1.15 if match else 1), 0.15)
+            ctx.set_source_rgba(1, 1, 1, 0.12 * dimmed)
             ctx.fill()
-            self.heavy.text(ctx, "LIVE", hx + 224, hy + 12, 50, PAPER, alpha=la)
-        # The words, each popping in on its own beat, the lines laid out in
-        # advance so nothing shifts as they arrive.
-        words = "Speak and every word lands the moment you say it, right on your phone, in 25 languages.".split()
-        onsets = first + second
-        lines = [words[:8], words[8:]]
-        size = 66
-        gap = size * 0.3
-        n = 0
-        for row, line in enumerate(lines):
-            width = sum(self.sans_bold.width(w, size) for w in line) + gap * (len(line) - 1)
-            x = 960 - width / 2
-            y = 210 + row * 88
-            for w in line:
-                at = onsets[n] if n < len(onsets) else onsets[-1]
-                k = out_back(span(t, at - 0.02, at + 0.16), 2.4)
-                if k > 0:
-                    ww = self.sans_bold.width(w, size)
-                    ctx.save()
-                    ctx.translate(x + ww / 2, y - size * 0.3)
-                    ctx.scale(max(k, 0.01), max(k, 0.01))
-                    fresh = 1 - span(t, at, at + 0.35)
-                    self.sans_bold.text(ctx, w, -ww / 2, size * 0.3, size, mix(PAPER, flow(n / 15), 0.8 * fresh), alpha=la)
-                    ctx.restore()
-                x += self.sans_bold.width(w, size) + gap
-                n += 1
-        self.mono.text(ctx, "SPEAK · ON THE PHONE · 25 LANGUAGES", 960, 880, 22, DIM, align=0.5, alpha=la)
+            self.emoji.text(ctx, e, gx, gy + 16, 44 * min(k, 1.2), PAPER, align=0.5, alpha=dimmed)
+        if bee_xy and self.bee_at - 0.25 <= t <= self.bee_at + 0.1:
+            self.finger(ctx, *bee_xy, 1, span(t, self.bee_at - 0.25, self.bee_at - 0.15) * (1 - span(t, self.bee_at, self.bee_at + 0.1)))
+        if h[1] - 0.1 <= t <= self.bee_at + 0.3:
+            rounded_rect_path(ctx, 760, 380, 400, 64, 32)
+            ctx.set_source_rgba(1, 1, 1, 0.16)
+            ctx.fill()
+            self.sans.text(ctx, query, 790, 424, 32, PAPER)
+
+    def send(self, ctx, t, h, o, end, place):
+        """A flick up on enter sends it: the message lifts out of the field as a bubble."""
+        at = self.send_at
+        x, y = self.key_xy("⏎", place)
+        self.hex_keyboard(ctx, place, t, self.press_map(t, [(at, "⏎")]))
+        if t < at:
+            self.composer(ctx, t)
+        else:
+            self.composer(ctx, t)
+            self.chat(ctx, t, None)
+        if at - 0.1 <= t <= at + 0.3:
+            m = out_expo(span(t, at - 0.08, at + 0.08))
+            self.trail(ctx, [(x, y), (x, y - m * 70)], GREEN, 18, 1 - span(t, at + 0.1, at + 0.3), fade=False)
+            self.finger(ctx, x, y - m * 70, 1, 1 - span(t, at + 0.1, at + 0.25))
+        self.feature_word(ctx, t, "send", x - 40, y - 140, 60, at - 0.1, end - 0.15, colour=GREEN)
+
+    def chat(self, ctx, t, theme):
+        """The conversation above: the message sent as a bubble on the right, Sam's reply on the left."""
+        at = self.send_at
+        k = out_expo(span(t, at, at + 0.4))
+        accent = theme[5] if theme else ERAS[4]["accent"]
+        ink = theme[4] if theme else PAPER
+        size = 30
+        lines = self.message.split("\n")
+        w = max(sum(self.emoji.advance(c, size) if ord(c) > 0x2600 else self.sans_bold.advance(c, size) for c in line) for line in lines) + 60
+        hh = len(lines) * size * 1.3 + 36
+        x1, y1 = self.COMPOSER[0] + 30, self.COMPOSER[1] + 20
+        x2, y2 = 1400 - w, 60
+        bx, by = lerp(x1, x2, k), lerp(y1, y2, k)
+        rounded_rect_path(ctx, bx, by, w, hh, 26)
+        ctx.set_source_rgb(*accent)
+        ctx.fill()
+        self.draw_text(ctx, self.message, bx + 30, by + 46, size, (1, 1, 1))
+        rk = out_back(span(t, self.reply_at, self.reply_at + 0.3), 1.8)
+        if rk > 0:
+            reply = "hexagons are the bestagons"
+            rw = self.sans_bold.width(reply, 34) + 60
+            ry = by + hh + 26
+            ctx.save()
+            ctx.translate(520, ry)
+            ctx.scale(max(rk, 0.01), max(rk, 0.01))
+            rounded_rect_path(ctx, 0, 0, rw, 76, 26)
+            ctx.set_source_rgb(*(theme[3] if theme else DUSK_OTHER))
+            ctx.fill()
+            self.sans_bold.text(ctx, reply, 30, 50, 34, ink)
+            ctx.restore()
+            self.sans.text(ctx, "Sam", 530, ry - 12, 22, ink, alpha=0.6 * min(1, rk))
+
+    def themes(self, ctx, t, h, o, end, place):
+        """Themes, over two bars: the whole chat flips to the next on each half bar, keys in a wave from the left."""
+        themes = [("Dusk", (0.106, 0.106, 0.122), DUSK_ROWS, DUSK_OTHER, DUSK_LABEL, (0.424, 0.482, 0.847)),
+                  ("Paper", (0.894, 0.894, 0.918), [(0.780, 0.843, 0.965), (0.769, 0.910, 0.831), (0.957, 0.812, 0.855)], (0.984, 0.984, 0.992), (0.106, 0.106, 0.122), (0.29, 0.36, 0.78)),
+                  ("Ember", (0.118, 0.102, 0.094), [(0.353, 0.227, 0.133), (0.306, 0.165, 0.165), (0.247, 0.227, 0.133)], (0.227, 0.204, 0.192), (0.953, 0.925, 0.902), (0.88, 0.54, 0.29)),
+                  ("Plain", (0.106, 0.106, 0.122), [(0.227, 0.227, 0.259)] * 3, (0.227, 0.227, 0.259), (0.910, 0.910, 0.933), (0.424, 0.482, 0.847))]
+        flips = [self.song.hits(29)[0], self.song.hits(29)[2], self.song.hits(30)[0], self.song.hits(30)[2]]
+        i = max(0, sum(1 for at in flips if at <= t) - 1)
+        theme = themes[i]
+        ctx.set_source_rgb(*mix(theme[1], PAPER if luminance(theme[1]) < 0.5 else INK, 0.06))
+        ctx.paint()
+        at = flips[i]
+        prev = themes[max(0, i - 1)]
+        cx, cy, width = place
+        kb = self.kb
+        k = width / kb.width
+        x0, y0 = cx - width / 2, cy - kb.height * k / 2
+        rounded_rect_path(ctx, x0 - 26, y0 - 26, width + 52, kb.height * k + 52, 28)
+        ctx.set_source_rgb(*theme[1])
+        ctx.fill()
+        for key in kb.keys:
+            kx, ky = key["centre"]
+            f = span(t, at + kx / kb.width * 0.25, at + kx / kb.width * 0.25 + 0.18)
+            _, _, r_, o_, l_, _ = theme if f >= 0.5 else prev
+            ctx.save()
+            ctx.translate(x0 + kx * k, y0 + ky * k)
+            ctx.scale(k * max(0.05, abs(math.cos(math.pi * f))), k)
+            ctx.translate(-kx, -ky)
+            polygon(ctx, key["outline"])
+            ctx.set_source_rgb(*(r_[key["row"]] if key["row"] is not None else o_))
+            ctx.fill()
+            text = {"⏎": "↵", "space": "", "123": "@#€"}.get(key["label"], key["label"])
+            if text:
+                size = kb.cell * (0.36 if len(text) == 1 else 0.22)
+                self.sans.text(ctx, text, kx, ky + size * 0.36, size, l_, align=0.5)
+            ctx.restore()
+        self.chat(ctx, t, theme)
+        p = out_back(span(t, at, at + 0.25), 2.2)
+        self.heavy.text(ctx, theme[0], 1500, 560, 90 * max(p, 0.01), theme[4], align=0.5, alpha=0.9)
 
     def strip_words(self, ctx, place, words, bold=1, alpha=1.0, highlight=None):
         """The strip over the keys with its three word slots, the middle one bold."""
@@ -486,170 +797,6 @@ class Cut(render.Film):
             size = min(30, 30 * (slot - 20) / max(1, font.width(word, 30)))
             font.text(ctx, word, sx, y + h / 2 + size * 0.36, size, DUSK_LABEL, align=0.5, alpha=alpha)
         return x, y, w, h
-
-    def suggestions(self, ctx, t, h, o, end, place):
-        """Suggestions: letters tapped on the words, the strip answering each,
-        as the app's own strip() does; the made-up word kept by tapping it."""
-        word = "bestagons"
-        taps = list(zip(o, word))
-        typed = "".join(c for at, c in taps if at <= t)
-        strips = {"b": ("b", "by", "but"), "be": ("he", "be", "been"), "bes": ("new", "bes", "best"), "best": ("beat", "best", "west"),
-                  "besta": ("besta", "best", "beta"), "bestag": ("bestag", "gestation", "bests"), "bestago": ("bestag", "gestation", "bests"),
-                  "bestagon": ("bestagon", "Pentagon", "gestation")}
-        slots = strips.get(typed, ("", "", ""))
-        self.hex_keyboard(ctx, place, t, self.press_map(t, taps))
-        self.strip_words(ctx, place, slots)
-        self.text_line(ctx, "hexagons are the " + typed, 250, 64, caret=None, centre_on="hexagons are the bestagons")
-        for at, c in taps:
-            if at - 0.06 <= t <= at + 0.1:
-                self.finger(ctx, *self.key_xy(c, place), 1, 1 - span(t, at, at + 0.1))
-        self.feature_word(ctx, t, "suggest", 960, 160, 60, h[0], end - 0.15, colour=GREEN)
-
-    def clipboard(self, ctx, t, h, o, end, place):
-        """Clipboard: what was just copied waits in the strip; one tap puts it in."""
-        self.hex_keyboard(ctx, place, t)
-        x, y, w, hh = self.strip_bar(ctx, place)
-        pill = out_back(span(t, h[0], h[0] + 0.25)) * (1 - span(t, h[2] + 0.05, h[2] + 0.2))
-        if pill > 0.01:
-            ctx.save()
-            ctx.translate(x + w / 2, y + hh / 2)
-            ctx.scale(pill, pill)
-            rounded_rect_path(ctx, -210, -22, 420, 44, 22)
-            ctx.set_source_rgb(*mix(DUSK_OTHER, PAPER, 0.15))
-            ctx.fill()
-            self.sans.text(ctx, "meet at the hive at 8?", 0, 8, 22, PAPER, align=0.5)
-            ctx.restore()
-        if h[1] <= t <= h[2] + 0.1:
-            self.finger(ctx, x + w / 2, y + hh / 2, 1, span(t, h[1], h[1] + 0.1) * (1 - span(t, h[2], h[2] + 0.1)))
-        text = "ok" + (" meet at the hive at 8?" if t >= h[2] else "")
-        self.text_line(ctx, text, 250, 60, caret=len(text), centre_on="ok meet at the hive at 8?")
-        self.feature_word(ctx, t, "paste", 960, 160, 70, h[0], end - 0.15, colour=(0.55, 0.95, 0.85))
-
-    def passwords(self, ctx, t, h, o, end, place):
-        """Passwords: the autofill service's login offered in the strip, filled with a tap."""
-        place = (960, 760, 620)
-        self.hex_keyboard(ctx, place, t)
-        x, y, w, hh = self.strip_bar(ctx, place)
-        chip = out_back(span(t, h[0], h[0] + 0.25))
-        cx_, cy_ = x + w - 190, y + hh / 2
-        ctx.save()
-        ctx.translate(cx_, cy_)
-        ctx.scale(max(chip, 0.01), max(chip, 0.01))
-        rounded_rect_path(ctx, -160, -22, 320, 44, 22)
-        ctx.set_source_rgb(*mix(DUSK_OTHER, PAPER, 0.15))
-        ctx.fill()
-        self.sans.text(ctx, "sam@example.com", 0, 8, 22, PAPER, align=0.5)
-        ctx.restore()
-        if h[1] - 0.1 <= t <= h[1] + 0.12:
-            self.finger(ctx, cx_, cy_, 1, 1 - span(t, h[1], h[1] + 0.12))
-        for i, (label, value) in enumerate((("Email", "sam@example.com"), ("Password", "•" * 12))):
-            fy = 120 + i * 120
-            self.sans.text(ctx, label, 640, fy, 24, PAPER, alpha=0.7)
-            rounded_rect_path(ctx, 640, fy + 12, 640, 62, 16)
-            ctx.set_source_rgba(1, 1, 1, 0.12)
-            ctx.fill()
-            n = int(span(t, h[1] + 0.05 + i * 0.2, h[2] + i * 0.3) * len(value))
-            self.sans.text(ctx, value[:n], 665, fy + 55, 30, PAPER)
-        self.feature_word(ctx, t, "fill", cx_, cy_ - 60, 60, h[1], end - 0.15, colour=PAPER)
-
-    def emoji_search(self, ctx, t, h, o, end, place):
-        """Emoji: a flick up on @#€ opens them as a honeycomb; a search finds the bees."""
-        sym = self.key_xy("@#€", place)
-        open_ = out_expo(span(t, h[0], h[0] + 0.4))
-        self.hex_keyboard(ctx, place, t, key_fx=lambda key: (0, open_ * 700, 0, 1, 1 - open_), case_alpha=1 - open_)
-        if t < h[0] + 0.3:
-            m = out_expo(span(t, h[0] - 0.05, h[0] + 0.1))
-            self.finger(ctx, sym[0], sym[1] - m * 50, 1, 1 - span(t, h[0] + 0.1, h[0] + 0.3))
-        emoji = [e for e in "😀😍🤔😎🥳😭👍🙏🔥✨🎉🐝🍯🌍🍕☕🚀🎈🌈🐱🐶🦊🐢🍀⚡🎧📷💡🧩🔑⏰🐞🪲😊🤖🌻🍩"]
-        r = 60
-        # A hexagon of hexagons, three rings round the middle one, centred where the keys were.
-        cells = sorted(((r * math.sqrt(3) * (q + rr / 2), r * 1.5 * rr) for q in range(-3, 4) for rr in range(-3, 4) if abs(q + rr) <= 3),
-                       key=lambda c: (math.hypot(*c), math.atan2(c[1], c[0])))
-        centre = place[0], place[1]
-        query = "bee"[:int(span(t, h[2], h[2] + 0.35) * 3 + 1e-6)] if t >= h[2] else ""
-        found = "🐝🐞🪲"
-        for i, ((px, py), e) in enumerate(zip(cells, emoji)):
-            d = math.hypot(px, py) / 500
-            k = out_back(span(t, h[0] + 0.1 + d * 0.4, h[0] + 0.4 + d * 0.4), 2.2)
-            if k <= 0:
-                continue
-            match = query == "bee" and e in found
-            dimmed = 0.25 if query == "bee" and not match else 1
-            gx, gy = centre[0] + px * k, centre[1] + py * k
-            rounded_hexagon(ctx, gx, gy, r * 0.92 * min(k, 1.2) * (1.15 if match else 1), 0.15)
-            ctx.set_source_rgba(1, 1, 1, 0.12 * dimmed)
-            ctx.fill()
-            self.emoji.text(ctx, e, gx, gy + 18, 50 * min(k, 1.2), PAPER, align=0.5, alpha=dimmed)
-        if t >= h[2] - 0.1:
-            rounded_rect_path(ctx, 700, 210, 520, 76, 38)
-            ctx.set_source_rgba(1, 1, 1, 0.16)
-            ctx.fill()
-            self.sans.text(ctx, query, 740, 260, 34, PAPER)
-        self.feature_word(ctx, t, "emoji", 960, 170, 70, h[0], end - 0.15, colour=PAPER)
-
-    def punctuation(self, ctx, t, h, o, end, place):
-        """Punctuation: a flick up on . types a comma, on ? an exclamation mark, on ↵ the field's action."""
-        flicks = [(h[0], ".", ","), (h[1], "?", "!"), (h[2], "⏎", "send")]
-        self.hex_keyboard(ctx, place, t)
-        text = "wait"
-        for at, key, out in flicks:
-            if t >= at + 0.05:
-                text += {",": ",", "!": " really!", "send": ""}[out]
-            x, y = self.key_xy(key, place)
-            k = span(t, at, at + 0.5)
-            if 0 < k < 1:
-                m = out_expo(span(t, at - 0.05, at + 0.1))
-                self.finger(ctx, x, y - m * 50, 1, 1 - span(t, at + 0.1, at + 0.25), colour=(0.2, 0.2, 0.25))
-                self.heavy.text(ctx, out, x, y - 60 - out_expo(k) * 110, 90, INK, align=0.5, alpha=1 - span(k, 0.5, 1))
-        sent = t >= h[2] + 0.05
-        if sent:
-            k = out_back(span(t, h[2] + 0.05, h[2] + 0.3))
-            fly = in_expo(span(t, h[3], h[3] + 0.4))
-            w = self.sans_bold.width(text, 52) + 60
-            rounded_rect_path(ctx, 960 - w / 2 + fly * 700, 210 - fly * 200, w * k, 80, 40)
-            ctx.set_source_rgb(*ERAS[4]["accent"])
-            ctx.fill()
-            self.sans_bold.text(ctx, text, 960 + fly * 700, 266 - fly * 200, 52, PAPER, align=0.5, alpha=span(t, h[2] + 0.1, h[2] + 0.25))
-        else:
-            self.text_line(ctx, text, 270, 64, caret=len(text), colour=INK, centre_on="wait, really!")
-
-    def themes(self, ctx, t, h, o, end, place):
-        """Themes: on each main word the keys flip to the next, in a wave from the left."""
-        themes = [("Dusk", (0.106, 0.106, 0.122), DUSK_ROWS, DUSK_OTHER, DUSK_LABEL),
-                  ("Paper", (0.894, 0.894, 0.918), [(0.780, 0.843, 0.965), (0.769, 0.910, 0.831), (0.957, 0.812, 0.855)], (0.984, 0.984, 0.992), (0.106, 0.106, 0.122)),
-                  ("Ember", (0.118, 0.102, 0.094), [(0.353, 0.227, 0.133), (0.306, 0.165, 0.165), (0.247, 0.227, 0.133)], (0.227, 0.204, 0.192), (0.953, 0.925, 0.902)),
-                  ("Plain", (0.106, 0.106, 0.122), [(0.227, 0.227, 0.259)] * 3, (0.227, 0.227, 0.259), (0.910, 0.910, 0.933))]
-        i = max(0, sum(1 for at in h if at <= t) - 1)
-        name, bg, rows, other, label = themes[i]
-        ctx.set_source_rgb(*mix(bg, PAPER if luminance(bg) < 0.5 else INK, 0.06))
-        ctx.paint()
-        at = h[i]
-        cx, cy, width = place
-        kb = self.kb
-        k = width / kb.width
-        x0, y0 = cx - width / 2, cy - kb.height * k / 2
-        rounded_rect_path(ctx, x0 - 26, y0 - 26, width + 52, kb.height * k + 52, 28)
-        ctx.set_source_rgb(*bg)
-        ctx.fill()
-        prev = themes[max(0, i - 1)]
-        for key in kb.keys:
-            kx, ky = key["centre"]
-            f = span(t, at + kx / kb.width * 0.25, at + kx / kb.width * 0.25 + 0.18)
-            _, _, r_, o_, l_ = themes[i] if f >= 0.5 else prev
-            ctx.save()
-            ctx.translate(x0 + kx * k, y0 + ky * k)
-            ctx.scale(k * max(0.05, abs(math.cos(math.pi * f))), k)
-            ctx.translate(-kx, -ky)
-            polygon(ctx, key["outline"])
-            ctx.set_source_rgb(*(r_[key["row"]] if key["row"] is not None else o_))
-            ctx.fill()
-            text = {"⏎": "↵", "space": "", "123": "@#€"}.get(key["label"], key["label"])
-            if text:
-                size = kb.cell * (0.36 if len(text) == 1 else 0.22)
-                self.sans.text(ctx, text, kx, ky + size * 0.36, size, l_, align=0.5)
-            ctx.restore()
-        p = out_back(span(t, at, at + 0.25), 2.2)
-        self.heavy.text(ctx, name, 960, 280, 150 * max(p, 0.01), label, align=0.5)
 
     def source(self, ctx, t, h, o, end, place):
         """Open source, the rule a flick follows scrolling past as the code it
@@ -761,7 +908,13 @@ class Cut(render.Film):
                 ctx.restore()
         # A honeycomb drawing itself outwards behind the icon, pulsing on the beat.
         beats = [bt for bt in self.song.beats if hits[0] <= bt <= self.song.bar_time(END_BAR)]
-        pulse = max([math.exp(-(t - bt) * 8) for bt in beats if bt <= t] or [0])
+        # A heartbeat on each sung word of the chorus: a thump and a smaller
+        # one after it, then rest until the next.
+        pulse = 0.0
+        for at in hits:
+            if at <= t:
+                d = t - at
+                pulse = max(pulse, math.exp(-d * 6) * (d >= 0), 0.55 * math.exp(-(d - 0.2) * 6) * (d >= 0.2))
         reach = out_cubic(span(t, hits[0], hits[0] + 3.0)) * 1300
         r = 64
         for row in range(-9, 10):
@@ -787,10 +940,9 @@ class Cut(render.Film):
             dim = 1 - 0.55 * span(t, after[i] + 0.4, after[i] + 1.0)
             out = 1.0
             self.heavy.text(ctx, word, 960 + dx, 500 + dy + 16, 40 * max(p, 0.01), mix(PAPER, flow(i / 11), 0.5), align=0.5, alpha=dim * out)
-        breathe = 1 + 0.035 * pulse * span(t, hits[0], hits[0] + 0.3)
+        breathe = 1 + 0.07 * pulse
         ctx.translate(960, 500)
         ctx.scale(breathe, breathe)
-        ctx.rotate(0.02 * math.sin(t * 1.3))
         ctx.translate(-960, -500)
         settle = gather
         for i, (k, letter, angle) in enumerate(zip(keys, "ehx", (0, -30, 30))):
@@ -825,14 +977,28 @@ class Cut(render.Film):
                 ctx.set_source_rgba(*flow(k / 2), 0.7 * (1 - ring))
                 ctx.set_line_width(4)
                 ctx.stroke()
-        self.slam(ctx, self.heavy, "hexkeys", 960, 900, 130, t / 0.05, hits[2] / 0.05, PAPER, align=0.5, stagger=0.6, dur=4)
-        self.typed(ctx, self.mono, "github.com/nanbiz/hexkeys", 960, 960, 30, t, hits[3], DIM, rate=0.02, align=0.5)
+        self.slam(ctx, self.heavy, "hexkeys", 960, 860, 130, t / 0.05, hits[2] / 0.05, PAPER, align=0.5, stagger=0.6, dur=4)
+        # The tagline under the name, its (h)ex in the accent.
+        tag = "type faster and more (h)exact!"
+        k = out_expo(span(t, hits[2] + 0.25, hits[2] + 0.6))
+        if k > 0:
+            size = 44
+            x = 960 - self.sans_bold.width(tag, size) / 2
+            y = 930 + (1 - k) * 20
+            self.sans_bold.text(ctx, tag[:21], x, y, size, PAPER, alpha=k)
+            x += self.sans_bold.width(tag[:21], size)
+            self.sans_bold.text(ctx, "(h)ex", x, y, size, GREEN, alpha=k)
+            x += self.sans_bold.width("(h)ex", size)
+            self.sans_bold.text(ctx, "act!", x, y, size, PAPER, alpha=k)
+        self.typed(ctx, self.mono, "github.com/nanbiz/hexkeys", 960, 995, 28, t, hits[3], DIM, rate=0.02, align=0.5)
         ctx.restore()
 
     # ------------------------------------------------ frames
 
     def scene(self, ctx, t):
         bar, x = self.song.bar_at(t)
+        # The cut starts a moment before bar 16's line, still inside bar 15.
+        bar = max(bar, FIRST_BAR)
         hit = 0.0
         if bar < CHORUS_BAR:
             self.hexkeys(ctx, t, bar)

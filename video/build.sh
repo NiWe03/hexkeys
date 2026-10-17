@@ -31,7 +31,9 @@ case " $* " in *" --sheet "*) exit 0 ;; esac
 # fade so the cut does not click.
 read -r a0 a1 < <(python3 -c "
 import json; b = json.load(open('$track/verse1.json'))['beats']
-print(b[64], b[144])")
+d = json.load(open('$track/verse1.json'))
+start = min(b[64], min(w['t'] for w in d['lines'][16]['words'] if w.get('t') is not None)) - 0.06
+print(start, b[144])")
 fade=$(python3 -c "print($a1 - $a0 - 0.08)")
 run ffmpeg -loglevel error -y -i "$track/technologic.wav" -af "atrim=$a0:$a1,asetpts=PTS-STARTPTS,afade=t=out:st=$fade:d=0.08" "$out/music.wav"
 run ffmpeg -loglevel error -y -i "$out/picture.mp4" -i "$out/music.wav" -c:v copy -c:a aac -b:a 192k -shortest "$out/trailer.mp4"
