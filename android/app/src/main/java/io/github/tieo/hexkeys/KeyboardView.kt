@@ -63,30 +63,48 @@ class KeyboardView(
     /** Room below the keys for the navigation bar, which the window draws under. */
     private var navigationBar = 0
 
-    private val background = 0xFF1B1B1F.toInt()
-    private val backgroundPaint = Paint().apply { color = background }
-    private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF3A3A42.toInt() }
-    private val pressedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF55555F.toInt() }
-    private val popupPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF4A4A54.toInt() }
-    private val selectedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF6C7BD8.toInt() }
+    private val backgroundPaint = Paint()
+    private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val popupPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val selectedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val gapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = background
         style = Paint.Style.STROKE
         strokeWidth = 3f * density
         strokeJoin = Paint.Join.ROUND
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFE8E8EE.toInt()
         textAlign = Paint.Align.CENTER
     }
     private val stripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFE8E8EE.toInt()
         textAlign = Paint.Align.CENTER
         textSize = 17 * resources.displayMetrics.scaledDensity
     }
     private val dividerPaint = Paint().apply {
-        color = 0xFF3A3A42.toInt()
         strokeWidth = density
+    }
+
+    var theme: Theme = Theme.current(context)
+        set(value) {
+            field = value
+            applyTheme()
+            invalidate()
+        }
+
+    private fun applyTheme() {
+        backgroundPaint.color = theme.background
+        // The gap between keys is the background showing through.
+        gapPaint.color = theme.background
+        popupPaint.color = theme.popup
+        selectedPaint.color = theme.accent
+        labelPaint.color = theme.label
+        stripPaint.color = theme.label
+        dividerPaint.color = theme.other
+    }
+
+    /** A key's colour: its letter's QWERTZ row colour, or the colour of other keys. */
+    private fun keyColor(index: Int): Int {
+        val row = Core.keyRow(handle, index)
+        return if (row in theme.rows.indices) theme.rows[row] else theme.other
     }
 
     /** Calls the core back when a hold it is timing has lasted long enough. */
@@ -95,6 +113,7 @@ class KeyboardView(
     }
 
     init {
+        applyTheme()
         setOnApplyWindowInsetsListener { _, insets ->
             // Below Android 11 the input method window ends above the navigation bar.
             val bottom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -159,7 +178,9 @@ class KeyboardView(
         val cellWidth = Core.cellWidth(handle)
         val pressed = Core.pressed(handle)
         for ((index, path) in paths.withIndex()) {
-            canvas.drawPath(path, if (index == pressed) pressedPaint else keyPaint)
+            val color = keyColor(index)
+            keyPaint.color = if (index == pressed) theme.pressed(color) else color
+            canvas.drawPath(path, keyPaint)
             canvas.drawPath(path, gapPaint)
             drawLabel(canvas, Core.label(handle, index), Core.labelPosition(handle, index), cellWidth)
         }

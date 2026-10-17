@@ -677,6 +677,11 @@ impl Keyboard {
         if is_letter(label) && (self.shift == Shift::Once || flicked_up) { upper(label) } else { label.clone() }
     }
 
+    /// The QWERTZ row of the key's letter, for themes; None for other keys.
+    pub fn key_row(&self, index: usize) -> Option<usize> {
+        qwertz_row(&self.layout.keys[index].label)
+    }
+
     pub fn key_at(&self, touch: Point) -> Option<usize> {
         let key = self.layout.key_at(touch)?;
         self.layout.keys.iter().position(|k| std::ptr::eq(k, key))
@@ -702,6 +707,16 @@ impl Keyboard {
             }
         }
     }
+}
+
+/// The row a letter has on an ordinary QWERTZ keyboard, 0 for qwertzuiop to
+/// 2 for yxcvbnm. Themes colour keys by it: the layout moves letters into
+/// four rows, and the colour keeps each one where the eye expects it.
+pub fn qwertz_row(label: &str) -> Option<usize> {
+    let mut chars = label.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else { return None };
+    let c = c.to_lowercase().next()?;
+    ["qwertzuiop", "asdfghjkl", "yxcvbnm"].iter().position(|row| row.contains(c))
 }
 
 /// Long-press alternatives for German and English, left to right.
@@ -997,6 +1012,16 @@ mod tests {
 
     fn keyboard_index(keyboard: &Keyboard, label: &str) -> usize {
         keyboard.layout.keys.iter().position(|k| k.label == label).unwrap()
+    }
+
+    #[test]
+    fn every_letter_has_its_qwertz_row() {
+        let keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let rows: Vec<Option<usize>> =
+            ["q", "p", "a", "l", "y", "m", "⇧", "space", "ß"].iter().map(|l| qwertz_row(l)).collect();
+        assert_eq!(rows, [Some(0), Some(0), Some(1), Some(1), Some(2), Some(2), None, None, None]);
+        let letters = keyboard.layout.keys.iter().enumerate().filter(|(i, _)| keyboard.key_row(*i).is_some());
+        assert_eq!(letters.count(), 26);
     }
 
     #[test]

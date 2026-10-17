@@ -3,6 +3,9 @@ package io.github.tieo.hexkeys
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -18,6 +21,7 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.RadioButton
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
@@ -72,6 +76,33 @@ class SettingsActivity : Activity() {
             }
             isEnabled = Dictionaries.learned(context).isNotEmpty()
         })
+
+        column.addView(heading("Theme"))
+        val themeButtons = mutableListOf<RadioButton>()
+        val chosen = Theme.current(this).id
+        for (theme in Theme.all(this)) {
+            val button = RadioButton(this).apply {
+                text = theme.name
+                textSize = 17f
+                isChecked = theme.id == chosen
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            themeButtons += button
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(56)
+                addView(button)
+                addView(ThemePreview(this@SettingsActivity, theme), LinearLayout.LayoutParams(dp(132), dp(40)))
+            }
+            val choose = View.OnClickListener {
+                themeButtons.forEach { it.isChecked = it === button }
+                Dictionaries.preferences(this@SettingsActivity).edit().putString(Theme.KEY, theme.id).apply()
+            }
+            row.setOnClickListener(choose)
+            button.setOnClickListener(choose)
+            column.addView(row)
+        }
 
         column.addView(heading("Languages"))
         val filter = EditText(this).apply {
@@ -204,5 +235,35 @@ class SettingsActivity : Activity() {
             }
         }
         return row
+    }
+}
+
+/**
+ * A strip of the keyboard in a theme's colours: one hexagon per QWERTZ row
+ * colour and one in the colour of the other keys, on the theme's background.
+ */
+private class ThemePreview(context: Context, private val theme: Theme) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    override fun onDraw(canvas: Canvas) {
+        canvas.drawColor(theme.background)
+        val colors = theme.rows + theme.other
+        val gap = resources.displayMetrics.density * 3
+        val cell = (width - gap) / colors.size
+        val radius = minOf(cell - gap, height - 2 * gap) / 2f
+        for ((index, color) in colors.withIndex()) {
+            paint.color = color
+            val cx = gap / 2 + cell * (index + 0.5f)
+            val cy = height / 2f
+            val hexagon = Path()
+            for (corner in 0 until 6) {
+                val angle = Math.toRadians(60.0 * corner - 90)
+                val x = cx + radius * Math.cos(angle).toFloat()
+                val y = cy + radius * Math.sin(angle).toFloat()
+                if (corner == 0) hexagon.moveTo(x, y) else hexagon.lineTo(x, y)
+            }
+            hexagon.close()
+            canvas.drawPath(hexagon, paint)
+        }
     }
 }

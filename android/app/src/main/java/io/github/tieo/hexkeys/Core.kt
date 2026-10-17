@@ -25,6 +25,9 @@ object Core {
     external fun labelPosition(handle: Long, index: Int): FloatArray
     external fun label(handle: Long, index: Int): String
 
+    /** The QWERTZ row of the key's letter, 0 to 2, which themes colour it by; -1 for other keys. */
+    external fun keyRow(handle: Long, index: Int): Int
+
     /** The key the finger went down on, or -1. */
     external fun pressed(handle: Long): Int
 

@@ -23,6 +23,7 @@ class HexInputMethod : InputMethodService() {
     private val settingsChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             Dictionaries.ENABLED -> loadDictionaries()
+            Theme.KEY -> keyboard?.theme = Theme.current(this)
             Dictionaries.LEARNED_RESET -> {
                 Core.lexiconForget(lexicon)
                 learned.clear()
@@ -124,6 +125,8 @@ class HexInputMethod : InputMethodService() {
             variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
         val noSuggestions = info.inputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0
         suggesting = !password && !noSuggestions
+        // Device colours follow the wallpaper and dark mode, which may have changed.
+        keyboard?.theme = Theme.current(this)
         refreshStrip()
     }
 

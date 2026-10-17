@@ -97,6 +97,18 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_label(
     env.new_string(keyboard(handle).label(index as usize)).expect("label").into_raw()
 }
 
+/// The QWERTZ row of the key's letter, 0 to 2, which themes colour it by;
+/// -1 for keys that are not letters.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_keyRow(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    index: jint,
+) -> jint {
+    keyboard(handle).key_row(index as usize).map_or(-1, |row| row as jint)
+}
+
 /// The key the finger went down on, or -1 when no finger is down.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_pressed(
