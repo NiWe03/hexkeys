@@ -566,14 +566,19 @@ class KeyboardView(
             val reach = if (far) width - edge else deleting[1]
             deletePaint.color = if (far) DELETE_FAR_COLOR else DELETE_COLOR
             canvas.drawRect(minOf(edge, reach), 0f, maxOf(edge, reach), Core.height(handle), deletePaint)
-            drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerDrawnY, cellWidth * (if (far) 0.6f else 0.45f), theme.label)
+            // Above the thumb, where it is not hidden under it.
+            drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerDrawnY - cellWidth * 0.9f, cellWidth * (if (far) 0.6f else 0.45f), theme.label)
         }
-        // Moving the cursor washes the keys in the accent colour, with the cursor's mark at the finger.
+        // Moving the cursor tints the keys in the accent colour and washes it stronger
+        // between where the hold began and the finger, as a delete slide washes what it
+        // crossed; the cursor's mark sits above the thumb.
         if (Core.movingCursor(handle)) {
             cursorPaint.color = theme.accent
-            cursorPaint.alpha = 0x50
+            cursorPaint.alpha = 0x30
             canvas.drawRect(0f, 0f, width.toFloat(), Core.height(handle), cursorPaint)
-            drawIcon(canvas, R.drawable.icon_arrow_range, fingerX, fingerDrawnY, cellWidth * 0.5f, theme.label)
+            cursorPaint.alpha = 0x60
+            canvas.drawRect(minOf(downX, fingerX), 0f, maxOf(downX, fingerX), Core.height(handle), cursorPaint)
+            drawIcon(canvas, R.drawable.icon_arrow_range, fingerX, fingerDrawnY - cellWidth * 0.9f, cellWidth * 0.5f, theme.label)
         }
         val trail = Core.trail(handle)
         if (trail.size >= 4) {
@@ -626,6 +631,10 @@ class KeyboardView(
         }
         if (Core.deleting(handle).isNotEmpty() && deletedText.isNotEmpty()) {
             drawDeleted(canvas, middle)
+            return
+        }
+        if (Core.movingCursor(handle) && cursorContext != null) {
+            drawCursorContext(canvas, middle)
             return
         }
         if (chipsShown) return
@@ -745,6 +754,38 @@ class KeyboardView(
         canvas.drawText(shown, x, baseline, stripPaint)
         stripPaint.isStrikeThruText = false
         stripPaint.color = theme.label
+    }
+
+    /** The text before and after the cursor while it is being moved, for the strip; null otherwise. */
+    var cursorContext: Pair<String, String>? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** In place of the words while the cursor moves: the text around it, the cursor in the accent colour in the middle. */
+    private fun drawCursorContext(canvas: Canvas, middle: Float) {
+        val (before, after) = cursorContext ?: return
+        val left = 2 * stripSide + 8 * density
+        val right = width - 2 * stripSide - 8 * density
+        val centre = (left + right) / 2
+        stripPaint.isFakeBoldText = false
+        stripPaint.textSize = 17 * resources.displayMetrics.scaledDensity
+        val baseline = middle - (stripPaint.descent() + stripPaint.ascent()) / 2
+        val room = centre - left - 4 * density
+        var shownBefore = before.replace('\n', ' ')
+        while (shownBefore.isNotEmpty() && stripPaint.measureText(shownBefore) > room) shownBefore = shownBefore.drop(1)
+        var shownAfter = after.replace('\n', ' ')
+        while (shownAfter.isNotEmpty() && stripPaint.measureText(shownAfter) > room) shownAfter = shownAfter.dropLast(1)
+        val align = stripPaint.textAlign
+        stripPaint.textAlign = Paint.Align.RIGHT
+        canvas.drawText(shownBefore, centre - 3 * density, baseline, stripPaint)
+        stripPaint.textAlign = Paint.Align.LEFT
+        canvas.drawText(shownAfter, centre + 3 * density, baseline, stripPaint)
+        stripPaint.textAlign = align
+        cursorPaint.color = theme.accent
+        cursorPaint.alpha = 0xFF
+        canvas.drawRect(centre - 1.2f * density, middle - stripHeight * 0.28f, centre + 1.2f * density, middle + stripHeight * 0.28f, cursorPaint)
     }
 
     private val icons = mutableMapOf<Int, android.graphics.drawable.Drawable>()
@@ -901,6 +942,9 @@ class KeyboardView(
     /** Where the finger is on screen below the strip, for what is drawn at it: under the bar it differs from [fingerY]. */
     private var fingerDrawnY = 0f
 
+    /** Where the finger went down across the keys. */
+    private var downX = 0f
+
     /**
      * Touches go to the core, which tells taps, flicks and holds apart; the
      * view only redraws, passes on what they mean, and wakes the core when
@@ -934,6 +978,7 @@ class KeyboardView(
                 fingerX = x
                 fingerY = y
                 fingerDrawnY = event.getY(index) - keysTop
+                downX = x
                 Core.touchDown(handle, x, y, time)
                 startRecord(x, y, time)
             }
@@ -1019,6 +1064,7 @@ class KeyboardView(
     /** Ends the followed finger's touch at a point and acts on it. */
     private fun lift(x: Float, y: Float, time: Long, how: String) {
         finger = -1
+        cursorContext = null
         // A tap quicker than a frame or two would never be seen lit.
         val pressed = Core.pressed(handle)
         if (pressed >= 0) {

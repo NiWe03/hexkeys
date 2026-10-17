@@ -527,6 +527,7 @@ class HexInputMethod : InputMethodService() {
             "cursor" -> {
                 val (dx, dy) = text.split(" ").map { it.toInt() }
                 connection.moveCursor(dx, dy)
+                keyboard?.cursorContext = connection.textBefore().takeLast(CURSOR_CONTEXT) to connection.textAfter(CURSOR_CONTEXT)
             }
         }
         keyboard?.slow(kind, SystemClock.uptimeMillis() - started)
@@ -1021,6 +1022,9 @@ class HexInputMethod : InputMethodService() {
         val WORD_AT_END = Regex("\\S*\\s*$")
 
         const val DICTATION_TEST = "io.github.tieo.hexkeys.DICTATION_TEST"
+
+        /** How much text on each side of the cursor the strip shows while it moves. */
+        const val CURSOR_CONTEXT = 40
 
         /** The word, or the rest of one, a text starts with. */
         val WORD_AT_START = Regex("^[\\p{L}\\p{N}'’-]*")

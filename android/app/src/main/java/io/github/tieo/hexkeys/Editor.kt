@@ -82,6 +82,9 @@ class Editor(private val service: InputMethodService) : TextTarget {
         return read
     }
 
+    /** Up to `length` characters after the cursor, read from the app. */
+    fun textAfter(length: Int): String = connection?.getTextAfterCursor(length, 0)?.toString().orEmpty()
+
     /** The selected text; empty without a selection, which needs no read. */
     override fun selectedText(): String =
         if (hasSelection) connection?.getSelectedText(0)?.toString().orEmpty() else ""
