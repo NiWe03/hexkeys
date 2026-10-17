@@ -825,10 +825,10 @@ class HexInputMethod : InputMethodService() {
         keyboard?.freshClip = clips.fresh()?.text.orEmpty()
     }
 
-    /** Puts in a copied text and stops offering the fresh one. */
+    /** Puts in a copied text, with a space before it where it follows a word, and stops offering the fresh one. */
     private fun paste(text: String) {
         if (currentInputConnection == null) return
-        editor.commit(text)
+        put(text)
         clips.spend()
         keyboard?.freshClip = ""
     }
@@ -863,7 +863,7 @@ class HexInputMethod : InputMethodService() {
         }
     }
 
-    /** Puts in dictated text, with a space before it where it follows a word. */
+    /** Puts in dictated or pasted text, with a space before it where it follows a word. */
     private fun put(text: String) {
         val last = editor.textBefore().lastOrNull()
         val space = last != null && !last.isWhitespace() && last !in OPENING
