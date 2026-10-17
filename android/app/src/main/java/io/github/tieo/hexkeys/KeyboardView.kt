@@ -132,7 +132,8 @@ class KeyboardView(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         if (handle != 0L) Core.destroy(handle)
-        handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong())
+        val space_middle = Dictionaries.preferences(context).getString(LAYOUT, null) == SPACE_MIDDLE
+        handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), space_middle)
         headroom = Core.headroom(handle).toInt()
         loadOutlines()
         setMeasuredDimension(width, keysTop + Core.height(handle).toInt() + navigationBar)
@@ -281,8 +282,12 @@ class KeyboardView(
         if (due >= 0) postDelayed(tick, (due - SystemClock.uptimeMillis()).coerceAtLeast(0))
     }
 
-    private companion object {
+    companion object {
         /** Regular hexagons: at eight to a row they are already finger-sized. */
-        const val STRETCH = 1.0f
+        private const val STRETCH = 1.0f
+
+        /** Preference naming the letter layout; [SPACE_MIDDLE] or anything else for the hexkeys one. */
+        const val LAYOUT = "layout"
+        const val SPACE_MIDDLE = "space_middle"
     }
 }

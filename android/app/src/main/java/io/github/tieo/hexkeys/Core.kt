@@ -10,7 +10,7 @@ object Core {
      * A keyboard fitted to [width] pixels; [stretch] makes cells taller than
      * regular hexagons, and a finger held still for [longPressMs] is a long press.
      */
-    external fun create(width: Float, stretch: Float, longPressMs: Long): Long
+    external fun create(width: Float, stretch: Float, longPressMs: Long, space_middle: Boolean): Long
     external fun destroy(handle: Long)
     external fun height(handle: Long): Float
     external fun keyCount(handle: Long): Int

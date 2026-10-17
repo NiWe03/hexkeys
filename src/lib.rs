@@ -47,6 +47,9 @@ pub struct RowSpec {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LayoutSpec {
     pub rows: Vec<RowSpec>,
+    /// Whether the first row is the one shifted by half a cell, which makes
+    /// the even rows the short ones instead of the odd.
+    pub first_row_shifted: bool,
 }
 
 impl LayoutSpec {
@@ -57,14 +60,15 @@ impl LayoutSpec {
             .enumerate()
             .map(|(row, spec)| {
                 let cells: usize = spec.keys.iter().map(|key| key.span).sum();
-                (spec.start_column + cells) as f32 + row_shift(row)
+                (spec.start_column + cells) as f32 + self.shift(row)
             })
             .fold(0.0, f32::max)
     }
-}
 
-fn row_shift(row: usize) -> f32 {
-    if row % 2 == 1 { 0.5 } else { 0.0 }
+    /// How far a row is shifted right, in cells: every other row by half.
+    fn shift(&self, row: usize) -> f32 {
+        if (row % 2 == 1) != self.first_row_shifted { 0.5 } else { 0.0 }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -119,7 +123,7 @@ impl Layout {
         let mut keys = Vec::new();
         for (row, row_spec) in spec.rows.iter().enumerate() {
             let y = cell_height / 2.0 + row as f32 * row_pitch;
-            let mut column = row_spec.start_column as f32 + row_shift(row);
+            let mut column = row_spec.start_column as f32 + spec.shift(row);
             for key_spec in &row_spec.keys {
                 let cells: Vec<Point> = (0..key_spec.span)
                     .map(|i| Point { x: (column + i as f32 + 0.5) * cell_width, y })
@@ -152,7 +156,12 @@ impl Layout {
                         cells: vec![centre],
                         regions: vec![centre],
                     }),
-                    None => keys[left].regions.insert(0, centre),
+                    None => {
+                        // The label moves to the middle of what the key now covers.
+                        let key = &mut keys[left];
+                        key.regions.insert(0, centre);
+                        key.label_at.x = (left_x + key.cells.len() as f32 * cell_width - cell_width / 2.0) / 2.0;
+                    }
                 }
             }
             if right_gap {
@@ -165,7 +174,11 @@ impl Layout {
                         cells: vec![centre],
                         regions: vec![centre],
                     }),
-                    None => keys[right].regions.push(centre),
+                    None => {
+                        let key = &mut keys[right];
+                        key.regions.push(centre);
+                        key.label_at.x = (right_x - (key.cells.len() as f32 - 0.5) * cell_width + width) / 2.0;
+                    }
                 }
             }
         }
@@ -194,7 +207,7 @@ impl Layout {
             return 0.0;
         }
         let centre = |c: char| {
-            self.keys.iter().find(|key| key.label.chars().eq(std::iter::once(c))).map(Key::center)
+            self.keys.iter().find(|key| key.label.chars().eq(std::iter::once(c))).map(|key| key.cells[0])
         };
         match (centre(typed), centre(meant)) {
             (Some(a), Some(b)) => {
@@ -365,6 +378,24 @@ pub fn honeycomb() -> LayoutSpec {
             last_letters,
             bottom_row("?123"),
         ],
+        first_row_shifted: false,
+    }
+}
+
+/// the reference layout's arrangement, six and seven to a row starting with six, with
+/// two spaces among the letters and no shift or backspace key: those are the
+/// flicks up and left. For trying how the original feels next to
+/// [`honeycomb`]; it is a registered design and stays out of any release.
+pub fn space_middle() -> LayoutSpec {
+    LayoutSpec {
+        rows: vec![
+            row(0, letters("wetzio")),
+            row(0, letters("qargulp")),
+            row(0, keys(&[(".", 1), ("space", 1), ("f", 1), ("h", 1), ("space", 1), ("?", 1)])),
+            row(0, letters("ysdnmjk")),
+            row(0, keys(&[("x", 1), ("c", 1), ("v", 1), ("b", 1), ("?123", 1), ("⏎", 1)])),
+        ],
+        first_row_shifted: true,
     }
 }
 
@@ -384,12 +415,12 @@ fn symbol_rows(top: [&str; 4], left_edge: &str) -> Vec<RowSpec> {
 
 /// Digits in order along the top, then the symbols typed most.
 pub fn symbols() -> LayoutSpec {
-    LayoutSpec { rows: symbol_rows(["1234567", "890@#€", "-+()/&%", "?!\"':;"], "=\\<") }
+    LayoutSpec { rows: symbol_rows(["1234567", "890@#€", "-+()/&%", "?!\"':;"], "=\\<"), first_row_shifted: false }
 }
 
 /// The rarer symbols, behind the key in shift's place.
 pub fn more_symbols() -> LayoutSpec {
-    LayoutSpec { rows: symbol_rows(["~`|•√π÷", "׶∆£¥$", "^°={}\\[", "]<>_¢*"], "?123") }
+    LayoutSpec { rows: symbol_rows(["~`|•√π÷", "׶∆£¥$", "^°={}\\[", "]<>_¢*"], "?123"), first_row_shifted: false }
 }
 
 /// What a key press asks the app to do.
@@ -482,8 +513,9 @@ pub struct Keyboard {
 }
 
 impl Keyboard {
-    pub fn new(width: f32, stretch: f32, long_press_ms: u64) -> Self {
-        let layers = [honeycomb(), symbols(), more_symbols()].map(|spec| Layout::fit(&spec, width, stretch));
+    /// A keyboard with `letters` as its letter layer.
+    pub fn new(letters: LayoutSpec, width: f32, stretch: f32, long_press_ms: u64) -> Self {
+        let layers = [letters, symbols(), more_symbols()].map(|spec| Layout::fit(&spec, width, stretch));
         Self { layout: layers[0].clone(), layers, shift: Shift::Off, popup: None, touch: None, long_press_ms }
     }
 
@@ -871,7 +903,7 @@ mod tests {
 
     #[test]
     fn shift_capitalises_one_letter() {
-        let mut keyboard = Keyboard::new(1008.0, 1.3, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.3, 400);
         let index = |label: &str| keyboard_index(&keyboard, label);
         let (shift, a, b) = (index("⇧"), index("a"), index("b"));
         assert_eq!(keyboard.press(shift), Action::Redraw);
@@ -882,7 +914,7 @@ mod tests {
 
     #[test]
     fn long_press_on_s_gives_sharp_s_and_capital_after_shift() {
-        let mut keyboard = Keyboard::new(1008.0, 1.3, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.3, 400);
         let (shift, s) = (keyboard_index(&keyboard, "⇧"), keyboard_index(&keyboard, "s"));
         assert!(keyboard.long_press(s));
         assert_eq!(keyboard.popup_release(), Action::Commit("ß".into()));
@@ -894,7 +926,7 @@ mod tests {
 
     #[test]
     fn popup_follows_the_finger_and_stays_on_screen() {
-        let mut keyboard = Keyboard::new(1008.0, 1.3, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.3, 400);
         let q = keyboard_index(&keyboard, "q");
         assert!(!keyboard.long_press(q), "q has no alternatives");
         let u = keyboard_index(&keyboard, "u");
@@ -910,7 +942,7 @@ mod tests {
 
     #[test]
     fn symbol_layers_switch_and_type() {
-        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         let symbols = keyboard_index(&keyboard, "?123");
         assert_eq!(keyboard.press(symbols), Action::Redraw);
         let one = keyboard_index(&keyboard, "1");
@@ -926,7 +958,7 @@ mod tests {
 
     #[test]
     fn every_layer_tiles_the_keyboard() {
-        for spec in [symbols(), more_symbols()] {
+        for spec in [symbols(), more_symbols(), space_middle()] {
             let layout = Layout::fit(&spec, 1008.0, 1.0);
             let area: f32 = layout.keys.iter().map(|key| polygon_area(&layout.outline(key))).sum();
             let expected = layout.width * layout.height;
@@ -953,14 +985,14 @@ mod tests {
 
     #[test]
     fn tap_types_the_key_even_when_the_finger_drifts() {
-        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         assert_eq!(gesture(&mut keyboard, "g", &[]), Action::Commit("g".into()));
         assert_eq!(gesture(&mut keyboard, "g", &[(0.2, 0.1)]), Action::Commit("g".into()));
     }
 
     #[test]
     fn flick_up_types_a_capital_and_previews_it() {
-        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         let g = keyboard_index(&keyboard, "g");
         keyboard.touch_down(near(&keyboard, "g", 0.0, 0.0), 0);
         keyboard.touch_move(near(&keyboard, "g", 0.1, -0.6), 30);
@@ -972,14 +1004,14 @@ mod tests {
 
     #[test]
     fn flick_left_deletes_from_any_key() {
-        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         assert_eq!(gesture(&mut keyboard, "g", &[(-0.3, 0.0), (-0.6, 0.1)]), Action::Backspace);
         assert_eq!(gesture(&mut keyboard, "space", &[(-0.6, 0.0)]), Action::Backspace);
     }
 
     #[test]
     fn other_flicks_and_long_paths_type_nothing() {
-        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         assert_eq!(gesture(&mut keyboard, "g", &[(0.6, 0.0)]), Action::Nothing);
         assert_eq!(gesture(&mut keyboard, "g", &[(0.0, 0.6)]), Action::Nothing);
         assert_eq!(gesture(&mut keyboard, "g", &[(-0.6, 0.0), (0.0, 0.1)]), Action::Nothing, "pulled back");
@@ -988,7 +1020,7 @@ mod tests {
 
     #[test]
     fn holding_a_left_flick_repeats_backspace() {
-        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         keyboard.touch_down(near(&keyboard, "g", 0.0, 0.0), 0);
         keyboard.touch_move(near(&keyboard, "g", -0.6, 0.0), 50);
         assert_eq!(keyboard.deadline(), Some(450));
@@ -1001,7 +1033,7 @@ mod tests {
 
     #[test]
     fn holding_still_opens_the_popup_and_lifting_commits_from_it() {
-        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         keyboard.touch_down(near(&keyboard, "s", 0.0, 0.0), 0);
         assert_eq!(keyboard.tick(400), Action::Redraw);
         assert!(keyboard.popup.is_some());
@@ -1016,7 +1048,7 @@ mod tests {
 
     #[test]
     fn every_letter_has_its_qwertz_row() {
-        let keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         let rows: Vec<Option<usize>> =
             ["q", "p", "a", "l", "y", "m", "⇧", "space", "ß"].iter().map(|l| qwertz_row(l)).collect();
         assert_eq!(rows, [Some(0), Some(0), Some(1), Some(1), Some(2), Some(2), None, None, None]);
@@ -1027,9 +1059,21 @@ mod tests {
     #[test]
     fn rows_interlock() {
         let layout = layout();
-        let q = layout.keys.iter().find(|k| k.label == "q").unwrap().center();
-        let w = layout.keys.iter().find(|k| k.label == "w").unwrap().center();
+        let q = layout.find("q").cells[0];
+        let w = layout.find("w").cells[0];
         assert!((w.x - q.x - layout.cell_width / 2.0).abs() < 0.01);
         assert!((w.y - q.y - layout.cell_height * 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn space_middle_starts_with_a_short_shifted_row_as_wide_as_the_rest() {
+        let layout = Layout::fit(&space_middle(), 1008.0, 1.0);
+        let w = layout.find("w").cells[0];
+        let q = layout.find("q").cells[0];
+        assert!((w.x - q.x - layout.cell_width / 2.0).abs() < 0.01);
+        assert!((layout.cell_width - 1008.0 / 7.0).abs() < 0.01);
+        let keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
+        let letters = keyboard.layout.keys.iter().enumerate().filter(|(i, _)| keyboard.key_row(*i).is_some());
+        assert_eq!(letters.count(), 26);
     }
 }

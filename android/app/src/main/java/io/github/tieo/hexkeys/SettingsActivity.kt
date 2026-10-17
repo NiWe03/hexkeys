@@ -22,6 +22,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
@@ -76,6 +77,23 @@ class SettingsActivity : Activity() {
             }
             isEnabled = Dictionaries.learned(context).isNotEmpty()
         })
+
+        column.addView(heading("Layout"))
+        val layouts = listOf("hexkeys" to "Hexkeys", KeyboardView.SPACE_MIDDLE to "the reference layout (test)")
+        val layoutGroup = RadioGroup(this)
+        val layoutChosen = Dictionaries.preferences(this).getString(KeyboardView.LAYOUT, "hexkeys")
+        for ((id, name) in layouts) {
+            layoutGroup.addView(RadioButton(this).apply {
+                text = name
+                textSize = 17f
+                minimumHeight = dp(48)
+                isChecked = id == layoutChosen
+                setOnClickListener {
+                    Dictionaries.preferences(this@SettingsActivity).edit().putString(KeyboardView.LAYOUT, id).apply()
+                }
+            })
+        }
+        column.addView(layoutGroup)
 
         column.addView(heading("Theme"))
         val themeButtons = mutableListOf<RadioButton>()

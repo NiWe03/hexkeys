@@ -7,7 +7,7 @@
 
 use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::Lexicon;
-use hexkeys::{Action, Keyboard, Point, suggest};
+use hexkeys::{Action, Keyboard, Point, honeycomb, suggest, space_middle};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
@@ -25,8 +25,10 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_create(
     width: jfloat,
     stretch: jfloat,
     long_press_ms: jlong,
+    space_in_middle: jboolean,
 ) -> jlong {
-    Box::into_raw(Box::new(Keyboard::new(width, stretch, long_press_ms as u64))) as jlong
+    let letters = if space_in_middle != 0 { space_middle() } else { honeycomb() };
+    Box::into_raw(Box::new(Keyboard::new(letters, width, stretch, long_press_ms as u64))) as jlong
 }
 
 #[unsafe(no_mangle)]

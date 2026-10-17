@@ -24,6 +24,7 @@ class HexInputMethod : InputMethodService() {
         when (key) {
             Dictionaries.ENABLED -> loadDictionaries()
             Theme.KEY -> keyboard?.theme = Theme.current(this)
+            KeyboardView.LAYOUT -> keyboard?.requestLayout()
             Dictionaries.LEARNED_RESET -> {
                 Core.lexiconForget(lexicon)
                 learned.clear()
