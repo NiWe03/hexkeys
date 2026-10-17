@@ -580,13 +580,22 @@ class HexInputMethod : InputMethodService() {
         // Asked before the keyboard view exists, so sized from the strip's dp height.
         val height = ((KeyboardView.STRIP_DP - 8) * resources.displayMetrics.density).toInt()
         val styles = UiVersions.newStylesBuilder().addStyle(InlineSuggestionUi.newStyleBuilder().build()).build()
-        val spec = InlinePresentationSpec.Builder(Size(height, height), Size(resources.displayMetrics.widthPixels * 2 / 3, height))
+        // At most as wide as the room left of the right end slot, so the service
+        // shortens a long suggestion's text rather than the strip cutting it off.
+        val widest = maxOf(height, KeyboardFrame.chipRoom(resources.displayMetrics.widthPixels, resources.displayMetrics.density))
+        inlineNarrowest = height
+        inlineWidest = widest
+        val spec = InlinePresentationSpec.Builder(Size(height, height), Size(widest, height))
             .setStyle(styles)
             .build()
         return InlineSuggestionsRequest.Builder(listOf(spec))
             .setMaxSuggestionCount(InlineSuggestionsRequest.SUGGESTION_COUNT_UNLIMITED)
             .build()
     }
+
+    /** The narrowest and widest a suggestion may be drawn, as the last request announced. */
+    private var inlineNarrowest = 0
+    private var inlineWidest = 0
 
     /** Counts the autofill service's answers, so only the newest one is shown. */
     private var inlineAnswer = 0
@@ -612,43 +621,27 @@ class HexInputMethod : InputMethodService() {
             frame.show(emptyList())
             return true
         }
-        // Drawn at the size the service likes first; one too wide for its place
-        // is drawn again at exactly the room it has, which the service fills by
-        // shortening its text, instead of being cut off at the edge.
+        // A suggestion is drawn once, at its final size: the one taking the right
+        // end slot without the service pinning it, its button, exactly as wide as
+        // the slot; the others as wide as the service likes, at most the room
+        // the request allowed.
         val views = arrayOfNulls<View>(suggestions.size)
         val marks = suggestions.map { it.info.isPinned }
         var pending = suggestions.size
-        val wrap = Size(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        fun done() {
-            pending -= 1
-            if (pending == 0 && answer == inlineAnswer) {
-                frame.show(views.withIndex().mapNotNull { (i, view) -> view?.let { it to marks[i] } })
-                if (GestureLog.enabled(this)) {
-                    GestureLog.write(this, org.json.JSONObject()
-                        .put("time", System.currentTimeMillis())
-                        .put("chips", org.json.JSONArray(views.map { it?.layoutParams?.width ?: -1 }))
-                        .put("pinnedRoom", frame.pinnedRoom)
-                        .put("chipRoom", frame.chipRoom))
-                }
-            }
-        }
         for ((index, suggestion) in suggestions.withIndex()) {
-            suggestion.inflate(this, wrap, mainExecutor) { view ->
-                val room = if (frame.takesSlot(marks, index)) frame.pinnedRoom else frame.chipRoom
-                val wide = view?.let {
-                    val given = it.layoutParams?.width ?: ViewGroup.LayoutParams.WRAP_CONTENT
-                    if (given > 0) given else {
-                        it.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-                        it.measuredWidth
-                    }
-                } ?: 0
-                if (view == null || wide <= room) {
-                    views[index] = view
-                    done()
-                } else {
-                    suggestion.inflate(this, Size(room, ViewGroup.LayoutParams.WRAP_CONTENT), mainExecutor) { fitted ->
-                        views[index] = fitted ?: view
-                        done()
+            val slotted = frame.takesSlot(marks, index) && !marks[index]
+            // Android refuses a size outside the range the request announced.
+            val width = if (slotted) frame.pinnedRoom.coerceIn(inlineNarrowest, inlineWidest) else ViewGroup.LayoutParams.WRAP_CONTENT
+            suggestion.inflate(this, Size(width, ViewGroup.LayoutParams.WRAP_CONTENT), mainExecutor) { view ->
+                views[index] = view
+                pending -= 1
+                if (pending == 0 && answer == inlineAnswer) {
+                    frame.show(views.withIndex().mapNotNull { (i, it) -> it?.let { v -> v to marks[i] } })
+                    if (GestureLog.enabled(this)) {
+                        GestureLog.write(this, org.json.JSONObject()
+                            .put("time", System.currentTimeMillis())
+                            .put("chips", org.json.JSONArray(views.map { it?.layoutParams?.width ?: -1 }))
+                            .put("pinnedRoom", frame.pinnedRoom))
                     }
                 }
             }

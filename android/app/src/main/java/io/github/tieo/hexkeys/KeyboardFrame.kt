@@ -162,10 +162,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
      * unpinned), so it is the one that has to stay in reach.
      */
     /** How wide the right end slot for the service's button can be. */
-    val pinnedRoom get() = keyboard.measuredWidth / 3
-
-    /** How wide one suggestion left of that slot can be: the whole room, so none is cut. */
-    val chipRoom get() = keyboard.measuredWidth - 2 * keyboard.stripSide - pinnedRoom - gap
+    val pinnedRoom get() = pinnedRoom(keyboard.measuredWidth)
 
     /** Whether, among suggestions with these pinned marks, the one at `index` takes the right end slot. */
     fun takesSlot(pinnedMarks: List<Boolean>, index: Int) =
@@ -305,7 +302,20 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         }
     }
 
-    private companion object {
+    companion object {
+        /** How wide the right end slot for the service's button can be on a keyboard `width` wide. */
+        fun pinnedRoom(width: Int) = width / 3
+
+        /**
+         * How wide one suggestion left of that slot can be, on a keyboard
+         * `width` wide: all the room between the settings and clipboard
+         * buttons and the slot, so none is cut.
+         */
+        fun chipRoom(width: Int, density: Float): Int {
+            val side = ((KeyboardView.STRIP_DP + 4) * density).toInt()
+            return width - 2 * side - pinnedRoom(width) - (4 * density).toInt()
+        }
+
         /** How long a panel takes to fade in or out, in ms. */
         const val PANEL_MS = 120L
 
