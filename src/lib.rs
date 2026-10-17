@@ -617,46 +617,45 @@ fn bottom_row(switch: &str) -> RowSpec {
 /// and the question mark it used to name are on the letter page already.
 const SYMBOLS_KEY: &str = "@#€";
 
-/// Symbols for the first symbol page, most used first.
+/// Symbols for the first symbol page.
 const SYMBOLS: &str = "@#€&-+()/*\"':;!_%=$<>[]{}\\|~^°";
 
-/// Rarer symbols for the second page.
+/// Rarer symbols for the second page; the quotes, dashes and backtick are
+/// also offered by holding the plain mark.
 const MORE_SYMBOLS: &str = "§¢£¥₹©®™✓•π√÷×±≈≠≤≥‰«»„“”–—`";
 
 /// The key that turns to the second symbol page, and on it back to the first.
 const MORE: &str = "=\\<";
 
-/// Symbols of the first page that sit on a letter's cell: the brackets on
-/// u and l, side by side in one row.
-const PLACED: &[(&str, &str)] = &[("u", "("), ("l", ")")];
+/// What each row of letters holds on the two symbol pages, by the row's
+/// letters, a symbol per letter left to right: kinds of symbol together,
+/// the brackets in one row, money in another, arithmetic in a third. The
+/// rows both layouts have hold the same in both.
+const SYMBOL_ROWS: &[(&str, [&str; 2])] = &[
+    ("wetzio", ["@#€$%&", "£¥¢₹§°"]),
+    ("qargulp", ["()[]{}_", "±×÷≈≠≤≥"]),
+    // Space at the bottom.
+    ("sdfhjk", ["\"':;!~", "<>\\|√π"]),
+    ("yxcvbnm", ["+-*/=^", "‰©®™✓•"]),
+    // Space in the middle.
+    ("fh", ["\"'", "^~"]),
+    ("ysdnmjk", ["+-*/=<>", "\\|√π‰©®"]),
+    ("xcvb", [":;!", "™✓•"]),
+];
+
+/// For a letter cell no row names a symbol for, as the last letter is where
+/// shift takes over turning the page: the marks otherwise only held.
+const SPARE_SYMBOLS: &str = "«»„“”–—`";
 
 /// A symbol page shaped exactly like `letters`: the number row, space,
 /// enter, backspace and the punctuation keys stay where they are, the key
 /// to the symbols turns into the key back to the letters in the same
-/// place, and the letter cells hold symbols not already on the letters,
-/// in reading order. Shift's place, or the last letter cell where there is
-/// no shift, turns to the other page. `page` 0 is the first page, 1 the rarer.
+/// place, and the letter cells hold the symbols [`SYMBOL_ROWS`] gives
+/// their row. Shift's place, or the last letter cell where there is no
+/// shift, turns to the other page. `page` 0 is the first page, 1 the rarer.
 pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
     let mut spec = letters.clone();
-    let on_letters: Vec<String> = spec
-        .rows
-        .iter()
-        .flat_map(|row| row.keys.iter().map(|key| key.label.clone()))
-        .filter(|label| !is_letter(label))
-        .collect();
-    let pool = if page == 0 { SYMBOLS } else { MORE_SYMBOLS };
-    let placed: &[(&str, &str)] = if page == 0 { PLACED } else { &[] };
-    // What the first page has no room for leads the second.
-    let pool: String = if page == 0 {
-        pool.to_owned()
-    } else {
-        let first: Vec<String> = symbol_layer(letters, 0).rows.iter().flat_map(|row| row.keys.iter().map(|key| key.label.clone())).collect();
-        SYMBOLS.chars().filter(|c| !first.contains(&c.to_string())).chain(pool.chars()).collect()
-    };
-    let mut symbols = pool
-        .chars()
-        .map(String::from)
-        .filter(|symbol| !on_letters.contains(symbol) && !placed.iter().any(|(_, s)| s == symbol));
+    let mut spare = SPARE_SYMBOLS.chars().skip(page * 4).map(String::from);
     let has_shift = spec.rows.iter().any(|row| row.left_edge.as_deref() == Some("⇧"));
     let turn = if page == 0 { MORE } else { SYMBOLS_KEY };
     let last_letter = spec
@@ -666,16 +665,21 @@ pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
         .flat_map(|(r, row)| row.keys.iter().enumerate().filter(|(_, key)| is_letter(&key.label)).map(move |(k, _)| (r, k)))
         .last();
     for (r, row) in spec.rows.iter_mut().enumerate() {
+        let letters: String = row.keys.iter().filter(|key| is_letter(&key.label)).map(|key| key.label.as_str()).collect();
+        let mut symbols = SYMBOL_ROWS
+            .iter()
+            .find(|(name, _)| *name == letters)
+            .map_or("", |(_, pages)| pages[page])
+            .chars()
+            .map(String::from);
         for (k, key) in row.keys.iter_mut().enumerate() {
             if key.label == SYMBOLS_KEY {
                 key.label = "ABC".into();
             } else if is_letter(&key.label) {
                 key.label = if !has_shift && Some((r, k)) == last_letter {
                     turn.into()
-                } else if let Some((_, symbol)) = placed.iter().find(|(letter, _)| *letter == key.label) {
-                    (*symbol).into()
                 } else {
-                    symbols.next().unwrap_or_default()
+                    symbols.next().or_else(|| spare.next()).unwrap_or_default()
                 };
             }
         }
@@ -1849,16 +1853,12 @@ mod tests {
 
     #[test]
     fn symbol_layers_switch_and_type() {
-        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        let mut keyboard = Keyboard::new(space_bottom(), 1008.0, 1.0, 400);
         let symbols = keyboard_index(&keyboard, SYMBOLS_KEY);
         assert_eq!(keyboard.press(symbols), Action::Redraw);
         let at = keyboard_index(&keyboard, "@");
         assert_eq!(keyboard.press(at), Action::Commit("@".into()));
         assert!(keyboard.layout.keys.iter().all(|key| !is_letter(&key.label)), "no letters left");
-        let u = keyboard.layers[0].find("u").cells[0];
-        assert_eq!(keyboard.layout.key_at(u).unwrap().label, "(");
-        let l = keyboard.layers[0].find("l").cells[0];
-        assert_eq!(keyboard.layout.key_at(l).unwrap().label, ")");
         let more = keyboard_index(&keyboard, "=\\<");
         keyboard.press(more);
         let pi = keyboard_index(&keyboard, "π");
