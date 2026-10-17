@@ -32,6 +32,7 @@ class LanguagesActivity : Activity() {
         val column = ui.column()
         val search = EditText(this).apply {
             hint = "Search languages"
+            setTextColor(ui.text)
             setSingleLine()
             minHeight = ui.dp(48)
         }
@@ -83,6 +84,7 @@ class LanguagesActivity : Activity() {
         val box = CheckBox(this).apply {
             text = language.name
             textSize = 17f
+            setTextColor(ui.text)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             isChecked = language.file in Dictionaries.enabled(context) && Dictionaries.isAvailable(context, language.file)
         }

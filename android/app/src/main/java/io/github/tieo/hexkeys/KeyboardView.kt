@@ -99,6 +99,10 @@ class KeyboardView(
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
     }
+    /** The small sign on a punctuation key for what flicking it types. */
+    private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+    }
     private val stripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         textSize = 17 * resources.displayMetrics.scaledDensity
@@ -127,6 +131,8 @@ class KeyboardView(
         popupPaint.color = theme.popup
         selectedPaint.color = theme.accent
         labelPaint.color = theme.label
+        hintPaint.color = theme.label
+        hintPaint.alpha = 0x99
         stripPaint.color = theme.label
         dividerPaint.color = theme.other
         trailPaint.color = theme.accent
@@ -255,7 +261,13 @@ class KeyboardView(
             keyPaint.color = if (index == pressed) theme.pressed(color) else color
             canvas.drawPath(path, keyPaint)
             canvas.drawPath(path, gapPaint)
-            drawLabel(canvas, Core.label(handle, index), Core.labelPosition(handle, index), cellWidth)
+            val position = Core.labelPosition(handle, index)
+            drawLabel(canvas, Core.label(handle, index), position, cellWidth)
+            val hint = Core.keyHint(handle, index)
+            if (hint.isNotEmpty()) {
+                hintPaint.textSize = cellWidth * 0.2f
+                canvas.drawText(hint, position[0] + cellWidth * 0.22f, position[1] - cellWidth * 0.14f, hintPaint)
+            }
         }
         val choices = Core.popupCount(handle)
         if (choices > 0) {
@@ -368,6 +380,8 @@ class KeyboardView(
             .put("width", width)
             .put("cellWidth", Core.cellWidth(handle).toDouble())
             .put("key", if (pressed >= 0) Core.label(handle, pressed) else "")
+            .put("capital", Dictionaries.preferences(context).getString(CAPITAL, CAPITALS.first()))
+            .put("deleteFromLeft", Dictionaries.preferences(context).getBoolean(DELETE_FROM_LEFT, false))
             .put("before", logContext())
         addPoint(x, y, time)
     }

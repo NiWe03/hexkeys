@@ -91,4 +91,7 @@ object Core {
 
     /** Sets what holding a letter offers, in the form [lexiconAccents] returns. */
     external fun setAccents(handle: Long, accents: String)
+
+    /** What the capital gesture types on a punctuation key, shown small on it; empty for other keys. */
+    external fun keyHint(handle: Long, index: Int): String
 }

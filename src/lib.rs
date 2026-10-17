@@ -643,18 +643,52 @@ const STILL: f32 = 0.25;
 
 /// How near the delete edge a touch has to start to be a delete swipe, in
 /// key widths: a finger sliding in from the edge lands close to it.
-const EDGE: f32 = 0.4;
+const EDGE: f32 = 0.8;
 
-/// How far a delete swipe may stray up or down before it counts as swipe
-/// typing after all, in key widths: a word starting at an edge key goes
-/// up or down soon, a delete slide stays level.
-const DELETE_STRAY: f32 = 0.6;
+/// How far a delete swipe may bend away from the straight line between
+/// where it started and where the finger is, before it counts as swipe
+/// typing after all, in key widths: a swiped word turns at its letters,
+/// a delete slide runs straight, level or slanted.
+const DELETE_STRAY: f32 = 0.5;
 
-/// How far a delete swipe moves inwards per character deleted, and back
-/// outwards per piece put back, in key widths. Putting back takes more
-/// movement, so a finger easing back does not undo more than it means to.
-const DELETE_STEP: f32 = 0.3;
-const RESTORE_STEP: f32 = 0.45;
+/// How long a delete swipe holds still before it deletes whole words, in
+/// ms: longer than a pause to look at the text.
+const WORD_HOLD_MS: u64 = 1200;
+
+/// How far a delete swipe moves inwards for its first character, in key
+/// widths. Further characters come faster: n characters take
+/// `DELETE_FIRST * n^(2/3)`, so a short slide deletes a letter or two with
+/// care and a long one clears a lot.
+const DELETE_FIRST: f32 = 0.7;
+
+/// How much farther back a delete swipe has to move before it puts a
+/// character back, in key widths, so a finger easing off does not undo
+/// more than it means to.
+const RESTORE_SLACK: f32 = 0.25;
+
+/// How long a delete swipe has to have lasted for its distance to count in
+/// full, in ms. A quicker stroke counts for less, so a flick takes a
+/// letter where a slow slide of the same length takes several.
+const DELETE_RAMP_MS: f32 = 350.0;
+
+/// Characters a delete swipe deletes that has moved `inwards` key widths
+/// in `elapsed` ms.
+fn delete_count(inwards: f32, elapsed: u64) -> u32 {
+    let counted = inwards * (elapsed as f32 / DELETE_RAMP_MS).min(1.0);
+    if counted <= 0.0 { 0 } else { (counted / DELETE_FIRST).powf(1.5) as u32 }
+}
+
+/// Strokes quicker than this, in ms, that run straight are gestures even
+/// when longer than a key: a flick of the thumb. Swipe typing is slower;
+/// in FUTO's swipe dataset 7% of two-letter words and almost no longer
+/// ones are swiped this fast.
+const FAST_MS: u64 = 150;
+
+/// How far a quick stroke may bend and still count as straight, in key widths.
+const FAST_BEND: f32 = 0.35;
+
+/// The longest a quick stroke can be, in key widths.
+const FAST_LONGEST: f32 = 3.5;
 
 /// Pause between whole words deleted while a delete swipe holds still, in ms.
 const WORD_REPEAT_MS: u64 = 300;
@@ -703,15 +737,25 @@ enum Gesture {
     Path,
     /// A slide in from the delete edge: deleting as it goes.
     Delete,
+    /// A quick straight stroke towards the delete edge's opposite side,
+    /// starting in the third of the keyboard nearest the delete edge:
+    /// deletes when the finger lifts.
+    QuickDelete,
 }
 
 /// A delete swipe under way.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Deleting {
-    /// Pieces deleted so far: characters while sliding, words while holding.
-    pieces: u32,
-    /// How far inwards the finger was when `pieces` last changed.
-    mark: f32,
+    /// Characters deleted by how far the finger moved in.
+    characters: u32,
+    /// Whole words deleted while holding still.
+    words: u32,
+}
+
+impl Deleting {
+    fn pieces(&self) -> u32 {
+        self.characters + self.words
+    }
 }
 
 /// One finger on the keyboard. Times are in milliseconds on any clock that
@@ -729,6 +773,9 @@ struct Touch {
     anchor_time: u64,
     /// When the next word is due while a delete swipe holds still.
     repeat_at: Option<u64>,
+    /// When the finger went down and when it last moved.
+    start_time: u64,
+    last_time: u64,
     /// Every point the finger has been, for swipe typing.
     path: Vec<Point>,
     /// Went down at the delete edge, so sliding inwards deletes.
@@ -746,6 +793,18 @@ pub struct Swiped {
 
 fn distance(a: Point, b: Point) -> f32 {
     (a.x - b.x).hypot(a.y - b.y)
+}
+
+/// How far a path strays from the straight line between its ends at most.
+fn bend(path: &[Point]) -> f32 {
+    let (Some(&a), Some(&b)) = (path.first(), path.last()) else { return 0.0 };
+    let length = distance(a, b);
+    if length == 0.0 {
+        return path.iter().map(|p| distance(*p, a)).fold(0.0, f32::max);
+    }
+    path.iter()
+        .map(|p| ((b.x - a.x) * (a.y - p.y) - (a.x - p.x) * (b.y - a.y)).abs() / length)
+        .fold(0.0, f32::max)
 }
 
 /// A fitted layout plus the state that decides what its keys mean.
@@ -804,7 +863,7 @@ impl Keyboard {
         }
         let w = self.layout.cell_width;
         if touch.extent >= w {
-            return Gesture::Path;
+            return self.quick(touch).unwrap_or(Gesture::Path);
         }
         if touch.extent < FLICK * w {
             return Gesture::Tap;
@@ -820,6 +879,25 @@ impl Keyboard {
             Gesture::Up
         } else {
             Gesture::Down
+        }
+    }
+
+    /// A quick straight stroke longer than a flick, read as the flick or
+    /// delete it is; None for anything else, which is swipe typing.
+    fn quick(&self, touch: &Touch) -> Option<Gesture> {
+        let w = self.layout.cell_width;
+        if touch.last_time - touch.start_time > FAST_MS || touch.extent > FAST_LONGEST * w || bend(&touch.path) > FAST_BEND * w {
+            return None;
+        }
+        let (dx, dy) = (touch.at.x - touch.start.x, touch.at.y - touch.start.y);
+        let third = self.layout.width / 3.0;
+        let near_edge = if self.gestures.delete_from_left { touch.start.x < third } else { touch.start.x > 2.0 * third };
+        if dy.abs() > 1.4 * dx.abs() {
+            Some(if dy < 0.0 { Gesture::Up } else { Gesture::Down })
+        } else if dx.abs() > 1.4 * dy.abs() && near_edge && self.inwards(touch, touch.at) > 0.0 {
+            Some(Gesture::QuickDelete)
+        } else {
+            None
         }
     }
 
@@ -853,6 +931,8 @@ impl Keyboard {
             anchor: at,
             anchor_time: time,
             repeat_at: None,
+            start_time: time,
+            last_time: time,
             path: vec![at],
             at_edge,
             deleting: None,
@@ -869,6 +949,7 @@ impl Keyboard {
         let w = self.layout.cell_width;
         let Some(mut touch) = self.touch.clone() else { return Action::Nothing };
         touch.at = at;
+        touch.last_time = time;
         touch.path.push(at);
         let from_start = distance(at, touch.start);
         if from_start > touch.extent {
@@ -888,31 +969,28 @@ impl Keyboard {
             && inwards >= FLICK * w
             && (at.x - touch.start.x).abs() >= (at.y - touch.start.y).abs()
         {
-            touch.deleting = Some(Deleting { pieces: 0, mark: 0.0 });
+            touch.deleting = Some(Deleting { characters: 0, words: 0 });
             started = true;
         }
-        // Strayed up or down: swipe typing after all, with everything put back.
-        if touch.deleting.is_some() && (at.y - touch.start.y).abs() > DELETE_STRAY * w {
+        // Bent: swipe typing after all, with everything put back.
+        if touch.deleting.is_some() && bend(&touch.path) > DELETE_STRAY * w {
             touch.deleting = None;
             touch.at_edge = false;
             self.touch = Some(touch);
             return Action::Delete { pieces: 0, words: false, started: false };
         }
         if let Some(deleting) = &mut touch.deleting {
-            let before = deleting.pieces;
-            while inwards >= deleting.mark + DELETE_STEP * w {
-                deleting.pieces += 1;
-                deleting.mark += DELETE_STEP * w;
+            let before = deleting.pieces();
+            let elapsed = time - touch.start_time;
+            let forwards = delete_count(inwards / w, elapsed);
+            let back = delete_count(inwards / w + RESTORE_SLACK, elapsed);
+            if forwards > deleting.characters {
+                deleting.characters = forwards;
+            } else if back < deleting.characters {
+                deleting.characters = back;
             }
-            while deleting.pieces > 0 && inwards <= deleting.mark - RESTORE_STEP * w {
-                deleting.pieces -= 1;
-                deleting.mark -= RESTORE_STEP * w;
-            }
-            if deleting.pieces == 0 {
-                deleting.mark = deleting.mark.min(inwards);
-            }
-            if started || deleting.pieces != before {
-                action = Action::Delete { pieces: deleting.pieces, words: false, started };
+            if started || deleting.pieces() != before {
+                action = Action::Delete { pieces: deleting.pieces(), words: false, started };
             }
         }
         self.touch = Some(touch);
@@ -929,12 +1007,26 @@ impl Keyboard {
         let gesture = self.gesture(&touch);
         let label = self.layout.keys[touch.key].label.clone();
         match gesture {
+            // A flick in from the edge, too quick to have counted a letter yet, takes one.
+            Gesture::Delete
+                if touch.deleting.is_some_and(|deleting| deleting.pieces() == 0)
+                    && self.inwards(&touch, touch.at) >= DELETE_FIRST * self.layout.cell_width =>
+            {
+                Action::Delete { pieces: 1, words: false, started: false }
+            }
             Gesture::Delete => moved,
+            Gesture::QuickDelete => {
+                let elapsed = touch.last_time - touch.start_time;
+                let pieces = delete_count(self.inwards(&touch, touch.at) / self.layout.cell_width, elapsed).max(1);
+                Action::Delete { pieces, words: false, started: true }
+            }
             Gesture::Tap => self.press(touch.key),
             _ if is_letter(&label) && self.is_capital(gesture) => {
                 self.shift = Shift::Off;
                 Action::Commit(upper(&label))
             }
+            // On punctuation the capital gesture types the key's first alternative.
+            _ if self.is_capital(gesture) && !alternates(&label).is_empty() => Action::Commit(alternates(&label)[0].to_owned()),
             Gesture::Path if self.is_swipe(&touch) => {
                 self.swiped = Some(Swiped { path: touch.path, capital: self.shift == Shift::Once });
                 self.shift = Shift::Off;
@@ -957,7 +1049,7 @@ impl Keyboard {
         }
         let touch = self.touch.as_ref()?;
         match self.gesture(touch) {
-            Gesture::Delete => Some(touch.repeat_at.unwrap_or(touch.anchor_time + self.long_press_ms)),
+            Gesture::Delete => Some(touch.repeat_at.unwrap_or(touch.anchor_time + WORD_HOLD_MS)),
             Gesture::Tap if !self.choices(touch.key).is_empty() => Some(touch.anchor_time + self.long_press_ms),
             _ => None,
         }
@@ -975,8 +1067,8 @@ impl Keyboard {
                 let touch = self.touch.as_mut().expect("touch");
                 touch.repeat_at = Some(time + WORD_REPEAT_MS);
                 let deleting = touch.deleting.as_mut().expect("deleting");
-                deleting.pieces += 1;
-                Action::Delete { pieces: deleting.pieces, words: true, started: false }
+                deleting.words += 1;
+                Action::Delete { pieces: deleting.pieces(), words: true, started: false }
             }
             Gesture::Tap if self.long_press(touch.key) => Action::Redraw,
             _ => Action::Nothing,
@@ -1106,6 +1198,12 @@ impl Keyboard {
                 && (self.is_capital(gesture) || (self.gestures.capital == Capital::UpAndBack && gesture == Gesture::Up))
         });
         if is_letter(label) && (self.shift == Shift::Once || flicked) { upper(label) } else { label.clone() }
+    }
+
+    /// What the capital gesture types on a punctuation key, shown small on
+    /// it; empty for other keys.
+    pub fn hint(&self, index: usize) -> &'static str {
+        alternates(&self.layout.keys[index].label).first().copied().unwrap_or("")
     }
 
     /// The QWERTZ row of the key's letter, for themes; None for other keys.
@@ -1395,7 +1493,8 @@ mod tests {
         assert_eq!(keyboard.label(g), "G");
         assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.1, -0.6), 40), Action::Commit("G".into()));
         assert_eq!(keyboard.label(g), "g");
-        assert_eq!(gesture(&mut keyboard, ",", &[(0.0, -0.6)]), Action::Nothing, "only letters have capitals");
+        assert_eq!(gesture(&mut keyboard, ",", &[(0.0, -0.6)]), Action::Commit(";".into()), "punctuation gives its first alternative");
+        assert_eq!(gesture(&mut keyboard, "space", &[(0.0, -0.6)]), Action::Nothing);
     }
 
     #[test]
@@ -1405,13 +1504,15 @@ mod tests {
         let y = keyboard.layout.find("l").center().y;
         let at = |x: f32| Point { x, y };
         keyboard.touch_down(at(1007.0), 0);
-        assert_eq!(keyboard.touch_move(at(1007.0 - 0.2 * w), 10), Action::Nothing, "not yet a slide");
-        assert_eq!(keyboard.touch_move(at(1007.0 - 0.4 * w), 20), Action::Delete { pieces: 1, words: false, started: true });
-        assert_eq!(keyboard.touch_move(at(1007.0 - 1.0 * w), 30), Action::Delete { pieces: 3, words: false, started: false });
-        assert_eq!(keyboard.touch_move(at(1007.0 - 0.8 * w), 40), Action::Nothing, "easing back a little keeps them");
-        assert_eq!(keyboard.touch_move(at(1007.0 - 0.4 * w), 50), Action::Delete { pieces: 2, words: false, started: false });
+        assert_eq!(keyboard.touch_move(at(1007.0 - 0.2 * w), 100), Action::Nothing, "not yet a slide");
+        assert_eq!(keyboard.touch_move(at(1007.0 - 0.4 * w), 200), Action::Delete { pieces: 0, words: false, started: true });
+        assert_eq!(keyboard.touch_move(at(1007.0 - 0.75 * w), 400), Action::Delete { pieces: 1, words: false, started: false });
+        assert_eq!(keyboard.touch_move(at(1007.0 - 1.4 * w), 500), Action::Delete { pieces: 2, words: false, started: false });
+        assert_eq!(keyboard.touch_move(at(1007.0 - 2.0 * w), 600), Action::Delete { pieces: 4, words: false, started: false }, "faster farther in");
+        assert_eq!(keyboard.touch_move(at(1007.0 - 1.9 * w), 700), Action::Nothing, "easing back a little keeps them");
+        assert_eq!(keyboard.touch_move(at(1007.0 - 1.2 * w), 800), Action::Delete { pieces: 2, words: false, started: false });
         assert_eq!(keyboard.pressed(), None);
-        assert_eq!(keyboard.touch_up(at(1007.0 - 0.4 * w), 60), Action::Nothing);
+        assert_eq!(keyboard.touch_up(at(1007.0 - 1.2 * w), 900), Action::Nothing);
         // From inside the keyboard the same slide is a flick that does nothing.
         assert_eq!(gesture(&mut keyboard, "g", &[(-0.3, 0.0), (-0.6, 0.1)]), Action::Nothing);
     }
@@ -1423,7 +1524,8 @@ mod tests {
         let w = keyboard.layout.cell_width;
         let y = keyboard.layout.find("a").center().y;
         keyboard.touch_down(Point { x: 1.0, y }, 0);
-        assert_eq!(keyboard.touch_move(Point { x: 1.0 + 0.4 * w, y }, 10), Action::Delete { pieces: 1, words: false, started: true });
+        assert_eq!(keyboard.touch_move(Point { x: 1.0 + 0.4 * w, y }, 200), Action::Delete { pieces: 0, words: false, started: true });
+        assert_eq!(keyboard.touch_move(Point { x: 1.0 + 0.8 * w, y }, 400), Action::Delete { pieces: 1, words: false, started: false });
     }
 
     #[test]
@@ -1451,11 +1553,11 @@ mod tests {
         let y = keyboard.layout.find("l").center().y;
         keyboard.touch_down(Point { x: 1007.0, y }, 0);
         keyboard.touch_move(Point { x: 1007.0 - 0.4 * w, y }, 50);
-        assert_eq!(keyboard.deadline(), Some(450));
-        assert_eq!(keyboard.tick(449), Action::Nothing);
-        assert_eq!(keyboard.tick(450), Action::Delete { pieces: 2, words: true, started: false });
-        assert_eq!(keyboard.deadline(), Some(750));
-        assert_eq!(keyboard.tick(750), Action::Delete { pieces: 3, words: true, started: false });
+        assert_eq!(keyboard.deadline(), Some(1250));
+        assert_eq!(keyboard.tick(1249), Action::Nothing);
+        assert_eq!(keyboard.tick(1250), Action::Delete { pieces: 1, words: true, started: false });
+        assert_eq!(keyboard.deadline(), Some(1550));
+        assert_eq!(keyboard.tick(1550), Action::Delete { pieces: 2, words: true, started: false });
     }
 
     #[test]
@@ -1564,9 +1666,47 @@ mod tests {
         let p = keyboard.layout.find("p").cells[0];
         let at = |dx: f32, dy: f32| Point { x: 1000.0 + dx * w, y: p.y + dy * w };
         keyboard.touch_down(at(0.0, 0.0), 0);
-        assert!(matches!(keyboard.touch_move(at(-0.8, 0.0), 10), Action::Delete { .. }));
-        assert_eq!(keyboard.touch_move(at(-1.2, 0.7), 20), Action::Delete { pieces: 0, words: false, started: false });
-        assert_eq!(keyboard.touch_move(at(-2.0, 1.4), 30), Action::Nothing);
-        assert_eq!(keyboard.touch_up(at(-2.0, 1.4), 40), Action::Swipe);
+        assert!(matches!(keyboard.touch_move(at(-0.5, 0.0), 200), Action::Delete { pieces: 0, .. }));
+        assert!(matches!(keyboard.touch_move(at(-1.0, 0.0), 400), Action::Delete { pieces: 1, .. }));
+        assert_eq!(keyboard.touch_move(at(-1.2, 0.7), 450), Action::Delete { pieces: 0, words: false, started: false });
+        assert_eq!(keyboard.touch_move(at(-2.0, 1.4), 500), Action::Nothing);
+        assert_eq!(keyboard.touch_up(at(-2.0, 1.4), 550), Action::Swipe);
+    }
+
+    #[test]
+    fn a_slanted_straight_delete_slide_keeps_deleting() {
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        let w = keyboard.layout.cell_width;
+        let y = keyboard.layout.find("p").cells[0].y;
+        keyboard.touch_down(Point { x: 1000.0, y }, 0);
+        let mut last = Action::Nothing;
+        for step in 1..=10 {
+            let t = step as f32 / 10.0;
+            let action = keyboard.touch_move(Point { x: 1000.0 - 2.3 * w * t, y: y + 1.3 * w * t }, 50 * step);
+            if action != Action::Nothing {
+                last = action;
+            }
+        }
+        assert!(matches!(last, Action::Delete { pieces, .. } if pieces >= 5), "{last:?}");
+    }
+
+    #[test]
+    fn quick_straight_strokes_are_flicks_and_deletes_whatever_their_length() {
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        let w = keyboard.layout.cell_width;
+        // Up 1.6 key widths in 90 ms, as a thumb flicks: a capital.
+        let h = keyboard.layout.find("h").cells[0];
+        keyboard.touch_down(h, 0);
+        keyboard.touch_move(Point { x: h.x + 0.1 * w, y: h.y - 0.8 * w }, 45);
+        assert_eq!(keyboard.touch_up(Point { x: h.x + 0.2 * w, y: h.y - 1.6 * w }, 90), Action::Commit("H".into()));
+        // The same stroke slowly: swipe typing.
+        keyboard.touch_down(h, 0);
+        keyboard.touch_move(Point { x: h.x + 0.1 * w, y: h.y - 0.8 * w }, 150);
+        assert_eq!(keyboard.touch_up(Point { x: h.x + 0.2 * w, y: h.y - 1.6 * w }, 300), Action::Swipe);
+        // Left from the right third, quickly: deletes on lifting.
+        let o = keyboard.layout.find("o").cells[0];
+        keyboard.touch_down(o, 0);
+        keyboard.touch_move(Point { x: o.x - 0.7 * w, y: o.y }, 50);
+        assert_eq!(keyboard.touch_up(Point { x: o.x - 1.4 * w, y: o.y + 0.1 * w }, 100), Action::Delete { pieces: 1, words: false, started: true }, "a flick takes one");
     }
 }

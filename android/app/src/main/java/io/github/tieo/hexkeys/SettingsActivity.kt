@@ -47,6 +47,7 @@ class SettingsActivity : Activity() {
 
         column.addView(ui.card(EditText(this).apply {
             hint = "Try the keyboard"
+            setTextColor(ui.text)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minHeight = ui.dp(48)
         }))
@@ -85,7 +86,7 @@ class SettingsActivity : Activity() {
 
         languages = TextView(this).apply {
             textSize = 15f
-            alpha = 0.7f
+            setTextColor(ui.secondaryText)
         }
         column.addView(ui.card(ui.navigationRow("Languages", languages) {
             startActivity(Intent(this, LanguagesActivity::class.java))
@@ -152,6 +153,7 @@ class SettingsActivity : Activity() {
                 addView(TextView(this@SettingsActivity).apply {
                     text = theme.name
                     textSize = 13f
+                    setTextColor(ui.text)
                     gravity = Gravity.CENTER
                     setPadding(0, ui.dp(6), 0, 0)
                 })
@@ -190,6 +192,10 @@ class Ui(private val activity: Activity) {
         0xFF8AB4F8.toInt()
     }
     private val onAccent = 0xFF101318.toInt()
+
+    /** Text colours: the system theme's own defaults are dim enough to look disabled. */
+    val text = 0xFFECEDF1.toInt()
+    val secondaryText = 0xFFC2C5CC.toInt()
     private val cardColor = 0x14FFFFFF
     private val idleColor = 0x1FFFFFFF
 
@@ -224,7 +230,7 @@ class Ui(private val activity: Activity) {
     fun label(text: String) = TextView(activity).apply {
         this.text = text
         textSize = 15f
-        alpha = 0.8f
+        setTextColor(secondaryText)
         setPadding(0, dp(12), 0, dp(8))
     }
 
@@ -240,6 +246,7 @@ class Ui(private val activity: Activity) {
 
     fun toggle(label: String, key: String) = Switch(activity).apply {
         text = label
+        setTextColor(this@Ui.text)
         textSize = 17f
         minHeight = dp(52)
         isChecked = preferences.getBoolean(key, false)
@@ -274,6 +281,7 @@ class Ui(private val activity: Activity) {
             addView(TextView(activity).apply {
                 text = title
                 textSize = 17f
+                setTextColor(this@Ui.text)
             })
             addView(summary)
         }
@@ -281,7 +289,7 @@ class Ui(private val activity: Activity) {
         addView(TextView(activity).apply {
             text = "›"
             textSize = 24f
-            alpha = 0.6f
+            setTextColor(secondaryText)
         })
         setOnClickListener { open() }
     }

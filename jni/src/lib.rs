@@ -480,3 +480,10 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_setAccents(mut env: JNIE
         })
         .collect();
 }
+
+/// What the capital gesture types on a punctuation key, to show small on
+/// it; empty for other keys.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_keyHint(env: JNIEnv, _class: JClass, handle: jlong, index: jint) -> jstring {
+    env.new_string(keyboard(handle).hint(index as usize)).expect("string").into_raw()
+}
