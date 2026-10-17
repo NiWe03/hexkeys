@@ -757,8 +757,9 @@ const STILL: f32 = 0.25;
 const FAR_SIDE: f32 = 1.0;
 
 /// How long a delete swipe rests on the far side before its first whole
-/// word goes, in ms.
-const FAR_HOLD_MS: u64 = 250;
+/// word goes, in ms: long enough that a slide reaching the edge and pausing
+/// there takes only its characters.
+const FAR_HOLD_MS: u64 = 1000;
 
 /// Pause between characters while backspace is held, in ms.
 const BACKSPACE_REPEAT_MS: u64 = 60;
