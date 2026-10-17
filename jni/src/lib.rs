@@ -660,3 +660,24 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_setAccents(mut env: JNIE
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_keyHint(env: JNIEnv, _class: JClass, handle: jlong, index: jint) -> jstring {
     env.new_string(keyboard(handle).hint(index as usize)).expect("string").into_raw()
 }
+
+/// The word before the cursor with `key` typed after it as Telex makes it,
+/// or null when the key is just a letter after the word.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_telex(
+    mut env: JNIEnv,
+    _class: JClass,
+    word: JString,
+    key: JString,
+) -> jstring {
+    let word: String = env.get_string(&word).map(Into::into).unwrap_or_default();
+    let key: String = env.get_string(&key).map(Into::into).unwrap_or_default();
+    let mut keys = key.chars();
+    match (keys.next(), keys.next()) {
+        (Some(key), None) => match hexkeys::telex::telex(&word, key) {
+            Some(typed) => env.new_string(typed).expect("string").into_raw(),
+            None => std::ptr::null_mut(),
+        },
+        _ => std::ptr::null_mut(),
+    }
+}

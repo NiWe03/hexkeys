@@ -469,6 +469,8 @@ class HexInputMethod : InputMethodService() {
                     lastCorrection = Correction(typed + text, word + text, typed)
                     keyboard?.note("corrected", "$typed -> $word")
                     if (mode != "off") amend(typedBefore + text)
+                } else if (telexTyped(typedBefore, text)) {
+                    // Written in Vietnamese, a letter can mark the word before it instead.
                 } else {
                     if (text in SEPARATORS) keyboard?.unknown?.let { learn(it, 1) }
                     // A letter right after a swiped word starts the next word, as on
@@ -891,6 +893,26 @@ class HexInputMethod : InputMethodService() {
 
     /** The ISO code of a dictionary's language. */
     private fun languageCode(file: String) = Dictionaries.languageCode(this, file)
+
+    /**
+     * Types a letter as Telex while the language in use is Vietnamese: the
+     * word before the cursor is replaced by what Telex makes of it with the
+     * letter after it ("tieeng" and s is "tiếng"). Returns whether it did.
+     */
+    private fun telexTyped(before: String, text: String): Boolean {
+        val index = pinned ?: language ?: return false
+        if (lexiconFiles.getOrNull(index)?.let(::languageCode) != "vi") return false
+        if (text.length != 1 || !text[0].isLetter()) return false
+        val word = before.takeLastWhile { it.isLetter() }
+        if (word.isEmpty()) return false
+        val typed = Core.telex(word, text) ?: return false
+        val connection = editor
+        connection.beginBatch()
+        connection.deleteBefore(word.length)
+        connection.commit(typed)
+        connection.endBatch()
+        return true
+    }
 
     /** Counts strips asked for, so only the newest one is shown. */
     @Volatile
