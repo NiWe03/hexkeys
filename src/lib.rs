@@ -832,6 +832,12 @@ const POPUP_SCALE: f32 = 0.72;
 /// longer is a path over several keys, which belongs to swipe typing.
 const FLICK: f32 = 0.35;
 
+/// How far a finger may slide down from a key, in key widths, and still
+/// tap it: quick taps drift downwards. In the phone's log, taps meant for
+/// u, m and space slid down 0.5 to 0.58 key widths in 59 to 89 ms; the
+/// user's deliberate flicks run 1.1 to 2.
+const DOWN_TAP: f32 = 0.7;
+
 /// How far a finger may drift and still count as holding still, in key widths.
 const STILL: f32 = 0.25;
 
@@ -1110,6 +1116,8 @@ impl Keyboard {
             Gesture::Aborted
         } else if dy < 0.0 {
             Gesture::Up
+        } else if touch.extent < DOWN_TAP * w {
+            Gesture::Tap
         } else {
             Gesture::Down
         }
@@ -2069,8 +2077,15 @@ mod tests {
     fn other_flicks_type_nothing() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         assert_eq!(gesture(&mut keyboard, "g", &[(0.6, 0.0)]), Action::Nothing);
-        assert_eq!(gesture(&mut keyboard, "g", &[(0.0, 0.6)]), Action::Nothing);
+        assert_eq!(gesture(&mut keyboard, "g", &[(0.0, 0.8)]), Action::Nothing);
         assert_eq!(gesture(&mut keyboard, "g", &[(-0.6, 0.0), (0.0, 0.1)]), Action::Nothing, "pulled back");
+    }
+
+    #[test]
+    fn a_short_slide_down_is_a_tap() {
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        assert_eq!(gesture(&mut keyboard, "g", &[(0.0, 0.58)]), Action::Commit("g".into()));
+        assert_eq!(gesture(&mut keyboard, "space", &[(-0.25, 0.45)]), Action::Commit(" ".into()), "as after weil in the log");
     }
 
     #[test]
