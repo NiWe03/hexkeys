@@ -50,6 +50,9 @@ pub struct LayoutSpec {
     /// Whether the first row is the one shifted by half a cell, which makes
     /// the even rows the short ones instead of the odd.
     pub first_row_shifted: bool,
+    /// Digits in a row of their own above the honeycomb, narrower and lower
+    /// than the cells, as the number row of a phone keyboard.
+    pub numbers: Option<String>,
 }
 
 impl LayoutSpec {
@@ -110,7 +113,12 @@ pub struct Layout {
     pub cell_height: f32,
     pub width: f32,
     pub height: f32,
+    /// Where the number row ends and the honeycomb starts; 0 without one.
+    pub numbers_bottom: f32,
 }
+
+/// The row index of number row keys, which stand outside the honeycomb.
+const NUMBER_ROW: usize = usize::MAX;
 
 impl Layout {
     /// Fits `spec` to `width` pixels. `stretch` scales cell height relative to
@@ -119,10 +127,11 @@ impl Layout {
         let cell_width = width / spec.width_in_cells();
         let cell_height = cell_width * 2.0 / 3f32.sqrt() * stretch;
         let row_pitch = cell_height * 0.75;
+        let numbers_bottom = if spec.numbers.is_some() { cell_height * 0.6 } else { 0.0 };
 
         let mut keys = Vec::new();
         for (row, row_spec) in spec.rows.iter().enumerate() {
-            let y = cell_height / 2.0 + row as f32 * row_pitch;
+            let y = numbers_bottom + cell_height / 2.0 + row as f32 * row_pitch;
             let mut column = row_spec.start_column as f32 + spec.shift(row);
             for key_spec in &row_spec.keys {
                 let cells: Vec<Point> = (0..key_spec.span)
@@ -135,7 +144,7 @@ impl Layout {
         }
 
         for (row, row_spec) in spec.rows.iter().enumerate() {
-            let y = cell_height / 2.0 + row as f32 * row_pitch;
+            let y = numbers_bottom + cell_height / 2.0 + row as f32 * row_pitch;
             let left = keys.iter().position(|key| key.row == row);
             let right = keys.iter().rposition(|key| key.row == row);
             let (Some(left), Some(right)) = (left, right) else { continue };
@@ -183,8 +192,40 @@ impl Layout {
             }
         }
 
-        let height = cell_height + (spec.rows.len().saturating_sub(1)) as f32 * row_pitch;
-        Self { keys, cell_width, cell_height, width, height }
+        if let Some(digits) = &spec.numbers {
+            let step = width / digits.chars().count() as f32;
+            for (i, digit) in digits.chars().enumerate() {
+                let centre = Point { x: (i as f32 + 0.5) * step, y: numbers_bottom / 2.0 };
+                keys.push(Key {
+                    label: digit.to_string(),
+                    row: NUMBER_ROW,
+                    label_at: centre,
+                    cells: vec![centre],
+                    regions: vec![centre],
+                });
+            }
+        }
+
+        let height = numbers_bottom + cell_height + (spec.rows.len().saturating_sub(1)) as f32 * row_pitch;
+        Self { keys, cell_width, cell_height, width, height, numbers_bottom }
+    }
+
+    /// Grows the layout to `height` by moving its keys down, so layers with
+    /// fewer rows keep their bottom row where the others have it. The top
+    /// row's keys run up into the space above, which keeps the tiling whole.
+    fn lower_to(&mut self, height: f32) {
+        let by = height - self.height;
+        for key in &mut self.keys {
+            for cell in key.cells.iter_mut().chain(key.regions.iter_mut()) {
+                cell.y += by;
+            }
+            // The top row's labels sit in the middle of what those keys now cover.
+            key.label_at.y += if key.row == 0 { by / 2.0 } else { by };
+        }
+        self.height = height;
+        if self.numbers_bottom > 0.0 {
+            self.numbers_bottom += by;
+        }
     }
 
     /// The key under a touch: the one owning the nearest cell centre.
@@ -230,8 +271,11 @@ impl Layout {
             let dy = (touch.y - cell.y) / stretch;
             dx * dx + dy * dy
         };
+        // Number keys own the band above the honeycomb, split by x alone.
+        let in_band = touch.y < self.numbers_bottom;
         self.keys
             .iter()
+            .filter(|key| (key.row == NUMBER_ROW) == in_band)
             .flat_map(|key| key.regions.iter().map(move |cell| (key, distance(cell))))
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(key, _)| key)
@@ -246,18 +290,32 @@ impl Layout {
     /// the border, so the keys tile the whole rectangle with no gaps and what
     /// is drawn is exactly what `key_at` answers to.
     pub fn outline(&self, key: &Key) -> Vec<Point> {
+        if key.row == NUMBER_ROW {
+            let step = self.width / self.keys.iter().filter(|key| key.row == NUMBER_ROW).count() as f32;
+            let (x, bottom) = (key.cells[0].x, self.numbers_bottom);
+            return vec![
+                Point { x: x - step / 2.0, y: 0.0 },
+                Point { x: x + step / 2.0, y: 0.0 },
+                Point { x: x + step / 2.0, y: bottom },
+                Point { x: x - step / 2.0, y: bottom },
+            ];
+        }
         let stretch = self.cell_height / (self.cell_width * 2.0 / 3f32.sqrt());
         // Work in coordinates where the hexagons are regular, so that
         // perpendicular bisectors are the true cell borders.
         let to_regular = |p: &Point| Point { x: p.x, y: p.y / stretch };
         let centres: Vec<Point> =
-            self.keys.iter().flat_map(|other| other.regions.iter().map(to_regular)).collect();
+            self.keys
+                .iter()
+                .filter(|other| other.row != NUMBER_ROW)
+                .flat_map(|other| other.regions.iter().map(to_regular))
+                .collect();
 
         let mut outline: Option<Vec<Point>> = None;
         for cell in key.regions.iter().map(to_regular) {
             let mut polygon = vec![
-                Point { x: 0.0, y: 0.0 },
-                Point { x: self.width, y: 0.0 },
+                Point { x: 0.0, y: self.numbers_bottom / stretch },
+                Point { x: self.width, y: self.numbers_bottom / stretch },
                 Point { x: self.width, y: self.height / stretch },
                 Point { x: 0.0, y: self.height / stretch },
             ];
@@ -379,23 +437,32 @@ pub fn honeycomb() -> LayoutSpec {
             bottom_row("?123"),
         ],
         first_row_shifted: false,
+        numbers: None,
     }
 }
 
-/// the reference layout's arrangement, six and seven to a row starting with six, with
-/// two spaces among the letters and no shift or backspace key: those are the
-/// flicks up and left. For trying how the original feels next to
-/// [`honeycomb`]; it is a registered design and stays out of any release.
+/// the reference layout's arrangement with nothing but letters among the letters and
+/// space at the bottom. Its rows of six and seven hold exactly the 26
+/// letters in four rows, so x c v b move up from below into the cells
+/// the reference layout gives its two spaces, keeping their order left to right. Shift
+/// and backspace fill the half cells at the ends of that row, and a number
+/// row runs along the top. For trying how the original's arrangement feels
+/// next to [`honeycomb`]; it is a registered design and stays out of any
+/// release.
 pub fn space_middle() -> LayoutSpec {
+    let mut middle = row(0, letters("xcfhvb"));
+    middle.left_edge = Some("⇧".into());
+    middle.right_edge = Some("⌫".into());
     LayoutSpec {
         rows: vec![
             row(0, letters("wetzio")),
             row(0, letters("qargulp")),
-            row(0, keys(&[(".", 1), ("space", 1), ("f", 1), ("h", 1), ("space", 1), ("?", 1)])),
+            middle,
             row(0, letters("ysdnmjk")),
-            row(0, keys(&[("x", 1), ("c", 1), ("v", 1), ("b", 1), ("?123", 1), ("⏎", 1)])),
+            row(0, keys(&[("?123", 1), (",", 1), ("space", 2), (".", 1), ("⏎", 1)])),
         ],
         first_row_shifted: true,
+        numbers: Some("1234567890".into()),
     }
 }
 
@@ -415,12 +482,12 @@ fn symbol_rows(top: [&str; 4], left_edge: &str) -> Vec<RowSpec> {
 
 /// Digits in order along the top, then the symbols typed most.
 pub fn symbols() -> LayoutSpec {
-    LayoutSpec { rows: symbol_rows(["1234567", "890@#€", "-+()/&%", "?!\"':;"], "=\\<"), first_row_shifted: false }
+    LayoutSpec { rows: symbol_rows(["1234567", "890@#€", "-+()/&%", "?!\"':;"], "=\\<"), first_row_shifted: false, numbers: None }
 }
 
 /// The rarer symbols, behind the key in shift's place.
 pub fn more_symbols() -> LayoutSpec {
-    LayoutSpec { rows: symbol_rows(["~`|•√π÷", "׶∆£¥$", "^°={}\\[", "]<>_¢*"], "?123"), first_row_shifted: false }
+    LayoutSpec { rows: symbol_rows(["~`|•√π÷", "׶∆£¥$", "^°={}\\[", "]<>_¢*"], "?123"), first_row_shifted: false, numbers: None }
 }
 
 /// What a key press asks the app to do.
@@ -515,7 +582,11 @@ pub struct Keyboard {
 impl Keyboard {
     /// A keyboard with `letters` as its letter layer.
     pub fn new(letters: LayoutSpec, width: f32, stretch: f32, long_press_ms: u64) -> Self {
-        let layers = [letters, symbols(), more_symbols()].map(|spec| Layout::fit(&spec, width, stretch));
+        let mut layers = [letters, symbols(), more_symbols()].map(|spec| Layout::fit(&spec, width, stretch));
+        let height = layers.iter().map(|layer| layer.height).fold(0.0, f32::max);
+        for layer in &mut layers {
+            layer.lower_to(height);
+        }
         Self { layout: layers[0].clone(), layers, shift: Shift::Off, popup: None, touch: None, long_press_ms }
     }
 
@@ -1063,6 +1134,17 @@ mod tests {
         let w = layout.find("w").cells[0];
         assert!((w.x - q.x - layout.cell_width / 2.0).abs() < 0.01);
         assert!((w.y - q.y - layout.cell_height * 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn layers_share_the_tallest_height_and_still_tile() {
+        let keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
+        let tallest = Layout::fit(&space_middle(), 1008.0, 1.0).height;
+        for layout in &keyboard.layers {
+            assert!((layout.height - tallest).abs() < 0.01);
+            let area: f32 = layout.keys.iter().map(|key| polygon_area(&layout.outline(key))).sum();
+            assert!((area - layout.width * tallest).abs() / (layout.width * tallest) < 1e-4);
+        }
     }
 
     #[test]
