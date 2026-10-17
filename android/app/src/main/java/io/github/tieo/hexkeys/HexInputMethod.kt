@@ -158,6 +158,7 @@ class HexInputMethod : InputMethodService() {
                 if (name in counted) Core.lexiconContexts(fresh, index, assets.open("contexts/$name").bufferedReader().readText())
             }
             val accents = Core.lexiconAccents(fresh, -1)
+            Core.lexiconPrepare(fresh)
             Core.words.execute {
                 if (lexicon == 0L) {
                     Core.lexiconDestroy(fresh)

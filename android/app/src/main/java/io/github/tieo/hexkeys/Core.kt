@@ -101,6 +101,9 @@ object Core {
     /** Adds a `.dict` file's bytes; false when they are not a readable dictionary. */
     external fun lexiconAdd(lexicon: Long, bytes: ByteArray): Boolean
 
+    /** Builds the swipe index ahead of the first swipe, which would otherwise wait for it. */
+    external fun lexiconPrepare(lexicon: Long)
+
     /** Adds the context counts (assets/contexts) for the language of the dictionary added `index`th. */
     external fun lexiconContexts(lexicon: Long, index: Int, text: String)
 

@@ -432,6 +432,12 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_amend(
     array.into_raw()
 }
 
+/// Builds the swipe index ahead of the first swipe.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconPrepare(_env: JNIEnv, _class: JClass, handle: jlong) {
+    let _ = lexicon(handle).prepare();
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconClear(_env: JNIEnv, _class: JClass, handle: jlong) {
     lexicon(handle).clear();

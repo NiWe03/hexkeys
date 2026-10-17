@@ -377,6 +377,12 @@ impl Lexicon {
         self.accent_uses = OnceLock::new();
     }
 
+    /// Builds what swipe typing looks words up in now, so the first swipe
+    /// does not wait for it.
+    pub fn prepare(&self) -> Result<(), Error> {
+        self.swipe_index().map(|_| ())
+    }
+
     pub(crate) fn swipe_index(&self) -> Result<&Index, Error> {
         if let Some(index) = self.swipe.get() {
             return Ok(index);
