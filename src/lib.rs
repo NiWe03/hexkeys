@@ -1105,6 +1105,8 @@ impl Keyboard {
                 Action::Delete { pieces, words: false, started: true }
             }
             Gesture::Tap => self.press(touch.key),
+            // A flick up on enter, towards the action drawn above its arrow, does the field's action.
+            Gesture::Up if label == "⏎" => Action::EnterAction,
             _ if is_letter(&label) && self.is_capital(gesture) => {
                 self.shift = Shift::Off;
                 Action::Commit(upper(&label))
@@ -1188,6 +1190,11 @@ impl Keyboard {
             Some(touch) if self.gesture(touch) == Gesture::Path && self.is_swipe(touch) => &touch.path,
             _ => &[],
         }
+    }
+
+    /// The letter layer, whichever layer is showing.
+    pub fn letter_layout(&self) -> &Layout {
+        &self.layers[0]
     }
 
     /// The letter keys of the letter layer, for the swipe decoder.
@@ -1737,6 +1744,7 @@ mod tests {
         assert_eq!(keyboard.touch_up(enter, 700), Action::Redraw);
         keyboard.touch_down(enter, 1000);
         assert_eq!(keyboard.touch_up(enter, 1080), Action::Enter);
+        assert_eq!(gesture(&mut keyboard, "⏎", &[(0.0, -0.6)]), Action::EnterAction, "a flick up does it too");
     }
 
     #[test]

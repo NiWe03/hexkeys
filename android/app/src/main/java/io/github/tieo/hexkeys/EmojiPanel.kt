@@ -25,6 +25,7 @@ class EmojiPanel(
     private val onSpace: () -> Unit,
     private val onBackspace: () -> Unit,
     private val onClose: () -> Unit,
+    private val onSearch: () -> Unit,
 ) : LinearLayout(context) {
 
     private val density = resources.displayMetrics.density
@@ -107,13 +108,22 @@ class EmojiPanel(
     private fun recent(): List<String> =
         Dictionaries.preferences(context).getString(RECENT, "").orEmpty().split(' ').filter { it.isNotEmpty() }
 
-    private fun remember(emoji: String) {
+    /** Puts an emoji first among the recently used. */
+    fun remember(emoji: String) {
         val list = (listOf(emoji) + recent().filter { it != emoji }).take(RECENT_COUNT)
         Dictionaries.preferences(context).edit().putString(RECENT, list.joinToString(" ")).apply()
     }
 
     private fun rebuildTabs() {
         tabs.removeAllViews()
+        // Searching by name comes first, as a magnifier.
+        tabs.addView(android.widget.ImageView(context).apply {
+            setImageResource(R.drawable.icon_search)
+            setColorFilter(theme.label)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setOnClickListener { onSearch() }
+        }, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         val icons = listOf("") + groups.map { it.second.firstOrNull() ?: "" }
         for ((index, icon) in icons.withIndex()) {
             tabs.addView(TextView(context).apply {

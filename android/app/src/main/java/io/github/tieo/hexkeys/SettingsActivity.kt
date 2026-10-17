@@ -604,6 +604,7 @@ private class LayoutPreview(context: Context, private val space_middle: Boolean)
             canvas.drawPath(path, gap)
             val (x, y) = Core.labelPosition(handle, index).let { it[0] to it[1] }
             val label = Core.label(handle, index)
+            if (label == "space") continue
             val icon = KeyboardView.KEY_ICONS[label]
             if (icon != null) {
                 val drawable = context.getDrawable(icon)!!.mutate()

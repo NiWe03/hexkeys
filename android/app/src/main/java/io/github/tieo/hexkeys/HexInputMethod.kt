@@ -25,6 +25,8 @@ class HexInputMethod : InputMethodService() {
 
     private var keyboard: KeyboardView? = null
     private var frame: KeyboardFrame? = null
+    /** The lexicon in use; read and replaced on the [Core.words] thread only, once created. */
+    @Volatile
     private var lexicon = 0L
 
     /** What holding a letter offers in the languages loaded, for keyboard views made later. */
@@ -64,7 +66,7 @@ class HexInputMethod : InputMethodService() {
             KeyboardView.LAYOUT, KeyboardView.DELETE_FROM_LEFT, KeyboardView.CAPITAL, KeyboardView.EDIT_KEYS ->
                 keyboard?.requestLayout()
             Dictionaries.LEARNED_RESET -> {
-                Core.lexiconForget(lexicon)
+                Core.words.execute { Core.lexiconForget(lexicon) }
                 learned.clear()
             }
         }
@@ -86,8 +88,10 @@ class HexInputMethod : InputMethodService() {
         Dictionaries.preferences(this).unregisterOnSharedPreferenceChangeListener(settingsChanged)
         loader.shutdown()
         voice.release()
-        Core.lexiconDestroy(lexicon)
-        lexicon = 0L
+        Core.words.execute {
+            Core.lexiconDestroy(lexicon)
+            lexicon = 0L
+        }
     }
 
     /**
@@ -116,142 +120,223 @@ class HexInputMethod : InputMethodService() {
             }
             for ((word, times) in words) Core.lexiconLearn(fresh, word, times)
             val accents = Core.lexiconAccents(fresh)
-            mainExecutor.execute {
+            Core.words.execute {
                 if (lexicon == 0L) {
                     Core.lexiconDestroy(fresh)
                     return@execute
                 }
                 Core.lexiconDestroy(lexicon)
                 lexicon = fresh
-                this.accents = accents
-                keyboard?.accents = accents
-                refreshStrip()
+                mainExecutor.execute {
+                    this.accents = accents
+                    keyboard?.accents = accents
+                    refreshStrip()
+                }
             }
         }
     }
 
+    /** A swipe being decoded; actions arriving meanwhile wait in [waiting]. */
+    private var decoding = false
+    private val waiting = ArrayDeque<Pair<String, String>>()
+
+    /** What a key, gesture or hold asks for, in the order they came. */
+    private fun act(kind: String, text: String) {
+        if (decoding) {
+            waiting.addLast(kind to text)
+            return
+        }
+        perform(kind, text)
+    }
+
+    /** The emoji search's query, which the keys type while it is open. */
+    private val query = StringBuilder()
+    private val emojiSearch by lazy { EmojiSearch(this) }
+
+    /** Opens the search over the strip, the letters below it typing the query. */
+    private fun openEmojiSearch() {
+        query.clear()
+        frame?.showSearch(true) {
+            frame?.showSearch(false)
+            frame?.showEmoji(true)
+        }
+        showEmojiResults()
+    }
+
+    /** Keys while searching emoji go to the query; enter or the emoji found end it. */
+    private fun searchKey(kind: String, text: String) {
+        when (kind) {
+            "commit" -> query.append(text)
+            "backspace" -> if (query.isNotEmpty()) query.setLength(query.length - 1)
+            "delete" -> query.setLength(maxOf(0, query.length - (text.substringBefore(' ').toIntOrNull() ?: 1)))
+            "enter", "enter_action" -> {
+                frame?.showSearch(false)
+                return
+            }
+            else -> return
+        }
+        showEmojiResults()
+    }
+
+    private fun showEmojiResults() {
+        val found = if (query.isBlank()) emptyList() else emojiSearch.find(query.toString())
+        frame?.showResults(query.toString(), found) { emoji ->
+            editor.finishComposing()
+            editor.commit(emoji)
+            frame?.emoji?.remember(emoji)
+        }
+    }
+
+    /** Puts in the word a swipe spelled, then whatever was typed while it was decoded. */
+    private fun swiped(words: Array<String>) {
+        decoding = false
+        val view = keyboard
+        if (view != null && words.isNotEmpty() && currentInputConnection != null) {
+            editor.finishComposing()
+            // Swiped words are put in with a space between them, as on other keyboards.
+            val last = editor.textBefore().lastOrNull()
+            val space = last != null && !last.isWhitespace() && last !in OPENING
+            swiped = words[0]
+            view.note("words", words.joinToString(", "))
+            editor.commit((if (space) " " else "") + words[0])
+            view.showSwipe(words)
+        }
+        while (!decoding && waiting.isNotEmpty()) {
+            val (kind, text) = waiting.removeFirst()
+            perform(kind, text)
+        }
+    }
+
+    private fun perform(kind: String, text: String) {
+        if (currentInputConnection == null) return
+        if (frame?.searching == true) {
+            searchKey(kind, text)
+            return
+        }
+        val connection = editor
+        val started = SystemClock.uptimeMillis()
+        // Text put in while a word is marked would replace it.
+        if (kind != "redraw" && kind != "nothing") connection.finishComposing()
+        val undo = lastCorrection
+        lastCorrection = null
+        val justSwiped = swiped
+        swiped = null
+        when (kind) {
+            "delete" -> {
+                val (pieces, words, started) = text.split(" ").map { it.toInt() }
+                var before = connection.textBefore()
+                if (started == 1) {
+                    deleted.clear()
+                    swipedBeforeDelete = justSwiped?.takeIf { before.endsWith(it) }
+                }
+                val word = swipedBeforeDelete
+                connection.beginBatch()
+                // A selection goes first, as one piece, as backspace takes it; so
+                // does a word just swiped.
+                val selected = if (deleted.isEmpty() && pieces > 0) connection.selectedText() else ""
+                if (selected.isNotEmpty()) {
+                    connection.commit("")
+                    deleted.addLast(selected)
+                } else if (deleted.isEmpty() && pieces > 0 && word != null && before.endsWith(word)) {
+                    connection.deleteBefore(word.length)
+                    before = before.dropLast(word.length)
+                    deleted.addLast(word)
+                }
+                while (deleted.size < pieces && before.isNotEmpty()) {
+                    // A word goes with the spaces after it, as ctrl and backspace take it.
+                    val piece = if (words == 1) {
+                        WORD_AT_END.find(before)?.value?.takeIf { it.isNotEmpty() } ?: before.takeLast(1)
+                    } else {
+                        lastCharacter(before)
+                    }
+                    connection.deleteBefore(piece.length)
+                    before = before.dropLast(piece.length)
+                    // The copy ran short of the field's text: read on.
+                    if (before.isEmpty()) before = connection.textBefore()
+                    deleted.addLast(piece)
+                }
+                while (deleted.size > pieces) connection.commit(deleted.removeLast())
+                connection.endBatch()
+            }
+            "swipe" -> {
+                val view = keyboard ?: return
+                if (!suggesting) return
+                // Decoded on the words thread; what is typed meanwhile waits its turn.
+                val path = view.swiped()
+                val letters = view.letters
+                val before = connection.textBefore()
+                decoding = true
+                Core.words.execute {
+                    val words = if (lexicon == 0L || letters == 0L) emptyArray() else Core.decodeSwipe(lexicon, letters, path, before)
+                    mainExecutor.execute { swiped(words) }
+                }
+            }
+            "commit" -> {
+                val mode = Dictionaries.autocorrectMode(this)
+                // A space typed before the strip caught up waits for it, briefly.
+                if (text in SEPARATORS && mode != "off") currentStrip()
+                val correction = when (mode) {
+                    "all" -> keyboard?.correction ?: keyboard?.fix
+                    "obvious" -> keyboard?.fix
+                    else -> null
+                }
+                if (text in SEPARATORS && correction != null) {
+                    val (word, replaces) = correction
+                    val typed = connection.textBefore()
+                        .let { it.substring(it.offsetByCodePoints(it.length, -replaces)) }
+                    connection.beginBatch()
+                    connection.deleteCodePointsBefore(replaces)
+                    connection.commit(word + text)
+                    connection.endBatch()
+                    lastCorrection = Correction(typed, word + text)
+                    keyboard?.note("corrected", "$typed -> $word")
+                } else {
+                    if (text in SEPARATORS) keyboard?.unknown?.let { learn(it, 1) }
+                    // A letter right after a swiped word starts the next word, as on
+                    // other keyboards; punctuation stays attached to the word.
+                    val before = connection.textBefore()
+                    val space = justSwiped != null && before.endsWith(justSwiped) && text.firstOrNull()?.isLetterOrDigit() == true
+                    connection.commit(if (space) " $text" else text)
+                }
+            }
+            "backspace" -> {
+                val before = connection.textBefore()
+                when {
+                    connection.hasSelection -> connection.commit("")
+                    // Right after a swipe, backspace takes the whole word back.
+                    justSwiped != null && before.endsWith(justSwiped) ->
+                        connection.deleteBefore(justSwiped.length)
+                    // Right after a correction, backspace puts back what was typed.
+                    undo != null && before.endsWith(undo.inserted) -> {
+                        connection.beginBatch()
+                        connection.deleteBefore(undo.inserted.length)
+                        connection.commit(undo.typed + undo.inserted.substring(undo.inserted.length - 1))
+                        connection.endBatch()
+                        learn(undo.typed, 1)
+                    }
+                    else -> deleteCharacter()
+                }
+            }
+            "replace" -> {
+                // A held letter's capital, typed already, swapped for an accent.
+                val (old, new) = text.split("\t")
+                val before = connection.textBefore()
+                connection.beginBatch()
+                if (before.endsWith(old)) connection.deleteBefore(old.length)
+                connection.commit(new)
+                connection.endBatch()
+            }
+            // In a field of several lines enter starts a new one, written as text so an
+            // app that sends on the enter key does not; holding it does the field's action.
+            "enter" -> if (multiLine) connection.commit("\n") else performAction()
+            "enter_action" -> performAction()
+        }
+        keyboard?.slow(kind, SystemClock.uptimeMillis() - started)
+    }
+
     override fun onCreateInputView(): View = KeyboardView(
         this,
-        onAction = { kind, text ->
-            if (currentInputConnection == null) return@KeyboardView
-            val connection = editor
-            val started = SystemClock.uptimeMillis()
-            // Text put in while a word is marked would replace it.
-            if (kind != "redraw" && kind != "nothing") connection.finishComposing()
-            val undo = lastCorrection
-            lastCorrection = null
-            val justSwiped = swiped
-            swiped = null
-            when (kind) {
-                "delete" -> {
-                    val (pieces, words, started) = text.split(" ").map { it.toInt() }
-                    var before = connection.textBefore()
-                    if (started == 1) {
-                        deleted.clear()
-                        swipedBeforeDelete = justSwiped?.takeIf { before.endsWith(it) }
-                    }
-                    val word = swipedBeforeDelete
-                    connection.beginBatch()
-                    // A selection goes first, as one piece, as backspace takes it; so
-                    // does a word just swiped.
-                    val selected = if (deleted.isEmpty() && pieces > 0) connection.selectedText() else ""
-                    if (selected.isNotEmpty()) {
-                        connection.commit("")
-                        deleted.addLast(selected)
-                    } else if (deleted.isEmpty() && pieces > 0 && word != null && before.endsWith(word)) {
-                        connection.deleteBefore(word.length)
-                        before = before.dropLast(word.length)
-                        deleted.addLast(word)
-                    }
-                    while (deleted.size < pieces && before.isNotEmpty()) {
-                        // A word goes with the spaces after it, as ctrl and backspace take it.
-                        val piece = if (words == 1) {
-                            WORD_AT_END.find(before)?.value?.takeIf { it.isNotEmpty() } ?: before.takeLast(1)
-                        } else {
-                            lastCharacter(before)
-                        }
-                        connection.deleteBefore(piece.length)
-                        before = before.dropLast(piece.length)
-                        // The copy ran short of the field's text: read on.
-                        if (before.isEmpty()) before = connection.textBefore()
-                        deleted.addLast(piece)
-                    }
-                    while (deleted.size > pieces) connection.commit(deleted.removeLast())
-                    connection.endBatch()
-                }
-                "swipe" -> {
-                    val view = keyboard ?: return@KeyboardView
-                    if (!suggesting) return@KeyboardView
-                    val before = connection.textBefore()
-                    val words = view.swipe(lexicon, before)
-                    if (words.isEmpty()) return@KeyboardView
-                    // Swiped words are put in with a space between them, as on other keyboards.
-                    val last = before.lastOrNull()
-                    val space = last != null && !last.isWhitespace() && last !in OPENING
-                    swiped = words[0]
-                    view.note("words", words.joinToString(", "))
-                    connection.commit((if (space) " " else "") + words[0])
-                    view.showSwipe(words)
-                }
-                "commit" -> {
-                    val correction = when (Dictionaries.autocorrectMode(this)) {
-                        "all" -> keyboard?.correction ?: keyboard?.fix
-                        "obvious" -> keyboard?.fix
-                        else -> null
-                    }
-                    if (text in SEPARATORS && correction != null) {
-                        val (word, replaces) = correction
-                        val typed = connection.textBefore()
-                            .let { it.substring(it.offsetByCodePoints(it.length, -replaces)) }
-                        connection.beginBatch()
-                        connection.deleteCodePointsBefore(replaces)
-                        connection.commit(word + text)
-                        connection.endBatch()
-                        lastCorrection = Correction(typed, word + text)
-                        keyboard?.note("corrected", "$typed -> $word")
-                    } else {
-                        if (text in SEPARATORS) keyboard?.unknown?.let { learn(it, 1) }
-                        // A letter right after a swiped word starts the next word, as on
-                        // other keyboards; punctuation stays attached to the word.
-                        val before = connection.textBefore()
-                        val space = justSwiped != null && before.endsWith(justSwiped) && text.firstOrNull()?.isLetterOrDigit() == true
-                        connection.commit(if (space) " $text" else text)
-                    }
-                }
-                "backspace" -> {
-                    val before = connection.textBefore()
-                    when {
-                        connection.hasSelection -> connection.commit("")
-                        // Right after a swipe, backspace takes the whole word back.
-                        justSwiped != null && before.endsWith(justSwiped) ->
-                            connection.deleteBefore(justSwiped.length)
-                        // Right after a correction, backspace puts back what was typed.
-                        undo != null && before.endsWith(undo.inserted) -> {
-                            connection.beginBatch()
-                            connection.deleteBefore(undo.inserted.length)
-                            connection.commit(undo.typed + undo.inserted.substring(undo.inserted.length - 1))
-                            connection.endBatch()
-                            learn(undo.typed, 1)
-                        }
-                        else -> deleteCharacter()
-                    }
-                }
-                "replace" -> {
-                    // A held letter's capital, typed already, swapped for an accent.
-                    val (old, new) = text.split("\t")
-                    val before = connection.textBefore()
-                    connection.beginBatch()
-                    if (before.endsWith(old)) connection.deleteBefore(old.length)
-                    connection.commit(new)
-                    connection.endBatch()
-                }
-                // In a field of several lines enter starts a new one, written as text so an
-                // app that sends on the enter key does not; holding it does the field's action.
-                "enter" -> if (multiLine) connection.commit("\n") else performAction()
-                "enter_action" -> performAction()
-            }
-            keyboard?.slow(kind, SystemClock.uptimeMillis() - started)
-        },
+        onAction = { kind, text -> act(kind, text) },
         onPick = { word, replaces ->
             if (currentInputConnection == null) return@KeyboardView
             val connection = editor
@@ -281,6 +366,7 @@ class HexInputMethod : InputMethodService() {
             onSpace = { editor.finishComposing(); editor.commit(" ") },
             onBackspace = { deleteCharacter() },
             onClose = { frame?.showEmoji(false) },
+            onSearch = { openEmojiSearch() },
         )
         KeyboardFrame(this, view, emoji).also { frame = it }
     }
@@ -355,6 +441,15 @@ class HexInputMethod : InputMethodService() {
             else -> (info.imeOptions and EditorInfo.IME_MASK_ACTION).takeIf { it in ACTION_ICONS }
         }
         multiLine = info.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE != 0
+        if (GestureLog.enabled(this)) {
+            GestureLog.write(this, org.json.JSONObject()
+                .put("time", System.currentTimeMillis())
+                .put("field", info.packageName)
+                .put("inputType", Integer.toHexString(info.inputType))
+                .put("imeOptions", Integer.toHexString(info.imeOptions))
+                .put("actionLabel", info.actionLabel?.toString())
+                .put("actionId", info.actionId))
+        }
         keyboard?.enterIcon = if (multiLine) R.drawable.icon_keyboard_return else actionIcon()
         keyboard?.enterHint = if (multiLine) action?.let { actionIcon() } else null
         refreshStrip()
@@ -486,8 +581,34 @@ class HexInputMethod : InputMethodService() {
     /** Counts a word no dictionary has as kept, when learning is switched on. */
     private fun learn(word: String, times: Int) {
         if (!Dictionaries.preferences(this).getBoolean(Dictionaries.LEARNING, false)) return
-        learned[word] = Core.lexiconLearn(lexicon, word, times)
-        Dictionaries.saveLearned(this, learned)
+        Core.words.execute {
+            val count = Core.lexiconLearn(lexicon, word, times)
+            mainExecutor.execute {
+                learned[word] = count
+                Dictionaries.saveLearned(this, learned)
+            }
+        }
+    }
+
+    /** Counts strips asked for, so only the newest one is shown. */
+    @Volatile
+    private var stripRequest = 0
+
+    /**
+     * Makes sure the strip shown is the one for the text before the cursor
+     * now, working it out here when the words thread has not got to it yet,
+     * waiting at most [STRIP_WAIT_MS].
+     */
+    private fun currentStrip() {
+        val view = keyboard ?: return
+        val before = editor.textBefore()
+        if (!suggesting || view.stripBefore == before) return
+        val letters = view.letters
+        val strip = runCatching {
+            Core.words.submit<Array<String>> { Core.strip(lexicon, letters, before) }
+                .get(STRIP_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }.getOrNull() ?: return
+        view.showStrip(before, strip)
     }
 
     private fun refreshStrip() {
@@ -498,9 +619,23 @@ class HexInputMethod : InputMethodService() {
         // A swipe's alternatives stay until the word is changed or left.
         val word = swiped
         if (word != null && before?.endsWith(word) == true) return
-        val suggesting = SystemClock.uptimeMillis()
-        if (!this.suggesting || before == null) view.clearSuggestions() else view.suggest(lexicon, before)
-        view.slow("suggest", SystemClock.uptimeMillis() - suggesting)
+        if (!suggesting || before == null) {
+            view.clearSuggestions()
+            return
+        }
+        // Worked out on the words thread; a strip overtaken by newer text is dropped.
+        val request = ++stripRequest
+        val letters = view.letters
+        Core.words.execute {
+            if (request != stripRequest || letters == 0L) return@execute
+            val started = SystemClock.uptimeMillis()
+            val strip = Core.strip(lexicon, letters, before)
+            val took = SystemClock.uptimeMillis() - started
+            mainExecutor.execute {
+                view.slow("suggest (words thread)", took)
+                if (request == stripRequest) view.showStrip(before, strip)
+            }
+        }
     }
 
     /**
@@ -521,6 +656,9 @@ class HexInputMethod : InputMethodService() {
     }
 
     private companion object {
+        /** The longest a space waits for the strip of the word before it, in ms. */
+        const val STRIP_WAIT_MS = 300L
+
         /** Icons for the actions a field can give enter. */
         val ACTION_ICONS = mapOf(
             EditorInfo.IME_ACTION_GO to R.drawable.icon_arrow_forward,

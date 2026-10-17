@@ -11,7 +11,7 @@ use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::Lexicon;
 use hexkeys::{Action, Capital, Keyboard, Point, suggest, swipe, space_middle, space_bottom, with_shift_and_backspace};
 use jni::JNIEnv;
-use jni::objects::{JByteArray, JClass, JString};
+use jni::objects::{JByteArray, JClass, JFloatArray, JString};
 use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
 
 fn keyboard<'a>(handle: jlong) -> &'a mut Keyboard {
@@ -305,7 +305,8 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_cellWidth(
 /// The dictionaries and learned words suggestions come from, kept apart from
 /// the keyboard, which is rebuilt whenever its size changes.
 fn lexicon<'a>(handle: jlong) -> &'a mut Lexicon {
-    // SAFETY: as for `keyboard`, with the handle from `lexiconCreate`.
+    // SAFETY: the handle comes from `lexiconCreate` and lives until
+    // `lexiconDestroy`; every call with it comes from the suggestion thread.
     unsafe { &mut *(handle as *mut Lexicon) }
 }
 
@@ -371,12 +372,12 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
     mut env: JNIEnv,
     _class: JClass,
     lexicon_handle: jlong,
-    keyboard_handle: jlong,
+    letters_handle: jlong,
     before: JString,
 ) -> jobjectArray {
     let before: String = env.get_string(&before).map(Into::into).unwrap_or_default();
-    let keyboard = keyboard(keyboard_handle);
-    let substitution = |typed: char, meant: char| keyboard.substitution(typed, meant);
+    let letters = letters(letters_handle);
+    let substitution = |typed: char, meant: char| letters.layout.substitution(typed, meant);
     let strip = suggest::strip(lexicon(lexicon_handle), &before, &substitution)
         .unwrap_or(suggest::Strip { slots: Default::default(), replaces: 0, correction: None, unknown: None, fix: None });
     let replaces = strip.replaces.to_string();
@@ -409,29 +410,77 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_trail(env: JNIEnv, _clas
     floats(&env, &flat)
 }
 
-/// The words the last swipe spells, best first, after the text `before`
-/// the cursor.
+/// The letter layer of a keyboard, copied for suggestions and swipe
+/// decoding, which run on a thread of their own while the keyboard keeps
+/// changing on the main thread.
+pub struct Letters {
+    layout: hexkeys::Layout,
+    keys: swipe::Keys,
+}
+
+fn letters<'a>(handle: jlong) -> &'a Letters {
+    // SAFETY: the handle comes from `letters` and lives until `lettersFree`,
+    // which the suggestion thread calls after its last use.
+    unsafe { &*(handle as *const Letters) }
+}
+
+/// A copy of the keyboard's letter layer for the suggestion thread.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_tieo_hexkeys_Core_swipe(
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_letters(_env: JNIEnv, _class: JClass, handle: jlong) -> jlong {
+    let keyboard = keyboard(handle);
+    let letters = Letters { layout: keyboard.letter_layout().clone(), keys: keyboard.swipe_keys() };
+    Box::into_raw(Box::new(letters)) as jlong
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lettersFree(_env: JNIEnv, _class: JClass, handle: jlong) {
+    // SAFETY: see `letters`.
+    drop(unsafe { Box::from_raw(handle as *mut Letters) });
+}
+
+/// The last swipe's path as x0, y0, x1, y1, ..., with a last value of 1
+/// when it starts with a capital and 0 otherwise; empty without one.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_swiped(env: JNIEnv, _class: JClass, handle: jlong) -> jfloatArray {
+    let flat: Vec<f32> = match &keyboard(handle).swiped {
+        Some(swiped) => swiped
+            .path
+            .iter()
+            .flat_map(|p| [p.x, p.y])
+            .chain(std::iter::once(if swiped.capital { 1.0 } else { 0.0 }))
+            .collect(),
+        None => Vec::new(),
+    };
+    floats(&env, &flat)
+}
+
+/// The words a swiped path, as `swiped` gives it, spells after `before`,
+/// best first.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_decodeSwipe(
     mut env: JNIEnv,
     _class: JClass,
     lexicon_handle: jlong,
-    keyboard_handle: jlong,
+    letters_handle: jlong,
+    path: JFloatArray,
     before: JString,
 ) -> jobjectArray {
     let before: String = env.get_string(&before).map(Into::into).unwrap_or_default();
-    let keyboard = keyboard(keyboard_handle);
-    let words = match &keyboard.swiped {
-        Some(swiped) => {
+    let length = env.get_array_length(&path).unwrap_or(0) as usize;
+    let mut flat = vec![0f32; length];
+    let _ = env.get_float_array_region(&path, 0, &mut flat);
+    let words = match flat.split_last() {
+        Some((&capital, points)) if points.len() >= 2 => {
+            let path: Vec<Point> = points.chunks_exact(2).map(|p| Point { x: p[0], y: p[1] }).collect();
             let previous = suggest::last_word(&before);
-            let mut words = swipe::decode(lexicon(lexicon_handle), &keyboard.swipe_keys(), &swiped.path, previous, 3)
-                .unwrap_or_default();
-            if swiped.capital {
+            let mut words =
+                swipe::decode(lexicon(lexicon_handle), &letters(letters_handle).keys, &path, previous, 3).unwrap_or_default();
+            if capital == 1.0 {
                 words = words.iter().map(|word| suggest::capitalise(word)).collect();
             }
             words
         }
-        None => Vec::new(),
+        _ => Vec::new(),
     };
     let array = env
         .new_object_array(words.len() as i32, "java/lang/String", jni::objects::JObject::null())

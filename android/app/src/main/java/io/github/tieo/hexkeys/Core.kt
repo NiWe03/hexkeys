@@ -7,6 +7,24 @@ object Core {
     }
 
     /**
+     * The thread every call with a lexicon or [letters] handle runs on, in
+     * order: suggestions and swipe decoding took up to a third of a second
+     * and more on the phone, which held up the keys when it ran on the
+     * main thread.
+     */
+    val words: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    /** A copy of the keyboard's letter layer for the [words] thread; freed there with [lettersFree]. */
+    external fun letters(handle: Long): Long
+    external fun lettersFree(letters: Long)
+
+    /** The last swipe's path as x, y pairs and a last 1 when it starts with a capital, else 0; empty without one. */
+    external fun swiped(handle: Long): FloatArray
+
+    /** The words a path from [swiped] spells after [before], best first. */
+    external fun decodeSwipe(lexicon: Long, letters: Long, path: FloatArray, before: String): Array<String>
+
+    /**
      * A keyboard fitted to [width] pixels; [stretch] makes cells taller than
      * regular hexagons, and a finger held still for [longPressMs] is a long press.
      * [space_middle] puts space and the marks between the letters instead of
@@ -81,13 +99,11 @@ object Core {
      * the autocorrection, the typed word when it is not a word yet, and its
      * obvious fix (each empty when none).
      */
-    external fun strip(lexicon: Long, keyboard: Long, before: String): Array<String>
+    external fun strip(lexicon: Long, letters: Long, before: String): Array<String>
 
     /** The path being swiped as x0, y0, x1, y1, ..., empty when none is. */
     external fun trail(handle: Long): FloatArray
 
-    /** The words the last swipe spells, best first, after the text before the cursor. */
-    external fun swipe(lexicon: Long, keyboard: Long, before: String): Array<String>
 
     /** The accented letters of the lexicon's languages, as "a:ä;o:ö"; slow, call it off the main thread. */
     external fun lexiconAccents(lexicon: Long): String

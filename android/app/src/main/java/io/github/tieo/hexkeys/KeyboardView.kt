@@ -244,6 +244,10 @@ class KeyboardView(
             width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), space_middle,
             preferences.getBoolean(EDIT_KEYS, false),
         )
+        // Freed on the words thread after whatever it is still doing with it.
+        val old = letters
+        letters = Core.letters(handle)
+        if (old != 0L) Core.words.execute { Core.lettersFree(old) }
         Core.setAccents(handle, accents)
         Core.configure(
             handle,
@@ -269,10 +273,20 @@ class KeyboardView(
         systemGestureExclusionRects = listOf(Rect(x, keysTop, x + band, height - navigationBar))
     }
 
-    /** Shows the strip the core computes for the text before the cursor. */
-    fun suggest(lexicon: Long, before: String) {
-        if (handle == 0L) return
-        val strip = Core.strip(lexicon, handle, before)
+    /**
+     * The keyboard's letter layer for the [Core.words] thread, copied anew
+     * with every keyboard; 0 before the first.
+     */
+    var letters = 0L
+        private set
+
+    /** The text before the cursor the strip shown was worked out for. */
+    var stripBefore: String? = null
+        private set
+
+    /** Shows a strip the core worked out for `before`. */
+    fun showStrip(before: String, strip: Array<String>) {
+        stripBefore = before
         slots = arrayOf(strip[0], strip[1], strip[2])
         replaces = strip[3].toInt()
         correction = strip[4].takeIf { it.isNotEmpty() }?.let { it to replaces }
@@ -281,12 +295,12 @@ class KeyboardView(
         invalidate()
     }
 
-    /** The words the last swipe spells, best first. */
-    fun swipe(lexicon: Long, before: String): Array<String> =
-        if (handle == 0L) emptyArray() else Core.swipe(lexicon, handle, before)
+    /** The last swipe's path for [Core.decodeSwipe]. */
+    fun swiped(): FloatArray = if (handle == 0L) FloatArray(0) else Core.swiped(handle)
 
     /** Shows a swipe's words, the one committed in the middle; a choice replaces it. */
     fun showSwipe(words: Array<String>) {
+        stripBefore = null
         slots = arrayOf(words.getOrElse(1) { "" }, words[0], words.getOrElse(2) { "" })
         replaces = words[0].codePointCount(0, words[0].length)
         correction = null
@@ -296,6 +310,7 @@ class KeyboardView(
     }
 
     fun clearSuggestions() {
+        stripBefore = null
         slots = arrayOf("", "", "")
         replaces = 0
         correction = null
@@ -317,6 +332,9 @@ class KeyboardView(
         removeCallbacks(tick)
         if (handle != 0L) Core.destroy(handle)
         handle = 0L
+        val old = letters
+        letters = 0L
+        if (old != 0L) Core.words.execute { Core.lettersFree(old) }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -475,6 +493,8 @@ class KeyboardView(
 
     /** Single characters large, words such as "space" smaller so they fit their key. */
     private fun drawLabel(canvas: Canvas, label: String, position: FloatArray, cellWidth: Float) {
+        // Space is the long key; it needs no name.
+        if (label == "space") return
         (if (label == "⏎") enterIcon else KEY_ICONS[label])?.let { id ->
             drawIcon(canvas, id, position[0], position[1], cellWidth * 0.36f, labelPaint.color)
             return
