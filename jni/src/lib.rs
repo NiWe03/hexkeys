@@ -319,8 +319,8 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconClear(_env: JNIEn
 }
 
 /// The suggestion strip for the text before the cursor, as the left,
-/// middle and right slot (empty when unused) and the number of code points
-/// a choice replaces.
+/// middle and right slot (empty when unused), the number of code points
+/// a choice replaces, and the autocorrection (empty when none).
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
     mut env: JNIEnv,
@@ -333,9 +333,16 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
     let keyboard = keyboard(keyboard_handle);
     let substitution = |typed: char, meant: char| keyboard.substitution(typed, meant);
     let strip = suggest::strip(lexicon(lexicon_handle), &before, &substitution)
-        .unwrap_or(suggest::Strip { slots: Default::default(), replaces: 0 });
+        .unwrap_or(suggest::Strip { slots: Default::default(), replaces: 0, correction: None });
     let replaces = strip.replaces.to_string();
-    let values = [strip.slots[0].as_str(), strip.slots[1].as_str(), strip.slots[2].as_str(), replaces.as_str()];
+    let correction = strip.correction.unwrap_or_default();
+    let values = [
+        strip.slots[0].as_str(),
+        strip.slots[1].as_str(),
+        strip.slots[2].as_str(),
+        replaces.as_str(),
+        correction.as_str(),
+    ];
     let array = env
         .new_object_array(values.len() as i32, "java/lang/String", jni::objects::JObject::null())
         .expect("string array");

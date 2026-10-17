@@ -37,6 +37,28 @@ pub struct Suggestion {
     pub score: f32,
     /// Spelled exactly as typed, up to case.
     pub exact: bool,
+    /// Longer than what was typed rather than a correction of it.
+    pub completion: bool,
+}
+
+/// The best match of one word found so far.
+#[derive(Clone, Copy)]
+struct Found {
+    score: f32,
+    exact: bool,
+    completion: bool,
+}
+
+impl Found {
+    /// Keeps the better scoring of two matches of the same word; it is
+    /// exact if either was.
+    fn merge(&mut self, other: Found) {
+        if other.score > self.score {
+            self.score = other.score;
+            self.completion = other.completion;
+        }
+        self.exact |= other.exact;
+    }
 }
 
 /// What a dictionary character may stand for in typed text, folded: lower
@@ -98,7 +120,7 @@ struct Search<'a> {
     typed: Vec<char>,
     substitution: Substitution<'a>,
     budget: f32,
-    found: HashMap<String, (f32, bool)>,
+    found: HashMap<String, Found>,
 }
 
 /// The edit distance rows for the dictionary text so far.
@@ -169,10 +191,17 @@ impl Search<'_> {
                 let completion = node_rows.prefix + COMPLETION;
                 let cost = exact.min(completion);
                 if cost <= self.budget {
-                    let score = frequency as f32 - COST_WEIGHT * cost;
-                    let entry = self.found.entry(word.clone()).or_insert((f32::MIN, false));
-                    entry.0 = entry.0.max(score);
-                    entry.1 |= exact == 0.0;
+                    let found = Found {
+                        score: frequency as f32 - COST_WEIGHT * cost,
+                        exact: exact == 0.0,
+                        completion: completion < exact,
+                    };
+                    match self.found.get_mut(word.as_str()) {
+                        Some(entry) => entry.merge(found),
+                        None => {
+                            self.found.insert(word.clone(), found);
+                        }
+                    }
                 }
             }
             let reachable = node_rows.row.iter().copied().fold(f32::MAX, f32::min);
@@ -202,7 +231,7 @@ pub fn suggest(
     if folded.is_empty() {
         return Ok(Vec::new());
     }
-    let mut found: HashMap<String, (f32, bool)> = HashMap::new();
+    let mut found: HashMap<String, Found> = HashMap::new();
     for dictionary in dictionaries {
         let rows = Rows {
             row: (0..=folded.len()).map(|j| j as f32 * GAP).collect(),
@@ -218,19 +247,27 @@ pub fn suggest(
             for (word, frequency) in next_words(dictionary, previous)? {
                 if let Some(entry) = search.found.get_mut(&word) {
                     let unigram = dictionary.find(&word)?.and_then(|node| node.frequency).unwrap_or(0);
-                    entry.0 += frequency.saturating_sub(unigram) as f32;
+                    entry.score += frequency.saturating_sub(unigram) as f32;
                 }
             }
         }
-        for (word, (score, exact)) in search.found {
-            let entry = found.entry(word).or_insert((f32::MIN, false));
-            entry.0 = entry.0.max(score);
-            entry.1 |= exact;
+        for (word, other) in search.found {
+            match found.get_mut(&word) {
+                Some(entry) => entry.merge(other),
+                None => {
+                    found.insert(word, other);
+                }
+            }
         }
     }
     let mut suggestions: Vec<Suggestion> = found
         .into_iter()
-        .map(|(word, (score, exact))| Suggestion { word: match_case(typed, &word), score, exact })
+        .map(|(word, found)| Suggestion {
+            word: match_case(typed, &word),
+            score: found.score,
+            exact: found.exact,
+            completion: found.completion,
+        })
         .collect();
     suggestions.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.word.cmp(&b.word)));
     // Case variants of one word ("Haus", "haus") collapse to the best one.
@@ -282,6 +319,10 @@ fn next_words(dictionary: &Dictionary, previous: &str) -> Result<Vec<(String, u8
 pub struct Strip {
     pub slots: [String; 3],
     pub replaces: usize,
+    /// What autocorrect puts in place of the typed word when a space or
+    /// punctuation follows it: the best candidate, when the typed word is
+    /// not a word and the candidate corrects rather than completes it.
+    pub correction: Option<String>,
 }
 
 /// Letters and the marks inside words; what the word at the cursor is made of.
@@ -308,10 +349,11 @@ pub fn strip(dictionaries: &[Dictionary], before: &str, substitution: Substituti
                 slots[slot] = word;
             }
         }
-        return Ok(Strip { slots, replaces: 0 });
+        return Ok(Strip { slots, replaces: 0, correction: None });
     }
     let found = suggest(dictionaries, typed, previous, substitution, 3)?;
     let known = spelled(dictionaries, typed)?;
+    let correction = found.first().filter(|best| !known && !best.completion).map(|best| best.word.clone());
     let mut words: Vec<String> = found.into_iter().map(|s| s.word).filter(|word| word != typed).collect();
     if known {
         words.insert(0, typed.to_owned());
@@ -324,7 +366,7 @@ pub fn strip(dictionaries: &[Dictionary], before: &str, substitution: Substituti
             slots[slot] = word;
         }
     }
-    Ok(Strip { slots, replaces: typed.chars().count() })
+    Ok(Strip { slots, replaces: typed.chars().count(), correction })
 }
 
 /// Whether a dictionary spells `word` exactly so, or with a lower-case first
@@ -462,6 +504,14 @@ mod tests {
         let strip = super::strip(&german, "ich sag hallp", &plain).unwrap();
         assert_eq!(strip.slots[0], "hallp");
         assert_eq!(strip.slots[1], "hallo");
+        assert_eq!(strip.correction.as_deref(), Some("hallo"));
+    }
+
+    #[test]
+    fn autocorrect_leaves_words_and_unfinished_words_alone() {
+        let german = german();
+        assert_eq!(strip(&german, "das Haus", &plain).unwrap().correction, None, "a word");
+        assert_eq!(strip(&german, "die Poli", &plain).unwrap().correction, None, "only completions");
     }
 
     #[test]
@@ -470,6 +520,7 @@ mod tests {
         let strip = strip(&german, "Heute die ", &plain).unwrap();
         assert_eq!(strip.slots, ["Stadt".to_owned(), "Polizei".to_owned(), String::new()]);
         assert_eq!(strip.replaces, 0);
+        assert_eq!(strip.correction, None);
     }
 
     #[test]

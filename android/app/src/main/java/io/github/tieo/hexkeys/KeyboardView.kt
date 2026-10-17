@@ -46,6 +46,10 @@ class KeyboardView(
     private val stripHeight = (44 * density).toInt()
     private var slots = arrayOf("", "", "")
     private var replaces = 0
+
+    /** What autocorrect would put in place of the word being typed, with how many code points it replaces. */
+    var correction: Pair<String, Int>? = null
+        private set
     /** The slot a finger went down on, or -1 when the touch is not in the strip. */
     private var stripTouch = -1
 
@@ -117,12 +121,14 @@ class KeyboardView(
         val strip = Core.strip(lexicon, handle, before)
         slots = arrayOf(strip[0], strip[1], strip[2])
         replaces = strip[3].toInt()
+        correction = strip[4].takeIf { it.isNotEmpty() }?.let { it to replaces }
         invalidate()
     }
 
     fun clearSuggestions() {
         slots = arrayOf("", "", "")
         replaces = 0
+        correction = null
         invalidate()
     }
 

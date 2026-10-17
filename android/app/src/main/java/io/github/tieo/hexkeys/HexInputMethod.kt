@@ -15,6 +15,10 @@ class HexInputMethod : InputMethodService() {
     /** Off in password fields and where the app asks for no suggestions. */
     private var suggesting = false
 
+    /** A correction autocorrect just made: what was typed, and the word and separator put in its place. */
+    private data class Correction(val typed: String, val inserted: String)
+    private var lastCorrection: Correction? = null
+
     /** Reloads the dictionaries when the languages change in settings. */
     private val settingsChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == Dictionaries.ENABLED) loadDictionaries()
@@ -45,18 +49,47 @@ class HexInputMethod : InputMethodService() {
         this,
         onAction = { kind, text ->
             val connection = currentInputConnection ?: return@KeyboardView
+            val undo = lastCorrection
+            lastCorrection = null
             when (kind) {
-                "commit" -> connection.commitText(text, 1)
+                "commit" -> {
+                    val correction = keyboard?.correction
+                    if (text in SEPARATORS && correction != null &&
+                        Dictionaries.preferences(this).getBoolean(Dictionaries.AUTOCORRECT, false)
+                    ) {
+                        val (word, replaces) = correction
+                        val typed = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0).toString()
+                            .let { it.substring(it.offsetByCodePoints(it.length, -replaces)) }
+                        connection.beginBatchEdit()
+                        connection.deleteSurroundingTextInCodePoints(replaces, 0)
+                        connection.commitText(word + text, 1)
+                        connection.endBatchEdit()
+                        lastCorrection = Correction(typed, word + text)
+                    } else {
+                        connection.commitText(text, 1)
+                    }
+                }
                 "backspace" -> {
                     val selected = connection.getSelectedText(0)
-                    if (selected.isNullOrEmpty()) connection.deleteSurroundingTextInCodePoints(1, 0)
-                    else connection.commitText("", 1)
+                    val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                    when {
+                        !selected.isNullOrEmpty() -> connection.commitText("", 1)
+                        // Right after a correction, backspace puts back what was typed.
+                        undo != null && before.endsWith(undo.inserted) -> {
+                            connection.beginBatchEdit()
+                            connection.deleteSurroundingText(undo.inserted.length, 0)
+                            connection.commitText(undo.typed + undo.inserted.substring(undo.inserted.length - 1), 1)
+                            connection.endBatchEdit()
+                        }
+                        else -> connection.deleteSurroundingTextInCodePoints(1, 0)
+                    }
                 }
                 "enter" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
             }
         },
         onPick = { word, replaces ->
             val connection = currentInputConnection ?: return@KeyboardView
+            lastCorrection = null
             connection.beginBatchEdit()
             connection.deleteSurroundingTextInCodePoints(replaces, 0)
             connection.commitText("$word ", 1)
@@ -112,5 +145,8 @@ class HexInputMethod : InputMethodService() {
     private companion object {
         /** Enough text before the cursor for the word being typed and the one before it. */
         const val CONTEXT_LENGTH = 64
+
+        /** What ends a word and so triggers autocorrect. */
+        val SEPARATORS = setOf(" ", ".", ",", "!", "?", ";", ":")
     }
 }
