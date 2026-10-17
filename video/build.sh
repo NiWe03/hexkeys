@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the trailer into video/out/trailer.mp4: the key outlines from the
-# layout, the track from song bar 24 to the downbeat of bar 38 (the full
-# beat, the chorus and the drop after it), the picture timed to the sung
+# layout, the track from song bar 16, where the full beat comes in, to bar
+# 36, where the drop after the chorus starts, the picture timed to the sung
 # words' onsets, then both together.
 #
 # Needs, in video/out/track (ignored by git): the track as technologic.wav
@@ -26,12 +26,13 @@ cargo run -q --release --example outlines > "$out/outlines.tsv"
 run python3 -I video/technologic.py "$out/outlines.tsv" "$track/verse1.json" "$out/fonts" "$out/picture.mp4" "$@"
 case " $* " in *" --sheet "*) exit 0 ;; esac
 
-# The music: bars 24 to 38 in one stretch, ending on bar 38's downbeat with
-# a short ring-out.
+# The music: bars 16 to 36 in one stretch, from where the full beat comes
+# in to where the drop after the chorus starts, with a few milliseconds of
+# fade so the cut does not click.
 read -r a0 a1 < <(python3 -c "
 import json; b = json.load(open('$track/verse1.json'))['beats']
-print(b[96], b[152] + 0.7)")
-fade=$(python3 -c "print($a1 - $a0 - 0.5)")
-run ffmpeg -loglevel error -y -i "$track/technologic.wav" -af "atrim=$a0:$a1,asetpts=PTS-STARTPTS,afade=t=out:st=$fade:d=0.5" "$out/music.wav"
+print(b[64], b[144])")
+fade=$(python3 -c "print($a1 - $a0 - 0.08)")
+run ffmpeg -loglevel error -y -i "$track/technologic.wav" -af "atrim=$a0:$a1,asetpts=PTS-STARTPTS,afade=t=out:st=$fade:d=0.08" "$out/music.wav"
 run ffmpeg -loglevel error -y -i "$out/picture.mp4" -i "$out/music.wav" -c:v copy -c:a aac -b:a 192k -shortest "$out/trailer.mp4"
 echo "$out/trailer.mp4"
