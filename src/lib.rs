@@ -1347,13 +1347,17 @@ impl Keyboard {
         let layout = &self.layout;
         let center = layout.keys[index].center();
         let (w, h) = (layout.cell_width * POPUP_SCALE, layout.cell_height * POPUP_SCALE);
-        let n = choices.len() as f32;
         let holding = self.holds_for_capital(index);
-        // Centred above the key, then pushed inwards so no cell leaves the sides.
-        let first = (center.x - (n - 1.0) / 2.0 * w).clamp(w / 2.0, layout.width - w / 2.0 - (n - 1.0) * w);
+        // The most used straight above the key, the next to its right, then left,
+        // and so on outwards; the row is pushed inwards where it would leave the sides.
+        let offsets: Vec<f32> = (0..choices.len())
+            .map(|i| if i == 0 { 0.0 } else if i % 2 == 1 { i.div_ceil(2) as f32 } else { -((i / 2) as f32) })
+            .collect();
+        let (lowest, highest) = offsets.iter().fold((0f32, 0f32), |(lo, hi), &o| (lo.min(o), hi.max(o)));
+        let shift = (w / 2.0 - (center.x + lowest * w)).max(0.0) - (center.x + highest * w - (layout.width - w / 2.0)).max(0.0);
         // Overlapping the key's top point a little, as the honeycomb's rows overlap.
         let y = center.y - layout.cell_height / 2.0 - h / 4.0;
-        let cells: Vec<Point> = (0..choices.len()).map(|i| Point { x: first + i as f32 * w, y }).collect();
+        let cells: Vec<Point> = offsets.iter().map(|o| Point { x: center.x + o * w + shift, y }).collect();
         // The most used choice comes first and starts chosen, wherever it sits.
         let selected = if holding { None } else { Some(0) };
         let origin = self.touch.as_ref().map_or(center, |touch| touch.at);
@@ -1378,7 +1382,12 @@ impl Keyboard {
         let label = &self.layout.keys[index].label;
         let mut choices: Vec<String> = match label.chars().next().filter(|_| is_letter(label)) {
             Some(letter) => self.accents.get(&letter).into_iter().flatten().map(|c| c.to_string()).collect(),
-            None => alternates(label).iter().map(|c| (*c).to_owned()).collect(),
+            // What a flick up types already is not offered again.
+            None => alternates(label)
+                .iter()
+                .skip(if self.gestures.capital == Capital::FlickUp { 1 } else { 0 })
+                .map(|c| (*c).to_owned())
+                .collect(),
         };
         if shifted {
             choices = choices.iter().map(|c| upper(c)).collect();
@@ -1445,6 +1454,9 @@ impl Keyboard {
     /// What the capital gesture types on a punctuation key, shown small on
     /// it; empty for other keys.
     pub fn hint(&self, index: usize) -> &'static str {
+        if self.gestures.capital != Capital::FlickUp {
+            return "";
+        }
         alternates(&self.layout.keys[index].label).first().copied().unwrap_or("")
     }
 
@@ -1862,8 +1874,8 @@ mod tests {
         let popup = keyboard.popup.clone().expect("popup");
         assert_eq!(popup.choices, ["ä", "à"]);
         assert_eq!(popup.selected, None);
-        let middle = (popup.cells[0].x + popup.cells[1].x) / 2.0;
-        assert!((middle - near(&keyboard, "a", 0.0, 0.0).x).abs() < 1.0, "the accents are centred above the key");
+        assert!((popup.cells[0].x - near(&keyboard, "a", 0.0, 0.0).x).abs() < 1.0, "the most used accent sits above the key");
+        assert!(popup.cells[1].x > popup.cells[0].x, "the next one to its right");
         // A finger never holds perfectly still; a little drift keeps the capital.
         keyboard.touch_move(near(&keyboard, "a", 0.1, 0.05), 1250);
         assert_eq!(keyboard.touch_up(near(&keyboard, "a", 0.1, 0.05), 1300), Action::Redraw);

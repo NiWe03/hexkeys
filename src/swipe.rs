@@ -116,6 +116,8 @@ struct Entry {
     /// merged, since a doubled letter is one point on the path.
     keys: Vec<char>,
     frequency: u8,
+    /// Which of the lexicon's dictionaries the word is from.
+    dictionary: usize,
 }
 
 /// Every word of the dictionaries, grouped by first and last key.
@@ -128,17 +130,17 @@ pub struct Index {
 impl Index {
     pub fn new(dictionaries: &[Dictionary]) -> Result<Self, Error> {
         let mut index = Index::default();
-        for dictionary in dictionaries {
-            dictionary.for_each_word(|word, frequency| index.add(word, frequency))?;
+        for (number, dictionary) in dictionaries.iter().enumerate() {
+            dictionary.for_each_word(|word, frequency| index.add(word, frequency, number))?;
         }
         Ok(index)
     }
 
-    fn add(&mut self, word: &str, frequency: u8) {
+    fn add(&mut self, word: &str, frequency: u8, dictionary: usize) {
         let Some(keys) = path_keys(word) else { return };
         let ends = (keys[0], keys[keys.len() - 1]);
         self.by_ends.entry(ends).or_default().push(self.entries.len());
-        self.entries.push(Entry { word: word.to_owned(), keys, frequency });
+        self.entries.push(Entry { word: word.to_owned(), keys, frequency, dictionary });
     }
 }
 
@@ -350,7 +352,8 @@ pub fn decode_tuned(
                 let entry = &index.entries[i];
                 let capitals = entry.word.chars().filter(|c| c.is_alphabetic()).all(char::is_uppercase);
                 let prior = entry.frequency as f32 - if capitals { tuning.capitals } else { 0.0 }
-                    + boost.get(&entry.word).copied().unwrap_or(0.0);
+                    + boost.get(&entry.word).copied().unwrap_or(0.0)
+                    + lexicon.boost(entry.dictionary);
                 if let Some(cost) = end_cost(&entry.keys) {
                     candidates.push((&entry.word, (&entry.keys[..]).into(), prior - cost));
                 }

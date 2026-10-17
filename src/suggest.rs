@@ -276,11 +276,53 @@ pub struct Lexicon {
     /// The dictionaries' words as swipe typing looks them up, built at the
     /// first swipe and dropped whenever the dictionaries change.
     swipe: OnceLock<Index>,
+    /// Frequency points each dictionary's words gain from the language of
+    /// the text being written, by [`Lexicon::set_context`].
+    boosts: Vec<f32>,
 }
+
+/// The most frequency points the language of the last words written gives
+/// its words, a quarter of the frequency range: it reorders words of
+/// similar frequency towards the language being written without turning
+/// over large gaps.
+const LANGUAGE_BOOST: f32 = 60.0;
+
+/// How many of the last words written tell the language.
+const CONTEXT_WORDS: usize = 6;
 
 impl Lexicon {
     pub fn new(dictionaries: Vec<Dictionary>) -> Self {
         Self { dictionaries, ..Self::default() }
+    }
+
+    /// Works out the language of the text before the cursor from its last
+    /// whole words that only one dictionary has, and boosts that
+    /// dictionary's words by their share of them.
+    pub fn set_context(&mut self, before: &str) {
+        let complete = before.trim_end_matches(in_word);
+        let words: Vec<&str> =
+            complete.rsplit(|c: char| !in_word(c)).filter(|word| !word.is_empty()).take(CONTEXT_WORDS).collect();
+        let mut counts = vec![0f32; self.dictionaries.len()];
+        for word in words {
+            let lower = word.to_lowercase();
+            let knowing: Vec<usize> = (0..self.dictionaries.len())
+                .filter(|&d| {
+                    [word, lower.as_str()]
+                        .iter()
+                        .any(|form| self.dictionaries[d].find(form).ok().flatten().is_some_and(|node| !node.hidden))
+                })
+                .collect();
+            if let [only] = knowing[..] {
+                counts[only] += 1.0;
+            }
+        }
+        let total: f32 = counts.iter().sum();
+        self.boosts = counts.iter().map(|count| if total > 0.0 { LANGUAGE_BOOST * count / total } else { 0.0 }).collect();
+    }
+
+    /// What the context gives a word of dictionary `index`.
+    pub(crate) fn boost(&self, index: usize) -> f32 {
+        self.boosts.get(index).copied().unwrap_or(0.0)
     }
 
     pub fn add(&mut self, dictionary: Dictionary) {
@@ -377,9 +419,12 @@ pub fn suggest(
             found.insert(word.clone(), match_);
         }
     }
-    for dictionary in &lexicon.dictionaries {
+    for (index, dictionary) in lexicon.dictionaries.iter().enumerate() {
         let mut search = Search { dictionary, matcher: &matcher, found: HashMap::new() };
         search.visit(dictionary.root()?, &matcher.start(), &mut String::new())?;
+        for entry in search.found.values_mut() {
+            entry.score += lexicon.boost(index);
+        }
         // A word that often follows the previous one ranks by how often it does.
         if let Some(previous) = previous {
             for (word, frequency) in next_words(dictionary, previous)? {
@@ -670,6 +715,17 @@ mod tests {
         assert_eq!(fix("im").as_deref(), Some("I'm"));
         assert_eq!(fix("i").as_deref(), Some("I"));
         assert_eq!(fix("Dont").as_deref(), Some("Don't"));
+    }
+
+    #[test]
+    fn the_language_being_written_wins_over_the_other() {
+        let english = Dictionary::new(encode(&[("I'm", 200), ("and", 250), ("also", 230)], &[])).unwrap();
+        let german = Dictionary::new(encode(&[("im", 215), ("und", 250), ("auch", 230)], &[])).unwrap();
+        let mut lexicon = Lexicon::new(vec![english, german]);
+        lexicon.set_context("und auch ");
+        assert_eq!(words(&lexicon, "im", None)[0], "im");
+        lexicon.set_context("and also ");
+        assert_eq!(words(&lexicon, "im", None)[0], "I'm");
     }
 
     #[test]

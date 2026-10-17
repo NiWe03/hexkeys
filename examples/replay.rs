@@ -61,6 +61,7 @@ fn main() {
         println!("{index}       now: {}", actions.join(", "));
         if let Some(swiped) = keyboard.swiped.as_ref().filter(|_| actions.iter().any(|a| a == "Swipe")) {
             let previous = record["before"].as_str().and_then(last_word);
+            lexicon.set_context(&format!("{} ", record["before"].as_str().unwrap_or("")));
             let mut tuning = swipe::Tuning::default();
             if let Ok(weight) = std::env::var("START_WEIGHT") {
                 tuning.start_weight = weight.parse().expect("START_WEIGHT");

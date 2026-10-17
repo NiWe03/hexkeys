@@ -401,7 +401,9 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
     let before: String = env.get_string(&before).map(Into::into).unwrap_or_default();
     let letters = letters(letters_handle);
     let substitution = |typed: char, meant: char| letters.layout.substitution(typed, meant);
-    let strip = suggest::strip(lexicon(lexicon_handle), &before, &substitution)
+    let lexicon = lexicon(lexicon_handle);
+    lexicon.set_context(&before);
+    let strip = suggest::strip(lexicon, &before, &substitution)
         .unwrap_or(suggest::Strip { slots: Default::default(), replaces: 0, correction: None, unknown: None, fix: None });
     let replaces = strip.replaces.to_string();
     let correction = strip.correction.unwrap_or_default();
@@ -496,8 +498,10 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_decodeSwipe(
         Some((&capital, points)) if points.len() >= 2 => {
             let path: Vec<Point> = points.chunks_exact(2).map(|p| Point { x: p[0], y: p[1] }).collect();
             let previous = suggest::last_word(&before);
-            let mut words =
-                swipe::decode(lexicon(lexicon_handle), &letters(letters_handle).keys, &path, previous, 3).unwrap_or_default();
+            let lexicon = lexicon(lexicon_handle);
+            // A swipe follows a whole word, space or not: it puts in its own.
+            lexicon.set_context(&format!("{before} "));
+            let mut words = swipe::decode(lexicon, &letters(letters_handle).keys, &path, previous, 3).unwrap_or_default();
             if capital == 1.0 {
                 words = words.iter().map(|word| suggest::capitalise(word)).collect();
             }
