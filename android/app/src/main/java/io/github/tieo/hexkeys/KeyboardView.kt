@@ -82,6 +82,12 @@ class KeyboardView(
     private val dividerPaint = Paint().apply {
         strokeWidth = density
     }
+    private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 5f * density
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
 
     var theme: Theme = Theme.current(context)
         set(value) {
@@ -99,6 +105,8 @@ class KeyboardView(
         labelPaint.color = theme.label
         stripPaint.color = theme.label
         dividerPaint.color = theme.other
+        trailPaint.color = theme.accent
+        trailPaint.alpha = 0xB0
     }
 
     /** A key's colour: its letter's QWERTZ row colour, or the colour of other keys. */
@@ -150,6 +158,19 @@ class KeyboardView(
         invalidate()
     }
 
+    /** The words the last swipe spells, best first. */
+    fun swipe(lexicon: Long, before: String): Array<String> =
+        if (handle == 0L) emptyArray() else Core.swipe(lexicon, handle, before)
+
+    /** Shows a swipe's words, the one committed in the middle; a choice replaces it. */
+    fun showSwipe(words: Array<String>) {
+        slots = arrayOf(words.getOrElse(1) { "" }, words[0], words.getOrElse(2) { "" })
+        replaces = words[0].codePointCount(0, words[0].length)
+        correction = null
+        unknown = null
+        invalidate()
+    }
+
     fun clearSuggestions() {
         slots = arrayOf("", "", "")
         replaces = 0
@@ -194,6 +215,13 @@ class KeyboardView(
                 canvas.drawPath(path, gapPaint)
                 drawLabel(canvas, Core.popupLabel(handle, index), Core.popupLabelPosition(handle, index), cellWidth)
             }
+        }
+        val trail = Core.trail(handle)
+        if (trail.size >= 4) {
+            val path = Path()
+            path.moveTo(trail[0], trail[1])
+            for (i in 2 until trail.size step 2) path.lineTo(trail[i], trail[i + 1])
+            canvas.drawPath(path, trailPaint)
         }
         canvas.restore()
     }

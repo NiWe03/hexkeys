@@ -14,6 +14,7 @@
 
 pub mod dictionary;
 pub mod suggest;
+pub mod swipe;
 
 /// One key as authored in a layout: what it is and how many cells it spans.
 #[derive(Clone, Debug, PartialEq)]
@@ -501,6 +502,9 @@ pub enum Action {
     Redraw,
     /// Nothing changed.
     Nothing,
+    /// A path was drawn across the letters; [`Keyboard::swiped`] has it for
+    /// the decoder.
+    Swipe,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -560,6 +564,16 @@ struct Touch {
     anchor_time: u64,
     /// When the next repeated backspace is due, once repeating has begun.
     repeat_at: Option<u64>,
+    /// Every point the finger has been, for swipe typing.
+    path: Vec<Point>,
+}
+
+/// A finished swipe across the letters.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Swiped {
+    pub path: Vec<Point>,
+    /// Shift was on, so the word starts with a capital.
+    pub capital: bool,
 }
 
 fn distance(a: Point, b: Point) -> f32 {
@@ -577,6 +591,10 @@ pub struct Keyboard {
     touch: Option<Touch>,
     /// How long a finger holds still before a long press, in ms.
     long_press_ms: u64,
+    /// Which of `layers` is on screen.
+    layer: usize,
+    /// The last swipe, until the next one.
+    pub swiped: Option<Swiped>,
 }
 
 impl Keyboard {
@@ -587,7 +605,16 @@ impl Keyboard {
         for layer in &mut layers {
             layer.lower_to(height);
         }
-        Self { layout: layers[0].clone(), layers, shift: Shift::Off, popup: None, touch: None, long_press_ms }
+        Self {
+            layout: layers[0].clone(),
+            layers,
+            shift: Shift::Off,
+            popup: None,
+            touch: None,
+            long_press_ms,
+            layer: 0,
+            swiped: None,
+        }
     }
 
     fn gesture(&self, touch: &Touch) -> Gesture {
@@ -610,9 +637,10 @@ impl Keyboard {
         }
     }
 
-    /// The key the finger went down on, which every gesture belongs to.
+    /// The key the finger went down on, which every gesture belongs to;
+    /// none while swiping, where the trail shows the path instead.
     pub fn pressed(&self) -> Option<usize> {
-        self.touch.as_ref().map(|touch| touch.key)
+        self.touch.as_ref().filter(|_| self.trail().is_empty()).map(|touch| touch.key)
     }
 
     pub fn touch_down(&mut self, at: Point, time: u64) {
@@ -625,6 +653,7 @@ impl Keyboard {
             anchor: at,
             anchor_time: time,
             repeat_at: None,
+            path: vec![at],
         });
     }
 
@@ -636,6 +665,7 @@ impl Keyboard {
         let still = STILL * self.layout.cell_width;
         let Some(touch) = &mut self.touch else { return };
         touch.at = at;
+        touch.path.push(at);
         touch.extent = touch.extent.max(distance(at, touch.start));
         if distance(at, touch.anchor) > still {
             touch.anchor = at;
@@ -661,8 +691,38 @@ impl Keyboard {
                 Action::Commit(upper(&self.layout.keys[touch.key].label))
             }
             Gesture::Left if touch.repeat_at.is_none() => Action::Backspace,
+            Gesture::Path if self.is_swipe(&touch) => {
+                self.swiped = Some(Swiped { path: touch.path, capital: self.shift == Shift::Once });
+                self.shift = Shift::Off;
+                Action::Swipe
+            }
             _ => Action::Nothing,
         }
+    }
+
+    /// A path counts as swipe typing when it is drawn on the letters and
+    /// starts on one.
+    fn is_swipe(&self, touch: &Touch) -> bool {
+        self.layer == 0 && is_letter(&self.layout.keys[touch.key].label)
+    }
+
+    /// The path being drawn while it is swipe typing, for the trail on screen.
+    pub fn trail(&self) -> &[Point] {
+        match &self.touch {
+            Some(touch) if self.gesture(touch) == Gesture::Path && self.is_swipe(touch) => &touch.path,
+            _ => &[],
+        }
+    }
+
+    /// The letter keys of the letter layer, for the swipe decoder.
+    pub fn swipe_keys(&self) -> swipe::Keys {
+        let letters = self.layers[0]
+            .keys
+            .iter()
+            .filter(|key| is_letter(&key.label))
+            .filter_map(|key| Some((key.label.chars().next()?, key.cells[0])))
+            .collect();
+        swipe::Keys { letters, width: self.layers[0].cell_width }
     }
 
     pub fn touch_cancel(&mut self) {
@@ -760,6 +820,7 @@ impl Keyboard {
 
     fn show(&mut self, layer: usize) -> Action {
         self.layout = self.layers[layer].clone();
+        self.layer = layer;
         self.shift = Shift::Off;
         self.popup = None;
         Action::Redraw
@@ -1081,12 +1142,21 @@ mod tests {
     }
 
     #[test]
-    fn other_flicks_and_long_paths_type_nothing() {
+    fn other_flicks_type_nothing() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         assert_eq!(gesture(&mut keyboard, "g", &[(0.6, 0.0)]), Action::Nothing);
         assert_eq!(gesture(&mut keyboard, "g", &[(0.0, 0.6)]), Action::Nothing);
         assert_eq!(gesture(&mut keyboard, "g", &[(-0.6, 0.0), (0.0, 0.1)]), Action::Nothing, "pulled back");
-        assert_eq!(gesture(&mut keyboard, "g", &[(-0.6, 0.0), (-1.4, 0.0)]), Action::Nothing, "swipe path");
+    }
+
+    #[test]
+    fn long_paths_from_a_letter_are_swipes_with_their_points() {
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        assert_eq!(gesture(&mut keyboard, "g", &[(-0.6, 0.0), (-1.4, 0.0)]), Action::Swipe);
+        let swiped = keyboard.swiped.clone().unwrap();
+        assert_eq!(swiped.path.len(), 4);
+        assert!(!swiped.capital);
+        assert_eq!(gesture(&mut keyboard, "space", &[(1.5, 0.0)]), Action::Nothing, "not from a letter");
     }
 
     #[test]

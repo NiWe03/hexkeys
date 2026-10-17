@@ -7,7 +7,7 @@
 
 use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::Lexicon;
-use hexkeys::{Action, Keyboard, Point, honeycomb, suggest, space_middle};
+use hexkeys::{Action, Keyboard, Point, honeycomb, suggest, swipe, space_middle};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
@@ -146,7 +146,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchMove(
 }
 
 /// What lifting the finger means, as `[kind, text]` with kind one of
-/// `commit`, `backspace`, `enter`, `redraw`, `nothing`.
+/// `commit`, `backspace`, `enter`, `redraw`, `nothing`, `swipe`.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchUp(
     mut env: JNIEnv,
@@ -204,6 +204,7 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Enter => ("enter", String::new()),
         Action::Redraw => ("redraw", String::new()),
         Action::Nothing => ("nothing", String::new()),
+        Action::Swipe => ("swipe", String::new()),
     };
     let array = env
         .new_object_array(2, "java/lang/String", jni::objects::JObject::null())
@@ -321,7 +322,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconAdd(
     let Ok(bytes) = env.convert_byte_array(&bytes) else { return 0 };
     match Dictionary::new(bytes) {
         Ok(dictionary) => {
-            lexicon(handle).dictionaries.push(dictionary);
+            lexicon(handle).add(dictionary);
             1
         }
         Err(_) => 0,
@@ -330,7 +331,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconAdd(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconClear(_env: JNIEnv, _class: JClass, handle: jlong) {
-    lexicon(handle).dictionaries.clear();
+    lexicon(handle).clear();
 }
 
 /// Counts `word` as kept `times` more times; returns how often it now has been.
@@ -384,6 +385,47 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
         .expect("string array");
     for (i, value) in values.into_iter().enumerate() {
         let string = env.new_string(value).expect("string");
+        env.set_object_array_element(&array, i as i32, string).expect("fill string array");
+    }
+    array.into_raw()
+}
+
+/// The path being swiped, as x0, y0, x1, y1, ..., empty when none is.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_trail(env: JNIEnv, _class: JClass, handle: jlong) -> jfloatArray {
+    let flat: Vec<f32> = keyboard(handle).trail().iter().flat_map(|p| [p.x, p.y]).collect();
+    floats(&env, &flat)
+}
+
+/// The words the last swipe spells, best first, after the text `before`
+/// the cursor.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_swipe(
+    mut env: JNIEnv,
+    _class: JClass,
+    lexicon_handle: jlong,
+    keyboard_handle: jlong,
+    before: JString,
+) -> jobjectArray {
+    let before: String = env.get_string(&before).map(Into::into).unwrap_or_default();
+    let keyboard = keyboard(keyboard_handle);
+    let words = match &keyboard.swiped {
+        Some(swiped) => {
+            let previous = suggest::last_word(&before);
+            let mut words = swipe::decode(lexicon(lexicon_handle), &keyboard.swipe_keys(), &swiped.path, previous, 3)
+                .unwrap_or_default();
+            if swiped.capital {
+                words = words.iter().map(|word| suggest::capitalise(word)).collect();
+            }
+            words
+        }
+        None => Vec::new(),
+    };
+    let array = env
+        .new_object_array(words.len() as i32, "java/lang/String", jni::objects::JObject::null())
+        .expect("string array");
+    for (i, word) in words.iter().enumerate() {
+        let string = env.new_string(word).expect("string");
         env.set_object_array_element(&array, i as i32, string).expect("fill string array");
     }
     array.into_raw()

@@ -76,4 +76,10 @@ object Core {
      * (both empty when none).
      */
     external fun strip(lexicon: Long, keyboard: Long, before: String): Array<String>
+
+    /** The path being swiped as x0, y0, x1, y1, ..., empty when none is. */
+    external fun trail(handle: Long): FloatArray
+
+    /** The words the last swipe spells, best first, after the text before the cursor. */
+    external fun swipe(lexicon: Long, keyboard: Long, before: String): Array<String>
 }

@@ -19,6 +19,9 @@ class HexInputMethod : InputMethodService() {
     private data class Correction(val typed: String, val inserted: String)
     private var lastCorrection: Correction? = null
 
+    /** The word a swipe just put in, while its alternatives show in the strip. */
+    private var swiped: String? = null
+
     /** Reloads the dictionaries when the languages change in settings. */
     private val settingsChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
@@ -65,7 +68,22 @@ class HexInputMethod : InputMethodService() {
             val connection = currentInputConnection ?: return@KeyboardView
             val undo = lastCorrection
             lastCorrection = null
+            val justSwiped = swiped
+            swiped = null
             when (kind) {
+                "swipe" -> {
+                    val view = keyboard ?: return@KeyboardView
+                    if (!suggesting) return@KeyboardView
+                    val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                    val words = view.swipe(lexicon, before)
+                    if (words.isEmpty()) return@KeyboardView
+                    // Swiped words are put in with a space between them, as on other keyboards.
+                    val last = before.lastOrNull()
+                    val space = last != null && !last.isWhitespace() && last !in OPENING
+                    swiped = words[0]
+                    connection.commitText((if (space) " " else "") + words[0], 1)
+                    view.showSwipe(words)
+                }
                 "commit" -> {
                     val correction = keyboard?.correction
                     if (text in SEPARATORS && correction != null &&
@@ -89,6 +107,9 @@ class HexInputMethod : InputMethodService() {
                     val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
                     when {
                         !selected.isNullOrEmpty() -> connection.commitText("", 1)
+                        // Right after a swipe, backspace takes the whole word back.
+                        justSwiped != null && before.endsWith(justSwiped) ->
+                            connection.deleteSurroundingText(justSwiped.length, 0)
                         // Right after a correction, backspace puts back what was typed.
                         undo != null && before.endsWith(undo.inserted) -> {
                             connection.beginBatchEdit()
@@ -106,6 +127,7 @@ class HexInputMethod : InputMethodService() {
         onPick = { word, replaces ->
             val connection = currentInputConnection ?: return@KeyboardView
             lastCorrection = null
+            swiped = null
             // Choosing the word as typed over the suggestions keeps it on purpose.
             if (word == keyboard?.unknown) learn(word, LEARNED)
             connection.beginBatchEdit()
@@ -126,6 +148,7 @@ class HexInputMethod : InputMethodService() {
             variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
         val noSuggestions = info.inputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0
         suggesting = !password && !noSuggestions
+        swiped = null
         // Device colours follow the wallpaper and dark mode, which may have changed.
         keyboard?.theme = Theme.current(this)
         refreshStrip()
@@ -149,6 +172,9 @@ class HexInputMethod : InputMethodService() {
     private fun refreshStrip() {
         val view = keyboard ?: return
         val before = currentInputConnection?.getTextBeforeCursor(CONTEXT_LENGTH, 0)
+        // A swipe's alternatives stay until the word is changed or left.
+        val word = swiped
+        if (word != null && before?.endsWith(word) == true) return
         if (!suggesting || before == null) view.clearSuggestions() else view.suggest(lexicon, before.toString())
     }
 
@@ -178,5 +204,8 @@ class HexInputMethod : InputMethodService() {
 
         /** What ends a word and so triggers autocorrect. */
         val SEPARATORS = setOf(" ", ".", ",", "!", "?", ";", ":")
+
+        /** What a swiped word follows without a space. */
+        const val OPENING = "([{\"'¿¡"
     }
 }

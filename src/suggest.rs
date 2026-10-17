@@ -10,7 +10,9 @@
 //! frequency taken from the previous word's next-word list where it has one.
 
 use crate::dictionary::{Dictionary, Error, Node};
+use crate::swipe::Index;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization;
 
 /// A letter the dictionary has but the typed word lacks, or the other way round.
@@ -251,13 +253,39 @@ const LEARNED_FREQUENCY: f32 = 180.0;
 /// the user keeps typing that no dictionary has.
 #[derive(Default)]
 pub struct Lexicon {
-    pub dictionaries: Vec<Dictionary>,
+    pub(crate) dictionaries: Vec<Dictionary>,
     learned: HashMap<String, u32>,
+    /// The dictionaries' words as swipe typing looks them up, built at the
+    /// first swipe and dropped whenever the dictionaries change.
+    swipe: OnceLock<Index>,
 }
 
 impl Lexicon {
     pub fn new(dictionaries: Vec<Dictionary>) -> Self {
-        Self { dictionaries, learned: HashMap::new() }
+        Self { dictionaries, ..Self::default() }
+    }
+
+    pub fn add(&mut self, dictionary: Dictionary) {
+        self.dictionaries.push(dictionary);
+        self.swipe = OnceLock::new();
+    }
+
+    pub fn clear(&mut self) {
+        self.dictionaries.clear();
+        self.swipe = OnceLock::new();
+    }
+
+    pub(crate) fn swipe_index(&self) -> Result<&Index, Error> {
+        if let Some(index) = self.swipe.get() {
+            return Ok(index);
+        }
+        let index = Index::new(&self.dictionaries)?;
+        Ok(self.swipe.get_or_init(|| index))
+    }
+
+    /// Learned words with the frequency they rank with.
+    pub(crate) fn learned_words(&self) -> impl Iterator<Item = (&str, f32)> {
+        self.learned.iter().filter(|&(_, &times)| times >= LEARNED).map(|(word, _)| (word.as_str(), LEARNED_FREQUENCY))
     }
 
     /// Counts `word` as kept `times` more times; returns how often it now has been.
@@ -359,7 +387,7 @@ pub fn predict(lexicon: &Lexicon, previous: &str, limit: usize) -> Result<Vec<St
 
 /// Next words for `previous` as written, or for its lower-case form when a
 /// sentence start capitalised it.
-fn next_words(dictionary: &Dictionary, previous: &str) -> Result<Vec<(String, u8)>, Error> {
+pub(crate) fn next_words(dictionary: &Dictionary, previous: &str) -> Result<Vec<(String, u8)>, Error> {
     let node = match dictionary.find(previous)? {
         Some(node) => Some(node),
         None => dictionary.find(&previous.to_lowercase())?,
@@ -428,6 +456,17 @@ pub fn strip(lexicon: &Lexicon, before: &str, substitution: Substitution) -> Res
     }
     let unknown = (!known).then(|| typed.to_owned());
     Ok(Strip { slots, replaces: typed.chars().count(), correction, unknown })
+}
+
+/// The last word in `before`, which the next word follows.
+pub fn last_word(before: &str) -> Option<&str> {
+    before.rsplit(|c: char| !in_word(c)).find(|word| !word.is_empty())
+}
+
+/// `word` with its first letter in upper case.
+pub fn capitalise(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().into_iter().flat_map(char::to_uppercase).chain(chars).collect()
 }
 
 /// Whether a dictionary, or what was learned, spells `word` exactly so, or with a lower-case first
