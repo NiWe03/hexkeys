@@ -37,6 +37,8 @@ class KeyboardView(
     private val onAction: (kind: String, text: String) -> Unit,
     private val onPick: (word: String, replaces: Int) -> Unit,
     private val onSettings: () -> Unit,
+    private val onEmoji: () -> Unit,
+    private val onPasswords: () -> Unit,
 ) : View(context) {
 
     private var handle = 0L
@@ -71,6 +73,13 @@ class KeyboardView(
             if (handle != 0L) Core.setAccents(handle, value)
         }
 
+    /** Whether a password manager is set up, which the key button at the strip's right end opens. */
+    var passwordsAvailable = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     /** Autofill chips cover the words, which then are not drawn. */
     var chipsShown = false
         set(value) {
@@ -85,7 +94,8 @@ class KeyboardView(
     private val keysTop get() = headroom + stripHeight
 
     /** Room below the keys for the navigation bar, which the window draws under. */
-    private var navigationBar = 0
+    var navigationBar = 0
+        private set
 
     private val backgroundPaint = Paint()
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -272,10 +282,10 @@ class KeyboardView(
             } else {
                 // The alternative sits on the side the flick goes to, the key's own sign moved off it.
                 val side = if (hintBelow) 1f else -1f
-                val shifted = floatArrayOf(position[0], position[1] - side * cellWidth * 0.12f)
+                val shifted = floatArrayOf(position[0], position[1] - side * cellWidth * 0.14f)
                 drawLabel(canvas, Core.label(handle, index), shifted, cellWidth)
-                hintPaint.textSize = cellWidth * 0.36f
-                drawCentred(canvas, hint, position[0], position[1] + side * cellWidth * 0.2f, hintPaint)
+                hintPaint.textSize = cellWidth * 0.28f
+                drawCentred(canvas, hint, position[0], position[1] + side * cellWidth * 0.26f, hintPaint)
             }
         }
         val choices = Core.popupCount(handle)
@@ -305,9 +315,14 @@ class KeyboardView(
      */
     private fun drawStrip(canvas: Canvas) {
         val middle = headroom + stripHeight / 2f
-        drawGear(canvas, stripSide / 2f, middle, stripHeight * 0.22f)
+        val iconSize = stripHeight * 0.55f
+        drawIcon(canvas, R.drawable.icon_settings, stripSide / 2f, middle, iconSize, theme.label)
+        drawIcon(canvas, R.drawable.icon_mood, stripSide * 1.5f, middle, iconSize, theme.label)
+        if (passwordsAvailable && !chipsShown) {
+            drawIcon(canvas, R.drawable.icon_key, width - stripSide / 2f, middle, iconSize, theme.label)
+        }
         if (chipsShown) return
-        val slotWidth = (width - 2f * stripSide) / 3f
+        val slotWidth = (width - 4f * stripSide) / 3f
         for ((index, word) in slots.withIndex()) {
             if (word.isEmpty()) continue
             stripPaint.isFakeBoldText = index == 1
@@ -316,41 +331,43 @@ class KeyboardView(
             val measured = stripPaint.measureText(word)
             if (measured > room) stripPaint.textSize *= room / measured
             val baseline = middle - (stripPaint.descent() + stripPaint.ascent()) / 2
-            canvas.drawText(word, stripSide + slotWidth * (index + 0.5f), baseline, stripPaint)
+            canvas.drawText(word, 2 * stripSide + slotWidth * (index + 0.5f), baseline, stripPaint)
         }
         for (index in 1..2) {
-            val x = stripSide + slotWidth * index
+            val x = 2 * stripSide + slotWidth * index
             canvas.drawLine(x, headroom + stripHeight * 0.3f, x, headroom + stripHeight * 0.7f, dividerPaint)
         }
     }
 
-    /** A cog of eight teeth around a hole, in the label colour. */
-    private fun drawGear(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
-        val gear = Path()
-        val teeth = 8
-        for (i in 0 until teeth * 4) {
-            val angle = Math.PI * 2 * i / (teeth * 4)
-            val r = if ((i / 2) % 2 == 0) radius else radius * 0.75f
-            val x = cx + r * Math.cos(angle).toFloat()
-            val y = cy + r * Math.sin(angle).toFloat()
-            if (i == 0) gear.moveTo(x, y) else gear.lineTo(x, y)
-        }
-        gear.close()
-        gear.addCircle(cx, cy, radius * 0.32f, Path.Direction.CCW)
-        gear.fillType = Path.FillType.EVEN_ODD
-        stripPaint.style = Paint.Style.FILL
-        canvas.drawPath(gear, stripPaint)
+    private val icons = mutableMapOf<Int, android.graphics.drawable.Drawable>()
+
+    /** Draws one of the Material Symbols icons centred on a point, `size` across, tinted. */
+    private fun drawIcon(canvas: Canvas, id: Int, cx: Float, cy: Float, size: Float, color: Int) {
+        val icon = icons.getOrPut(id) { context.getDrawable(id)!!.mutate() }
+        icon.setTint(color)
+        val half = size / 2
+        icon.setBounds((cx - half).toInt(), (cy - half).toInt(), (cx + half).toInt(), (cy + half).toInt())
+        icon.draw(canvas)
     }
 
-    /** The word slot at x, -1 for the settings button, 3 for the right end slot. */
+    /**
+     * The strip's part at x: -2 the settings button and -1 the emoji button
+     * at its left end, 0 to 2 the word slots, 3 the right end, which holds
+     * the autofill service's button.
+     */
     private fun stripSlot(x: Float): Int = when {
-        x < stripSide -> -1
-        x >= width - stripSide -> 3
-        else -> ((x - stripSide) / ((width - 2f * stripSide) / 3f)).toInt().coerceIn(0, 2)
+        x < stripSide -> -2
+        x < 2 * stripSide -> -1
+        x >= width - 2 * stripSide -> 3
+        else -> ((x - 2 * stripSide) / ((width - 4f * stripSide) / 3f)).toInt().coerceIn(0, 2)
     }
 
     /** Single characters large, words such as "space" smaller so they fit their key. */
     private fun drawLabel(canvas: Canvas, label: String, position: FloatArray, cellWidth: Float) {
+        KEY_ICONS[label]?.let { id ->
+            drawIcon(canvas, id, position[0], position[1], cellWidth * 0.36f, labelPaint.color)
+            return
+        }
         val single = label.codePointCount(0, label.length) == 1
         labelPaint.textSize = cellWidth * if (single) 0.36f else 0.24f
         if (single && label in INK_CENTRED) {
@@ -449,7 +466,7 @@ class KeyboardView(
                 }
                 val x = event.getX(index)
                 val y = event.getY(index) - keysTop
-                stripTouch = if (y < 0) stripSlot(x) + 1 else -1
+                stripTouch = if (y < 0) stripSlot(x) + 2 else -1
                 if (stripTouch >= 0) {
                     finger = -1
                     return true
@@ -474,11 +491,19 @@ class KeyboardView(
                 val y = event.getY(index) - keysTop
                 if (stripTouch >= 0 && event.actionMasked == MotionEvent.ACTION_UP) {
                     val slot = stripSlot(x)
-                    val touched = stripTouch - 1
+                    val touched = stripTouch - 2
                     stripTouch = -1
                     if (slot != touched || y >= 0) return true
-                    if (slot == -1) {
+                    if (slot == -2) {
                         onSettings()
+                        return true
+                    }
+                    if (slot == -1) {
+                        onEmoji()
+                        return true
+                    }
+                    if (slot == 3) {
+                        if (passwordsAvailable) onPasswords()
                         return true
                     }
                     val word = slots.getOrElse(slot) { "" }
@@ -531,6 +556,13 @@ class KeyboardView(
     companion object {
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f
+
+        /** Keys drawn as icons rather than their label. */
+        private val KEY_ICONS = mapOf(
+            "⌫" to R.drawable.icon_backspace,
+            "⏎" to R.drawable.icon_keyboard_return,
+            "⇧" to R.drawable.icon_shift,
+        )
 
         /** Marks that sit high or low on the line and look misplaced unless centred on their ink. */
         private val INK_CENTRED = setOf(".", ",", ";", ":", "'", "\"", "…", "!", "?", "¡", "¿")

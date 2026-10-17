@@ -123,6 +123,8 @@ class HexInputMethod : InputMethodService() {
         this,
         onAction = { kind, text ->
             val connection = currentInputConnection ?: return@KeyboardView
+            // Text put in while a word is marked would replace it.
+            if (kind != "redraw" && kind != "nothing") connection.finishComposingText()
             val undo = lastCorrection
             lastCorrection = null
             val justSwiped = swiped
@@ -153,7 +155,7 @@ class HexInputMethod : InputMethodService() {
                         val piece = if (words == 1) {
                             WORD_AT_END.find(before)?.value?.takeIf { it.isNotEmpty() } ?: before.takeLast(1)
                         } else {
-                            before.substring(before.offsetByCodePoints(before.length, -1))
+                            lastCharacter(before)
                         }
                         connection.deleteSurroundingText(piece.length, 0)
                         before = before.dropLast(piece.length)
@@ -215,7 +217,7 @@ class HexInputMethod : InputMethodService() {
                             connection.endBatchEdit()
                             learn(undo.typed, 1)
                         }
-                        else -> connection.deleteSurroundingTextInCodePoints(1, 0)
+                        else -> deleteCharacter()
                     }
                 }
                 "enter" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
@@ -223,6 +225,7 @@ class HexInputMethod : InputMethodService() {
         },
         onPick = { word, replaces ->
             val connection = currentInputConnection ?: return@KeyboardView
+            connection.finishComposingText()
             lastCorrection = null
             swiped = null
             // Choosing the word as typed over the suggestions keeps it on purpose.
@@ -235,13 +238,22 @@ class HexInputMethod : InputMethodService() {
         onSettings = {
             startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         },
+        onEmoji = { frame?.let { it.showEmoji(!it.emojiShown) } },
+        onPasswords = { passwordManager()?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } },
     ).let { view ->
         keyboard = view
         view.accents = accents
         view.logContext = {
             if (suggesting) currentInputConnection?.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString() else null
         }
-        KeyboardFrame(this, view).also { frame = it }
+        val emoji = EmojiPanel(
+            this,
+            onEmoji = { currentInputConnection?.run { finishComposingText(); commitText(it, 1) } },
+            onSpace = { currentInputConnection?.run { finishComposingText(); commitText(" ", 1) } },
+            onBackspace = { deleteCharacter() },
+            onClose = { frame?.showEmoji(false) },
+        )
+        KeyboardFrame(this, view, emoji).also { frame = it }
     }
 
     /**
@@ -286,6 +298,7 @@ class HexInputMethod : InputMethodService() {
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         frame?.show(emptyList())
+        frame?.showEmoji(false)
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
@@ -302,6 +315,7 @@ class HexInputMethod : InputMethodService() {
         swiped = null
         // Device colours follow the wallpaper and dark mode, which may have changed.
         keyboard?.theme = Theme.current(this)
+        keyboard?.passwordsAvailable = passwordManager() != null
         refreshStrip()
     }
 
@@ -311,6 +325,60 @@ class HexInputMethod : InputMethodService() {
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         refreshStrip()
+        markWord(newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+    }
+
+    /**
+     * Marks the word before the cursor as the one being written, which the
+     * app underlines, as other keyboards do; nothing is marked inside a
+     * selection, after a space, or where suggestions are off. Called with
+     * the selection and the marked range the app reports, so a mark already
+     * in place is left alone.
+     */
+    private fun markWord(start: Int, end: Int, markedStart: Int, markedEnd: Int) {
+        val connection = currentInputConnection ?: return
+        val before = if (suggesting && start == end) connection.getTextBeforeCursor(CONTEXT_LENGTH, 0) else null
+        val length = before?.reversed()?.takeWhile { it.isLetterOrDigit() || it == '\'' || it == '’' || it == '-' }?.length ?: 0
+        if (length == 0) {
+            if (markedStart != -1) connection.finishComposingText()
+        } else if (markedStart != start - length || markedEnd != start) {
+            connection.setComposingRegion(start - length, start)
+        }
+    }
+
+    /** The last character of `text` as the reader sees it, an emoji or a letter with its marks. */
+    private fun lastCharacter(text: String): String {
+        val breaks = java.text.BreakIterator.getCharacterInstance()
+        breaks.setText(text)
+        return text.substring(breaks.preceding(text.length).coerceAtLeast(0))
+    }
+
+    /**
+     * Deletes the character before the cursor as the reader sees it: a whole
+     * emoji, flag or letter with its marks, however many code points it is.
+     */
+    private fun deleteCharacter() {
+        val connection = currentInputConnection ?: return
+        connection.finishComposingText()
+        val selected = connection.getSelectedText(0)
+        if (!selected.isNullOrEmpty()) {
+            connection.commitText("", 1)
+            return
+        }
+        val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+        if (before.isNotEmpty()) connection.deleteSurroundingText(lastCharacter(before).length, 0)
+    }
+
+    /**
+     * The app of the autofill service the phone uses, if one is set up. A
+     * keyboard cannot ask it to fill a field, only the app being typed into
+     * can; opening it lets the user look up and copy what the field needs.
+     */
+    private fun passwordManager(): Intent? {
+        val service = android.provider.Settings.Secure.getString(contentResolver, "autofill_service") ?: return null
+        val component = android.content.ComponentName.unflattenFromString(service) ?: return null
+        if (component.packageName == packageName) return null
+        return packageManager.getLaunchIntentForPackage(component.packageName)
     }
 
     /** Counts a word no dictionary has as kept, when learning is switched on. */

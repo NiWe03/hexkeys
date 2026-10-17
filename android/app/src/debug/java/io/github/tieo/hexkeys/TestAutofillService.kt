@@ -19,8 +19,8 @@ import androidx.autofill.inline.v1.InlineSuggestionUi
 
 /**
  * A stand-in password manager for testing the keyboard's autofill strip in
- * debug builds: for any text field it offers three made-up accounts and a
- * pinned button of its own, as a real service offers its vault.
+ * debug builds: for any text field it offers three made-up accounts and,
+ * last and not pinned, a button of its own, as Bitwarden offers its vault.
  */
 class TestAutofillService : AutofillService() {
 
@@ -39,14 +39,14 @@ class TestAutofillService : AutofillService() {
         val entries = listOf("anna@example.com", "ben.mueller@example.org", "c@example.net", "Vault")
         for ((index, entry) in entries.withIndex()) {
             val spec = specs[minOf(index, specs.size - 1)]
-            val pinned = entry == "Vault"
+            val pinned = false
             val content = InlineSuggestionUi.newContentBuilder(attribution).setTitle(entry).build()
             @Suppress("DEPRECATION")
             response.addDataset(
                 Dataset.Builder()
                     .setValue(
                         field,
-                        AutofillValue.forText(if (pinned) "" else entry),
+                        AutofillValue.forText(if (entry == "Vault") "" else entry),
                         RemoteViews(packageName, android.R.layout.simple_list_item_1),
                         InlinePresentation(content.slice, spec, pinned),
                     )

@@ -17,7 +17,7 @@ import android.widget.LinearLayout
  * are more than fit. While any are shown they take the place of the words.
  */
 @SuppressLint("ViewConstructor")
-class KeyboardFrame(context: Context, val keyboard: KeyboardView) : FrameLayout(context) {
+class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: EmojiPanel) : FrameLayout(context) {
 
     private val chips = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
     private val scroller = HorizontalScrollView(context).apply {
@@ -32,14 +32,24 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView) : FrameLayout(
         addView(keyboard)
         addView(scroller)
         addView(pinned)
+        addView(emoji)
+        emoji.visibility = GONE
         show(emptyList())
     }
 
-    /** Shows autofill suggestion views, each with whether the service pinned it; none hides them. */
+    /**
+     * Shows autofill suggestion views, each with whether the service pinned
+     * it; none hides them. Where the service pins none, its last suggestion
+     * is taken for its button: services add theirs last (Bitwarden does,
+     * unpinned), so it is the one that has to stay in reach.
+     */
     fun show(suggestions: List<Pair<View, Boolean>>) {
         chips.removeAllViews()
         pinned.removeAllViews()
-        for ((view, isPinned) in suggestions) {
+        val anyPinned = suggestions.any { it.second }
+        for ((index, entry) in suggestions.withIndex()) {
+            val (view, servicePinned) = entry
+            val isPinned = servicePinned || (!anyPinned && index == suggestions.lastIndex)
             // The view comes sized to what the service rendered; keep that.
             val given = view.layoutParams
             val params = LinearLayout.LayoutParams(
@@ -57,13 +67,30 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView) : FrameLayout(
         requestLayout()
     }
 
+    /** Shows the emoji in place of the keys, or the keys again. */
+    fun showEmoji(on: Boolean) {
+        if (on) {
+            emoji.apply(keyboard.theme)
+            emoji.open()
+        }
+        emoji.visibility = if (on) VISIBLE else GONE
+        requestLayout()
+    }
+
+    val emojiShown get() = emoji.visibility == VISIBLE
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         keyboard.measure(widthMeasureSpec, heightMeasureSpec)
+        val keysTop = keyboard.headroom + keyboard.stripTall
+        emoji.measure(
+            MeasureSpec.makeMeasureSpec(keyboard.measuredWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(keyboard.measuredHeight - keysTop - keyboard.navigationBar, MeasureSpec.EXACTLY),
+        )
         val width = keyboard.measuredWidth
         val strip = MeasureSpec.makeMeasureSpec(keyboard.stripTall - 2 * gap, MeasureSpec.EXACTLY)
         pinned.measure(MeasureSpec.makeMeasureSpec(width / 3, MeasureSpec.AT_MOST), strip)
         val pinnedWidth = maxOf(pinned.measuredWidth, keyboard.stripSide)
-        scroller.measure(MeasureSpec.makeMeasureSpec(width - keyboard.stripSide - pinnedWidth, MeasureSpec.EXACTLY), strip)
+        scroller.measure(MeasureSpec.makeMeasureSpec(width - 2 * keyboard.stripSide - pinnedWidth, MeasureSpec.EXACTLY), strip)
         setMeasuredDimension(width, keyboard.measuredHeight)
     }
 
@@ -72,7 +99,9 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView) : FrameLayout(
         val stripTop = keyboard.headroom + gap
         val width = keyboard.measuredWidth
         pinned.layout(width - pinned.measuredWidth, stripTop, width, stripTop + pinned.measuredHeight)
-        val start = keyboard.stripSide
+        val start = 2 * keyboard.stripSide
+        val keysTop = keyboard.headroom + keyboard.stripTall
+        emoji.layout(0, keysTop, width, keysTop + emoji.measuredHeight)
         scroller.layout(start, stripTop, start + scroller.measuredWidth, stripTop + scroller.measuredHeight)
         post { clipChips() }
     }
