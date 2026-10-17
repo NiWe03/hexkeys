@@ -77,6 +77,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
     init {
         scroller.setOnScrollChangeListener { _, _, _, _, _ -> clipChips() }
         addView(keyboard)
+        keyboard.onBarMoved = { requestLayout() }
         addView(scroller)
         addView(pinned)
         addView(emoji)
@@ -104,6 +105,9 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         onSearchBackspace = backspace
         search.visibility = if (on) VISIBLE else GONE
         resultScroller.visibility = search.visibility
+        // The results take the digits' place; the number row stays a bar right above the letters.
+        keyboard.barAboveLetters = on
+        keyboard.gestureBar = on || emojiShown || clipboardShown
         removeCallbacks(blink)
         if (on) {
             val theme = keyboard.theme
@@ -191,12 +195,12 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
             emoji.open()
             clipboard.visibility = GONE
         }
-        emoji.visibility = if (on) VISIBLE else GONE
-        keyboard.gestureBar = emojiShown || clipboardShown
+        fade(emoji, on)
+        keyboard.gestureBar = searching || emojiShown || clipboardShown
         requestLayout()
     }
 
-    val emojiShown get() = emoji.visibility == VISIBLE
+    val emojiShown get() = emoji.visibility == VISIBLE && emoji.tag != CLOSING
 
     /** Shows the texts copied in place of the keys, or the keys again. */
     fun showClipboard(on: Boolean) {
@@ -204,12 +208,36 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
             clipboard.apply(keyboard.theme)
             emoji.visibility = GONE
         }
-        clipboard.visibility = if (on) VISIBLE else GONE
-        keyboard.gestureBar = emojiShown || clipboardShown
+        fade(clipboard, on)
+        keyboard.gestureBar = searching || emojiShown || clipboardShown
         requestLayout()
     }
 
-    val clipboardShown get() = clipboard.visibility == VISIBLE
+    val clipboardShown get() = clipboard.visibility == VISIBLE && clipboard.tag != CLOSING
+
+    /**
+     * Shows or hides a panel with a quick fade and a short rise, as other
+     * keyboards switch views; one closing counts as closed at once.
+     */
+    private fun fade(panel: View, on: Boolean) {
+        panel.animate().cancel()
+        val rise = 12 * density
+        if (on) {
+            panel.tag = null
+            if (panel.visibility != VISIBLE) {
+                panel.alpha = 0f
+                panel.translationY = rise
+                panel.visibility = VISIBLE
+            }
+            panel.animate().alpha(1f).translationY(0f).setDuration(PANEL_MS).start()
+        } else if (panel.visibility == VISIBLE) {
+            panel.tag = CLOSING
+            panel.animate().alpha(0f).translationY(rise).setDuration(PANEL_MS).withEndAction {
+                panel.visibility = GONE
+                panel.tag = null
+            }.start()
+        }
+    }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         keyboard.measure(widthMeasureSpec, heightMeasureSpec)
@@ -235,7 +263,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         )
         resultScroller.measure(
             MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(keyboard.numbersHeight, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(keyboard.numbersHeight - keyboard.gestureBarHeight, MeasureSpec.EXACTLY),
         )
         setMeasuredDimension(width, keyboard.measuredHeight)
     }
@@ -268,5 +296,13 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
             val to = minOf(chip.width, scroller.width - left)
             chip.clipBounds = if (to > from) Rect(from, 0, to, chip.height) else Rect()
         }
+    }
+
+    private companion object {
+        /** How long a panel takes to fade in or out, in ms. */
+        const val PANEL_MS = 120L
+
+        /** Marks a panel fading out. */
+        const val CLOSING = "closing"
     }
 }

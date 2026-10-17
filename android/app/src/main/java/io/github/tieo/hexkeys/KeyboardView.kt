@@ -293,23 +293,70 @@ class KeyboardView(
     }
 
     /**
-     * While a panel covers the letters, the number row is a slim bar of its
-     * cells without their digits, for sliding to delete and to move the
-     * cursor; taps on it type nothing.
+     * While a panel covers the letters, or the emoji search's results the
+     * digits, the number row is a slim bar of its cells without their
+     * digits, for sliding to delete and to move the cursor; taps on it type
+     * nothing. Under a panel it is at the top of the number row's place,
+     * during the search at its bottom, right above the letters.
      */
     var gestureBar = false
+        set(value) {
+            if (value == field) return
+            field = value
+            // The number row shrinks into the bar and grows back rather than jumping.
+            barAnimator?.cancel()
+            barAnimator = android.animation.ValueAnimator.ofFloat(barProgress, if (value) 1f else 0f).apply {
+                duration = BAR_MS
+                interpolator = android.view.animation.DecelerateInterpolator()
+                addUpdateListener {
+                    barProgress = it.animatedValue as Float
+                    invalidate()
+                    onBarMoved()
+                }
+                start()
+            }
+        }
+    private var barAnimator: android.animation.ValueAnimator? = null
+
+    /** How far the number row has shrunk into the bar, 0 not at all, 1 fully. */
+    private var barProgress = 0f
+
+    /** The number row's height as drawn now, of its full height. */
+    private val barScale get() = 1f - (1f - GESTURE_BAR) * barProgress
+
+    /** Called as the bar changes height, for what lies below it to follow. */
+    var onBarMoved: () -> Unit = {}
+    var barAboveLetters = false
         set(value) {
             field = value
             invalidate()
         }
 
-    /** How tall the number row is as a bar. */
-    val gestureBarHeight get() = (numbersHeight * GESTURE_BAR).toInt()
+    /** How tall the number row is as a bar, and how far below the strip the bar starts. */
+    val gestureBarHeight get() = (numbersHeight * barScale).toInt()
+    private val barTop get() = if (barAboveLetters) numbersHeight - gestureBarHeight else 0
+
+    /** Whether the finger went down on the bar, whose taps type nothing. */
+    private var downOnBar = false
 
     /** A touch's height in the keys' own terms: the bar stands for the whole number row. */
     private fun keysY(y: Float): Float {
         val inKeys = y - keysTop
-        return if (gestureBar && inKeys >= 0) inKeys / GESTURE_BAR else inKeys
+        if (barProgress == 0f || inKeys < 0) return inKeys
+        // Below the bar during the search are the letters, where they always are.
+        if (barAboveLetters && inKeys >= numbersHeight) return inKeys
+        return ((inKeys - barTop) / barScale).coerceAtLeast(0f)
+    }
+
+    /** A label of the page shown, to tell a page change from other redraws, and the page's fade-in. */
+    private var pageMark = ""
+    private var pageFade = 1f
+    private val labelFade = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = PAGE_MS
+        addUpdateListener {
+            pageFade = it.animatedValue as Float
+            invalidate()
+        }
     }
 
     /** The width and layout settings the keys were last laid out for. */
@@ -434,13 +481,19 @@ class KeyboardView(
         val cellWidth = Core.cellWidth(handle)
         val pressed = Core.pressed(handle)
         // Holding space turns the keys into a touchpad for the cursor: their labels fade.
-        labelPaint.alpha = if (Core.movingCursor(handle)) 0x40 else 0xFF
+        labelPaint.alpha = ((if (Core.movingCursor(handle)) 0x40 else 0xFF) * pageFade).toInt()
         val shiftState = Core.shiftState(handle)
         spaceKeys = paths.indices.count { Core.label(handle, it) == "space" }
         spacesDrawn = 0
-        if (gestureBar) canvas.scale(1f, GESTURE_BAR)
         for ((index, path) in paths.withIndex()) {
-            if (gestureBar && !Core.inNumberRow(handle, index)) continue
+            val onBar = barProgress > 0f && Core.inNumberRow(handle, index)
+            // Under a panel the letters are covered.
+            if (gestureBar && !onBar && !barAboveLetters) continue
+            if (onBar) {
+                canvas.save()
+                canvas.translate(0f, barTop.toFloat())
+                canvas.scale(1f, barScale)
+            }
             val color = keyColor(index)
             keyPaint.color = if (index == pressed || index == flashKey) theme.pressed(color) else color
             // Shift shows its state: lit for the next letter, in the accent colour while locked.
@@ -451,7 +504,17 @@ class KeyboardView(
             }
             canvas.drawPath(path, keyPaint)
             canvas.drawPath(path, gapPaint)
-            if (gestureBar) continue
+            if (onBar) {
+                canvas.restore()
+                // The digits fade as the row shrinks into the bar.
+                if (barProgress >= 1f) continue
+                val alpha = labelPaint.alpha
+                labelPaint.alpha = (alpha * (1f - barProgress)).toInt()
+                val at = Core.labelPosition(handle, index)
+                drawLabel(canvas, label, floatArrayOf(at[0], barTop + at[1] * barScale), cellWidth)
+                labelPaint.alpha = alpha
+                continue
+            }
             val position = Core.labelPosition(handle, index)
             val hint = Core.keyHint(handle, index)
             val enterSmall = enterHint
@@ -847,6 +910,7 @@ class KeyboardView(
                     return true
                 }
                 finger = event.getPointerId(index)
+                downOnBar = gestureBar && y < numbersHeight
                 downTime = time
                 fingerX = x
                 fingerY = y
@@ -949,9 +1013,18 @@ class KeyboardView(
     private fun act(action: Array<String>) {
         val (kind, text) = action
         // The bar only slides; a digit tapped or held there is dropped.
-        if (gestureBar && kind == "commit") return
+        if (downOnBar && kind == "commit") return
         note(kind, text)
-        if (kind == "redraw") loadOutlines()
+        if (kind == "redraw") {
+            loadOutlines()
+            // Another page's labels come in with a quick fade.
+            val first = if (paths.isNotEmpty()) Core.label(handle, paths.size / 2) else ""
+            if (first != pageMark) {
+                pageMark = first
+                labelFade.cancel()
+                labelFade.start()
+            }
+        }
         onAction(kind, text)
         schedule()
         invalidate()
@@ -969,6 +1042,12 @@ class KeyboardView(
 
         /** How tall the number row is as the bar under a panel, of its full height. */
         private const val GESTURE_BAR = 0.4f
+
+        /** How long another page's labels take to fade in, in ms. */
+        private const val PAGE_MS = 120L
+
+        /** How long the number row takes to shrink into the bar or grow back, in ms. */
+        private const val BAR_MS = 180L
 
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f

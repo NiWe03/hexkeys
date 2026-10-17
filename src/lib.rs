@@ -633,7 +633,8 @@ const MORE: &str = "=\\<";
 /// rows both layouts have hold the same in both.
 const SYMBOL_ROWS: &[(&str, [&str; 2])] = &[
     ("wetzio", ["@#€$%&", "£¥¢₹§°"]),
-    ("qargulp", ["()[]{}_", "±×÷≈≠≤≥"]),
+    // The round brackets on u and l, side by side.
+    ("qargulp", ["[]{}()_", "±×÷≈≠≤≥"]),
     // Space at the bottom.
     ("sdfhjk", ["\"':;!~", "<>\\|√π"]),
     ("yxcvbnm", ["+-*/=^", "‰©®™✓•"]),
@@ -1881,6 +1882,18 @@ mod tests {
         let letters = keyboard_index(&keyboard, "ABC");
         keyboard.press(letters);
         assert_eq!(keyboard.layout.find("q").label, "q");
+    }
+
+    #[test]
+    fn round_brackets_sit_on_u_and_l() {
+        for letters in [space_middle(), space_bottom()] {
+            let keyboard = Keyboard::new(letters, 1008.0, 1.0, 400);
+            let symbols = &keyboard.layers[1];
+            for (letter, bracket) in [("u", "("), ("l", ")")] {
+                let cell = keyboard.layers[0].find(letter).cells[0];
+                assert_eq!(symbols.key_at(cell).unwrap().label, bracket);
+            }
+        }
     }
 
     #[test]
