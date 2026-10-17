@@ -242,6 +242,28 @@ impl Search<'_> {
     }
 }
 
+/// How much an accented letter has to be used, as a share of the most used
+/// one, to be offered when holding its plain letter.
+const ACCENT_SHARE: f64 = 0.01;
+
+/// The most accented letters one key offers.
+const MAX_ACCENTS: usize = 5;
+
+/// The plain letter an accented one is typed from: its letter without
+/// marks, or for the letters that have none, the one it is written like.
+fn plain(c: char) -> Option<char> {
+    let special = match c {
+        'ß' => Some('s'),
+        'æ' => Some('a'),
+        'œ' | 'ø' => Some('o'),
+        'ł' => Some('l'),
+        'đ' => Some('d'),
+        'ı' => Some('i'),
+        _ => None,
+    };
+    special.or_else(|| c.nfd().next().filter(|base| base.is_ascii_lowercase()))
+}
+
 /// How often a word has to be kept before it counts as learned.
 const LEARNED: u32 = 2;
 
@@ -281,6 +303,40 @@ impl Lexicon {
         }
         let index = Index::new(&self.dictionaries)?;
         Ok(self.swipe.get_or_init(|| index))
+    }
+
+    /// The accented letters the dictionaries use, by the plain letter they
+    /// are typed from, most used first: what holding a letter offers. A
+    /// letter's use counts each word it is in by how common the word is.
+    /// Letters used far less than the most used accented letter of any
+    /// kind are left out, so only the languages in use show.
+    pub fn accents(&self) -> Result<HashMap<char, Vec<char>>, Error> {
+        let mut uses: HashMap<char, f64> = HashMap::new();
+        for (word, frequency) in self.swipe_index()?.words() {
+            // Frequencies are logarithmic; 16 steps are roughly a doubling.
+            let weight = 2f64.powf(frequency as f64 / 16.0);
+            for c in word.chars().flat_map(char::to_lowercase) {
+                if c.is_alphabetic() && !c.is_ascii() && plain(c).is_some() {
+                    *uses.entry(c).or_insert(0.0) += weight;
+                }
+            }
+        }
+        let most = uses.values().copied().fold(0.0, f64::max);
+        let mut accents: HashMap<char, Vec<(char, f64)>> = HashMap::new();
+        for (c, used) in uses {
+            if used >= most * ACCENT_SHARE
+                && let Some(base) = plain(c)
+            {
+                accents.entry(base).or_default().push((c, used));
+            }
+        }
+        Ok(accents
+            .into_iter()
+            .map(|(base, mut letters)| {
+                letters.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+                (base, letters.into_iter().take(MAX_ACCENTS).map(|(c, _)| c).collect())
+            })
+            .collect())
     }
 
     /// Learned words with the frequency they rank with.
@@ -650,5 +706,16 @@ mod tests {
         assert!(is_word(&german, "haus").unwrap());
         assert!(is_word(&german, "Hallo").unwrap());
         assert!(!is_word(&german, "hauss").unwrap());
+    }
+
+    #[test]
+    fn accents_come_from_the_dictionaries_most_used_first_and_rare_ones_left_out() {
+        let words = [("über", 200), ("Straße", 180), ("schön", 170), ("Mädchen", 170), ("hätte", 160), ("café", 40), ("naïve", 10)];
+        let lexicon = Lexicon::new(vec![Dictionary::new(encode(&words, &[])).unwrap()]);
+        let accents = lexicon.accents().unwrap();
+        assert_eq!(accents[&'a'], vec!['ä']);
+        assert_eq!(accents[&'s'], vec!['ß']);
+        assert_eq!(accents[&'u'], vec!['ü']);
+        assert!(!accents.contains_key(&'i'), "naïve is too rare");
     }
 }

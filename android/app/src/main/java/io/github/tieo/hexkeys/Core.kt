@@ -85,4 +85,10 @@ object Core {
 
     /** The words the last swipe spells, best first, after the text before the cursor. */
     external fun swipe(lexicon: Long, keyboard: Long, before: String): Array<String>
+
+    /** The accented letters of the lexicon's languages, as "a:ä;o:ö"; slow, call it off the main thread. */
+    external fun lexiconAccents(lexicon: Long): String
+
+    /** Sets what holding a letter offers, in the form [lexiconAccents] returns. */
+    external fun setAccents(handle: Long, accents: String)
 }

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <input-method xmlns:android="http://schemas.android.com/apk/res/android"
-    android:settingsActivity="io.github.tieo.hexkeys.SettingsActivity">
+    android:settingsActivity="io.github.tieo.hexkeys.SettingsActivity"
+    android:supportsInlineSuggestions="true">
     <subtype
         android:label="Deutsch"
         android:imeSubtypeLocale="de_DE"

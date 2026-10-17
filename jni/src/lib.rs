@@ -456,3 +456,27 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_configure(
         _ => Capital::FlickUp,
     };
 }
+
+/// The accented letters of the lexicon's languages by plain letter, as
+/// "a:ä;o:ö;s:ß", most used first. Slow on large dictionaries: call it off
+/// the main thread.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconAccents(env: JNIEnv, _class: JClass, handle: jlong) -> jstring {
+    let accents = lexicon(handle).accents().unwrap_or_default();
+    let text: Vec<String> =
+        accents.iter().map(|(letter, accented)| format!("{letter}:{}", accented.iter().collect::<String>())).collect();
+    env.new_string(text.join(";")).expect("string").into_raw()
+}
+
+/// Sets what holding a letter offers, in the form `lexiconAccents` returns.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_setAccents(mut env: JNIEnv, _class: JClass, handle: jlong, accents: JString) {
+    let accents: String = env.get_string(&accents).map(Into::into).unwrap_or_default();
+    keyboard(handle).accents = accents
+        .split(';')
+        .filter_map(|entry| {
+            let (letter, accented) = entry.split_once(':')?;
+            Some((letter.chars().next()?, accented.chars().collect()))
+        })
+        .collect();
+}

@@ -41,3 +41,8 @@ val cargoNdk by tasks.registering(Exec::class) {
 }
 
 tasks.named("preBuild") { dependsOn(cargoNdk) }
+
+dependencies {
+    // Styles for the autofill service's inline suggestions, in the format services render.
+    implementation("androidx.autofill:autofill:1.1.0")
+}

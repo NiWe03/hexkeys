@@ -123,6 +123,11 @@ impl Index {
         Ok(index)
     }
 
+    /// Every word with its frequency.
+    pub(crate) fn words(&self) -> impl Iterator<Item = (&str, u8)> {
+        self.entries.iter().map(|entry| (entry.word.as_str(), entry.frequency))
+    }
+
     fn add(&mut self, word: &str, frequency: u8) {
         let Some(keys) = path_keys(word) else { return };
         let ends = (keys[0], keys[keys.len() - 1]);

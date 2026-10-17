@@ -12,6 +12,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowInsets
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Draws the keys the core lays out and passes touches back to it.
@@ -34,6 +36,7 @@ class KeyboardView(
     context: Context,
     private val onAction: (kind: String, text: String) -> Unit,
     private val onPick: (word: String, replaces: Int) -> Unit,
+    private val onSettings: () -> Unit,
 ) : View(context) {
 
     private var handle = 0L
@@ -44,7 +47,7 @@ class KeyboardView(
         private set
 
     private val density = resources.displayMetrics.density
-    private val stripHeight = (44 * density).toInt()
+    private val stripHeight = (STRIP_DP * density).toInt()
     private var slots = arrayOf("", "", "")
     private var replaces = 0
 
@@ -55,6 +58,26 @@ class KeyboardView(
     /** The word being typed when no dictionary has it, which learning counts. */
     var unknown: String? = null
         private set
+    /** Width of the strip's end slots: the settings button left, the autofill service's button right. */
+    val stripSide get() = stripHeight + (4 * density).toInt()
+
+    /** Height of the suggestion strip. */
+    val stripTall get() = stripHeight
+
+    /** What holding a letter offers, as the core's `lexiconAccents` gives it. */
+    var accents = ""
+        set(value) {
+            field = value
+            if (handle != 0L) Core.setAccents(handle, value)
+        }
+
+    /** Autofill chips cover the words, which then are not drawn. */
+    var chipsShown = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     /** The slot a finger went down on, or -1 when the touch is not in the strip. */
     private var stripTouch = -1
 
@@ -150,6 +173,7 @@ class KeyboardView(
         val preferences = Dictionaries.preferences(context)
         val space_middle = preferences.getString(LAYOUT, null) == SPACE_MIDDLE
         handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), space_middle)
+        Core.setAccents(handle, accents)
         Core.configure(
             handle,
             preferences.getBoolean(DELETE_FROM_LEFT, false),
@@ -253,10 +277,16 @@ class KeyboardView(
         canvas.restore()
     }
 
-    /** Three equal slots, the middle one bold; long words shrink to fit their slot. */
+    /**
+     * The settings button at the left end, a slot as wide at the right end
+     * for the autofill service's button, and three equal word slots between
+     * them, the middle one bold; long words shrink to fit their slot.
+     */
     private fun drawStrip(canvas: Canvas) {
-        val slotWidth = width / 3f
         val middle = headroom + stripHeight / 2f
+        drawGear(canvas, stripSide / 2f, middle, stripHeight * 0.22f)
+        if (chipsShown) return
+        val slotWidth = (width - 2f * stripSide) / 3f
         for ((index, word) in slots.withIndex()) {
             if (word.isEmpty()) continue
             stripPaint.isFakeBoldText = index == 1
@@ -265,12 +295,37 @@ class KeyboardView(
             val measured = stripPaint.measureText(word)
             if (measured > room) stripPaint.textSize *= room / measured
             val baseline = middle - (stripPaint.descent() + stripPaint.ascent()) / 2
-            canvas.drawText(word, slotWidth * (index + 0.5f), baseline, stripPaint)
+            canvas.drawText(word, stripSide + slotWidth * (index + 0.5f), baseline, stripPaint)
         }
         for (index in 1..2) {
-            val x = slotWidth * index
+            val x = stripSide + slotWidth * index
             canvas.drawLine(x, headroom + stripHeight * 0.3f, x, headroom + stripHeight * 0.7f, dividerPaint)
         }
+    }
+
+    /** A cog of eight teeth around a hole, in the label colour. */
+    private fun drawGear(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
+        val gear = Path()
+        val teeth = 8
+        for (i in 0 until teeth * 4) {
+            val angle = Math.PI * 2 * i / (teeth * 4)
+            val r = if ((i / 2) % 2 == 0) radius else radius * 0.75f
+            val x = cx + r * Math.cos(angle).toFloat()
+            val y = cy + r * Math.sin(angle).toFloat()
+            if (i == 0) gear.moveTo(x, y) else gear.lineTo(x, y)
+        }
+        gear.close()
+        gear.addCircle(cx, cy, radius * 0.32f, Path.Direction.CCW)
+        gear.fillType = Path.FillType.EVEN_ODD
+        stripPaint.style = Paint.Style.FILL
+        canvas.drawPath(gear, stripPaint)
+    }
+
+    /** The word slot at x, -1 for the settings button, 3 for the right end slot. */
+    private fun stripSlot(x: Float): Int = when {
+        x < stripSide -> -1
+        x >= width - stripSide -> 3
+        else -> ((x - stripSide) / ((width - 2f * stripSide) / 3f)).toInt().coerceIn(0, 2)
     }
 
     /** Single characters large, words such as "space" smaller so they fit their key. */
@@ -284,6 +339,48 @@ class KeyboardView(
         moveTo(corners[0], corners[1])
         for (i in 2 until corners.size step 2) lineTo(corners[i], corners[i + 1])
         close()
+    }
+
+    /** The text before the cursor for the gesture log, null where it must not be kept. */
+    var logContext: () -> String? = { null }
+
+    /** The touch being written down for [GestureLog], in debug builds. */
+    private var record: JSONObject? = null
+    private var recordPoints = JSONArray()
+    private var recordActions = JSONArray()
+    private var recordDown = 0L
+    private val logging = GestureLog.enabled(context)
+
+    /** Adds what came of the touch being recorded, such as the words a swipe spelled. */
+    fun note(kind: String, text: String) {
+        if (record != null) recordActions.put(JSONObject().put("kind", kind).put("text", text))
+    }
+
+    private fun startRecord(x: Float, y: Float, time: Long) {
+        if (!logging) return
+        recordPoints = JSONArray()
+        recordActions = JSONArray()
+        recordDown = time
+        val pressed = Core.pressed(handle)
+        record = JSONObject()
+            .put("time", System.currentTimeMillis())
+            .put("layout", Dictionaries.preferences(context).getString(LAYOUT, "hexkeys"))
+            .put("width", width)
+            .put("cellWidth", Core.cellWidth(handle).toDouble())
+            .put("key", if (pressed >= 0) Core.label(handle, pressed) else "")
+            .put("before", logContext())
+        addPoint(x, y, time)
+    }
+
+    private fun addPoint(x: Float, y: Float, time: Long) {
+        if (record != null) recordPoints.put(JSONArray().put(x.toInt()).put(y.toInt()).put(time - recordDown))
+    }
+
+    private fun finishRecord(how: String) {
+        val done = record ?: return
+        record = null
+        done.put("end", how).put("points", recordPoints).put("actions", recordActions)
+        GestureLog.write(context, done)
     }
 
     /** The finger the core is following, or -1. */
@@ -309,11 +406,11 @@ class KeyboardView(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (finger >= 0) {
-                    lift(fingerX, fingerY, time)
+                    lift(fingerX, fingerY, time, "rollover")
                 }
                 val x = event.getX(index)
                 val y = event.getY(index) - keysTop
-                stripTouch = if (y < 0) (x / (width / 3f)).toInt().coerceIn(0, 2) else -1
+                stripTouch = if (y < 0) stripSlot(x) + 1 else -1
                 if (stripTouch >= 0) {
                     finger = -1
                     return true
@@ -322,12 +419,14 @@ class KeyboardView(
                 fingerX = x
                 fingerY = y
                 Core.touchDown(handle, x, y, time)
+                startRecord(x, y, time)
             }
             MotionEvent.ACTION_MOVE -> {
                 val at = event.findPointerIndex(finger)
                 if (at < 0) return true
                 fingerX = event.getX(at)
                 fingerY = event.getY(at) - keysTop
+                addPoint(fingerX, fingerY, time)
                 val action = Core.touchMove(handle, fingerX, fingerY, time)
                 if (action[0] != "nothing") act(action)
             }
@@ -335,17 +434,29 @@ class KeyboardView(
                 val x = event.getX(index)
                 val y = event.getY(index) - keysTop
                 if (stripTouch >= 0 && event.actionMasked == MotionEvent.ACTION_UP) {
-                    val slot = (x / (width / 3f)).toInt().coerceIn(0, 2)
-                    val word = slots[stripTouch]
-                    if (slot == stripTouch && y < 0 && word.isNotEmpty()) onPick(word, replaces)
+                    val slot = stripSlot(x)
+                    val touched = stripTouch - 1
                     stripTouch = -1
+                    if (slot != touched || y >= 0) return true
+                    if (slot == -1) {
+                        onSettings()
+                        return true
+                    }
+                    val word = slots.getOrElse(slot) { "" }
+                    if (!chipsShown && word.isNotEmpty()) {
+                        onPick(word, replaces)
+                        if (logging) {
+                            GestureLog.write(context, JSONObject().put("time", System.currentTimeMillis()).put("picked", word))
+                        }
+                    }
                     return true
                 }
-                if (event.getPointerId(index) == finger) lift(x, y, time)
+                if (event.getPointerId(index) == finger) lift(x, y, time, "lift")
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
                 Core.touchCancel(handle)
+                finishRecord("cancel")
                 finger = -1
                 stripTouch = -1
             }
@@ -356,13 +467,16 @@ class KeyboardView(
     }
 
     /** Ends the followed finger's touch at a point and acts on it. */
-    private fun lift(x: Float, y: Float, time: Long) {
+    private fun lift(x: Float, y: Float, time: Long, how: String) {
         finger = -1
+        addPoint(x, y, time)
         act(Core.touchUp(handle, x, y, time))
+        finishRecord(how)
     }
 
     private fun act(action: Array<String>) {
         val (kind, text) = action
+        note(kind, text)
         if (kind == "redraw") loadOutlines()
         onAction(kind, text)
         schedule()
@@ -378,6 +492,9 @@ class KeyboardView(
     companion object {
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f
+
+        /** Height of the suggestion strip in dp. */
+        const val STRIP_DP = 44
 
         /** Width of the delete edge kept from the back gesture, in dp. */
         private const val EXCLUSION_WIDTH = 32

@@ -764,6 +764,9 @@ pub struct Keyboard {
     /// The last swipe, until the next one.
     pub swiped: Option<Swiped>,
     pub gestures: Gestures,
+    /// Accented letters by the plain letter whose key offers them when held,
+    /// from the languages in use.
+    pub accents: std::collections::HashMap<char, Vec<char>>,
 }
 
 impl Keyboard {
@@ -784,6 +787,7 @@ impl Keyboard {
             layer: 0,
             swiped: None,
             gestures: Gestures::default(),
+            accents: Default::default(),
         }
     }
 
@@ -1043,8 +1047,13 @@ impl Keyboard {
     fn choices(&self, index: usize) -> Vec<String> {
         let shifted = self.shift == Shift::Once;
         let label = &self.layout.keys[index].label;
-        let mut choices: Vec<String> =
-            alternates(label).iter().map(|c| if shifted { upper(c) } else { (*c).to_owned() }).collect();
+        let mut choices: Vec<String> = match label.chars().next().filter(|_| is_letter(label)) {
+            Some(letter) => self.accents.get(&letter).into_iter().flatten().map(|c| c.to_string()).collect(),
+            None => alternates(label).iter().map(|c| (*c).to_owned()).collect(),
+        };
+        if shifted {
+            choices = choices.iter().map(|c| upper(c)).collect();
+        }
         if self.holds_for_capital(index) {
             choices.insert(0, upper(label));
         }
@@ -1141,17 +1150,11 @@ pub fn qwertz_row(label: &str) -> Option<usize> {
     ["qwertzuiop", "asdfghjkl", "yxcvbnm"].iter().position(|row| row.contains(c))
 }
 
-/// Long-press alternatives for German and English, left to right.
+/// Long-press alternatives of punctuation, left to right. Letters offer
+/// the accented letters of the languages in use instead, see
+/// [`Keyboard::accents`].
 fn alternates(label: &str) -> &'static [&'static str] {
     match label {
-        "s" => &["ß"],
-        "a" => &["à", "á", "â", "æ"],
-        "e" => &["é", "è", "ê", "ë"],
-        "i" => &["í", "ì", "î", "ï"],
-        "o" => &["ó", "ò", "ô", "œ"],
-        "u" => &["ú", "ù", "û"],
-        "c" => &["ç"],
-        "n" => &["ñ"],
         "." => &[",", ";", ":", "…", "-"],
         "?" => &["!", "'", "\"", "¿", "¡"],
         "," => &[";", ":", "'", "\"", "-"],
@@ -1306,6 +1309,7 @@ mod tests {
     #[test]
     fn long_press_on_s_gives_sharp_s_and_capital_after_shift() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.3, 400);
+        keyboard.accents.insert('s', vec!['ß']);
         let (shift, s) = (keyboard_index(&keyboard, "⇧"), keyboard_index(&keyboard, "s"));
         assert!(keyboard.long_press(s));
         assert_eq!(keyboard.popup_release(), Action::Commit("ß".into()));
@@ -1318,6 +1322,7 @@ mod tests {
     #[test]
     fn popup_follows_the_finger_and_stays_on_screen() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.3, 400);
+        keyboard.accents.insert('u', vec!['ü', 'ú', 'û']);
         let q = keyboard_index(&keyboard, "q");
         assert!(!keyboard.long_press(q), "q has no alternatives");
         let u = keyboard_index(&keyboard, "u");
@@ -1474,6 +1479,7 @@ mod tests {
     #[test]
     fn holding_still_opens_the_popup_and_lifting_commits_from_it() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        keyboard.accents.insert('s', vec!['ß']);
         keyboard.touch_down(near(&keyboard, "s", 0.0, 0.0), 0);
         assert_eq!(keyboard.tick(400), Action::Redraw);
         assert!(keyboard.popup.is_some());

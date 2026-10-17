@@ -1,5 +1,17 @@
 package io.github.tieo.hexkeys
 
+import android.content.Intent
+import java.util.concurrent.Executors
+import android.os.Build
+import android.os.Bundle
+import android.util.Size
+import android.view.ViewGroup
+import android.view.inputmethod.InlineSuggestionsRequest
+import android.view.inputmethod.InlineSuggestionsResponse
+import android.widget.inline.InlinePresentationSpec
+import android.annotation.TargetApi
+import androidx.autofill.inline.UiVersions
+import androidx.autofill.inline.v1.InlineSuggestionUi
 import android.content.SharedPreferences
 import android.inputmethodservice.InputMethodService
 import android.text.InputType
@@ -11,7 +23,14 @@ import android.view.inputmethod.EditorInfo
 class HexInputMethod : InputMethodService() {
 
     private var keyboard: KeyboardView? = null
+    private var frame: KeyboardFrame? = null
     private var lexicon = 0L
+
+    /** What holding a letter offers in the languages loaded, for keyboard views made later. */
+    private var accents = ""
+
+    /** Reads dictionaries one set at a time, away from the main thread. */
+    private val loader = Executors.newSingleThreadExecutor()
     /** Off in password fields and where the app asks for no suggestions. */
     private var suggesting = false
 
@@ -44,24 +63,45 @@ class HexInputMethod : InputMethodService() {
     override fun onCreate() {
         super.onCreate()
         lexicon = Core.lexiconCreate()
+        learned.putAll(Dictionaries.learned(this))
         loadDictionaries()
-        for ((word, times) in Dictionaries.learned(this)) {
-            learned[word] = Core.lexiconLearn(lexicon, word, times)
-        }
         Dictionaries.preferences(this).registerOnSharedPreferenceChangeListener(settingsChanged)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Dictionaries.preferences(this).unregisterOnSharedPreferenceChangeListener(settingsChanged)
+        loader.shutdown()
         Core.lexiconDestroy(lexicon)
         lexicon = 0L
     }
 
+    /**
+     * Builds a lexicon from the enabled dictionaries and the learned words
+     * off the main thread, works out the accents its languages use, and
+     * then puts it in place of the one in use. Large dictionaries take
+     * seconds to read through; typing goes on with the old lexicon meanwhile.
+     */
     private fun loadDictionaries() {
-        Core.lexiconClear(lexicon)
-        for (file in Dictionaries.enabled(this)) {
-            Dictionaries.read(this, file)?.let { Core.lexiconAdd(lexicon, it) }
+        val words = learned.toMap()
+        loader.execute {
+            val fresh = Core.lexiconCreate()
+            for (file in Dictionaries.enabled(this)) {
+                Dictionaries.read(this, file)?.let { Core.lexiconAdd(fresh, it) }
+            }
+            for ((word, times) in words) Core.lexiconLearn(fresh, word, times)
+            val accents = Core.lexiconAccents(fresh)
+            mainExecutor.execute {
+                if (lexicon == 0L) {
+                    Core.lexiconDestroy(fresh)
+                    return@execute
+                }
+                Core.lexiconDestroy(lexicon)
+                lexicon = fresh
+                this.accents = accents
+                keyboard?.accents = accents
+                refreshStrip()
+            }
         }
     }
 
@@ -103,6 +143,7 @@ class HexInputMethod : InputMethodService() {
                     val last = before.lastOrNull()
                     val space = last != null && !last.isWhitespace() && last !in OPENING
                     swiped = words[0]
+                    view.note("words", words.joinToString(", "))
                     connection.commitText((if (space) " " else "") + words[0], 1)
                     view.showSwipe(words)
                 }
@@ -119,6 +160,7 @@ class HexInputMethod : InputMethodService() {
                         connection.commitText(word + text, 1)
                         connection.endBatchEdit()
                         lastCorrection = Correction(typed, word + text)
+                        keyboard?.note("corrected", "$typed -> $word")
                     } else {
                         if (text in SEPARATORS) keyboard?.unknown?.let { learn(it, 1) }
                         connection.commitText(text, 1)
@@ -157,7 +199,61 @@ class HexInputMethod : InputMethodService() {
             connection.commitText("$word ", 1)
             connection.endBatchEdit()
         },
-    ).also { keyboard = it }
+        onSettings = {
+            startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        },
+    ).let { view ->
+        keyboard = view
+        view.accents = accents
+        view.logContext = {
+            if (suggesting) currentInputConnection?.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString() else null
+        }
+        KeyboardFrame(this, view).also { frame = it }
+    }
+
+    /**
+     * Asks the autofill service for suggestions shaped to fit the strip:
+     * as tall as it, from a square up to most of its width.
+     */
+    @TargetApi(Build.VERSION_CODES.R)
+    override fun onCreateInlineSuggestionsRequest(uiExtras: Bundle): InlineSuggestionsRequest? {
+        // Asked before the keyboard view exists, so sized from the strip's dp height.
+        val height = ((KeyboardView.STRIP_DP - 8) * resources.displayMetrics.density).toInt()
+        val styles = UiVersions.newStylesBuilder().addStyle(InlineSuggestionUi.newStyleBuilder().build()).build()
+        val spec = InlinePresentationSpec.Builder(Size(height, height), Size(resources.displayMetrics.widthPixels * 2 / 3, height))
+            .setStyle(styles)
+            .build()
+        return InlineSuggestionsRequest.Builder(listOf(spec))
+            .setMaxSuggestionCount(InlineSuggestionsRequest.SUGGESTION_COUNT_UNLIMITED)
+            .build()
+    }
+
+    /** Shows what the autofill service offers; an empty answer clears it. */
+    @TargetApi(Build.VERSION_CODES.R)
+    override fun onInlineSuggestionsResponse(response: InlineSuggestionsResponse): Boolean {
+        val frame = frame ?: return false
+        val suggestions = response.inlineSuggestions
+        if (suggestions.isEmpty()) {
+            frame.show(emptyList())
+            return true
+        }
+        val views = arrayOfNulls<Pair<View, Boolean>>(suggestions.size)
+        var pending = suggestions.size
+        val size = Size(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        for ((index, suggestion) in suggestions.withIndex()) {
+            suggestion.inflate(this, size, mainExecutor) { view ->
+                if (view != null) views[index] = view to suggestion.info.isPinned
+                pending -= 1
+                if (pending == 0) frame.show(views.filterNotNull())
+            }
+        }
+        return true
+    }
+
+    override fun onFinishInputView(finishingInput: Boolean) {
+        super.onFinishInputView(finishingInput)
+        frame?.show(emptyList())
+    }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         super.onStartInputView(info, restarting)
