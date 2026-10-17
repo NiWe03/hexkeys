@@ -15,7 +15,7 @@
 //! arrangement of keys, hexagonal or not.
 
 use crate::Point;
-use crate::dictionary::{Dictionary, Error, Node};
+use crate::dictionary::{Dictionary, Error};
 use crate::suggest::{Lexicon, next_words};
 use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
@@ -55,6 +55,9 @@ pub struct Tuning {
     pub turn_weight: f32,
     /// How sharp a turn has to be to count, in degrees.
     pub turn_angle: f32,
+    /// How much more often a word follows the previous one than it occurs
+    /// at all counts, as a multiple of that gain in frequency points.
+    pub context_weight: f32,
 }
 
 /// Weights fitted to real swipes: those in FUTO's swipe dataset
@@ -74,6 +77,7 @@ impl Default for Tuning {
             warp: 3,
             turn_weight: 35.0,
             turn_angle: 25.0,
+            context_weight: 1.0,
         }
     }
 }
@@ -118,14 +122,9 @@ impl Index {
     pub fn new(dictionaries: &[Dictionary]) -> Result<Self, Error> {
         let mut index = Index::default();
         for dictionary in dictionaries {
-            collect(dictionary, dictionary.root()?, &mut String::new(), &mut index)?;
+            dictionary.for_each_word(|word, frequency| index.add(word, frequency))?;
         }
         Ok(index)
-    }
-
-    /// Every word with its frequency.
-    pub(crate) fn words(&self) -> impl Iterator<Item = (&str, u8)> {
-        self.entries.iter().map(|entry| (entry.word.as_str(), entry.frequency))
     }
 
     fn add(&mut self, word: &str, frequency: u8) {
@@ -134,23 +133,6 @@ impl Index {
         self.by_ends.entry(ends).or_default().push(self.entries.len());
         self.entries.push(Entry { word: word.to_owned(), keys, frequency });
     }
-}
-
-fn collect(dictionary: &Dictionary, nodes: Vec<Node>, word: &mut String, index: &mut Index) -> Result<(), Error> {
-    for node in nodes {
-        let length = word.len();
-        word.extend(&node.chars);
-        if let Some(frequency) = node.frequency
-            && !node.hidden
-        {
-            index.add(word, frequency);
-        }
-        if let Some(children) = node.children {
-            collect(dictionary, dictionary.array(children)?, word, index)?;
-        }
-        word.truncate(length);
-    }
-    Ok(())
 }
 
 /// The keys a word's path runs through, or None when it has a character no
@@ -340,7 +322,7 @@ pub fn decode_tuned(
         for dictionary in &lexicon.dictionaries {
             for (word, frequency) in next_words(dictionary, previous)? {
                 let unigram = dictionary.find(&word)?.and_then(|node| node.frequency).unwrap_or(0);
-                let gain = frequency.saturating_sub(unigram) as f32;
+                let gain = frequency.saturating_sub(unigram) as f32 * tuning.context_weight;
                 let entry = boost.entry(word).or_insert(0.0);
                 *entry = entry.max(gain);
             }

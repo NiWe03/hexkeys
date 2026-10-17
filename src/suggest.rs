@@ -246,6 +246,11 @@ impl Search<'_> {
 /// one, to be offered when holding its plain letter.
 const ACCENT_SHARE: f64 = 0.01;
 
+/// How much an accented letter has to be used, as a share of all letters,
+/// to be offered at all: the accents of loanwords, such as the é of café
+/// in English, stay out.
+const ACCENT_OF_LETTERS: f64 = 0.0005;
+
 /// The most accented letters one key offers.
 const MAX_ACCENTS: usize = 5;
 
@@ -308,23 +313,31 @@ impl Lexicon {
     /// The accented letters the dictionaries use, by the plain letter they
     /// are typed from, most used first: what holding a letter offers. A
     /// letter's use counts each word it is in by how common the word is.
-    /// Letters used far less than the most used accented letter of any
-    /// kind are left out, so only the languages in use show.
+    /// Letters used far less than the most used accented letter, or rarely
+    /// among all letters, are left out, so only the languages in use show.
     pub fn accents(&self) -> Result<HashMap<char, Vec<char>>, Error> {
         let mut uses: HashMap<char, f64> = HashMap::new();
-        for (word, frequency) in self.swipe_index()?.words() {
-            // Frequencies are logarithmic; 16 steps are roughly a doubling.
-            let weight = 2f64.powf(frequency as f64 / 16.0);
+        let mut letters = 0.0;
+        let mut count = |word: &str, frequency: u8| {
+            // Frequencies are logarithmic; 12 steps for a doubling fits how often
+            // short common words such as French à occur in text.
+            let weight = 2f64.powf(frequency as f64 / 12.0);
             for c in word.chars().flat_map(char::to_lowercase) {
+                if c.is_alphabetic() {
+                    letters += weight;
+                }
                 if c.is_alphabetic() && !c.is_ascii() && plain(c).is_some() {
                     *uses.entry(c).or_insert(0.0) += weight;
                 }
             }
+        };
+        for dictionary in &self.dictionaries {
+            dictionary.for_each_word(&mut count)?;
         }
         let most = uses.values().copied().fold(0.0, f64::max);
         let mut accents: HashMap<char, Vec<(char, f64)>> = HashMap::new();
         for (c, used) in uses {
-            if used >= most * ACCENT_SHARE
+            if used >= most * ACCENT_SHARE && used >= letters * ACCENT_OF_LETTERS
                 && let Some(base) = plain(c)
             {
                 accents.entry(base).or_default().push((c, used));

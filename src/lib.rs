@@ -220,7 +220,10 @@ impl Layout {
                         // The label moves to the middle of what the key now covers.
                         let key = &mut keys[left];
                         key.regions.insert(0, centre);
-                        key.label_at.x = (left_x + key.cells.len() as f32 * cell_width - cell_width / 2.0) / 2.0;
+                        // Punctuation, with its alternative stacked over it, stays on its hexagon.
+                        if alternates(&key.label).is_empty() {
+                            key.label_at.x = (left_x + key.cells.len() as f32 * cell_width - cell_width / 2.0) / 2.0;
+                        }
                     }
                 }
             }
@@ -238,7 +241,9 @@ impl Layout {
                     None => {
                         let key = &mut keys[right];
                         key.regions.push(centre);
-                        key.label_at.x = (right_x - (key.cells.len() as f32 - 0.5) * cell_width + width) / 2.0;
+                        if alternates(&key.label).is_empty() {
+                            key.label_at.x = (right_x - (key.cells.len() as f32 - 0.5) * cell_width + width) / 2.0;
+                        }
                     }
                 }
             }

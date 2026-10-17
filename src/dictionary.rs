@@ -212,6 +212,28 @@ impl Dictionary {
     }
 
     /// The node where `word` ends exactly, matching case and accents.
+    /// Calls `visit` with every word that may be offered and its frequency.
+    pub fn for_each_word(&self, mut visit: impl FnMut(&str, u8)) -> Result<(), Error> {
+        self.walk(self.root()?, &mut String::new(), &mut visit)
+    }
+
+    fn walk(&self, nodes: Vec<Node>, word: &mut String, visit: &mut impl FnMut(&str, u8)) -> Result<(), Error> {
+        for node in nodes {
+            let length = word.len();
+            word.extend(&node.chars);
+            if let Some(frequency) = node.frequency
+                && !node.hidden
+            {
+                visit(word, frequency);
+            }
+            if let Some(children) = node.children {
+                self.walk(self.array(children)?, word, visit)?;
+            }
+            word.truncate(length);
+        }
+        Ok(())
+    }
+
     pub fn find(&self, word: &str) -> Result<Option<Node>, Error> {
         let word: Vec<char> = word.chars().collect();
         let mut nodes = self.root()?;

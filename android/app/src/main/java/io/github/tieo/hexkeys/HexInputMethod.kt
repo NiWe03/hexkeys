@@ -41,6 +41,9 @@ class HexInputMethod : InputMethodService() {
     /** What the delete swipe under way has deleted, last piece last, to put back when it slides back. */
     private val deleted = ArrayDeque<String>()
 
+    /** The word swiped right before the delete swipe under way, which it takes first, whole. */
+    private var swipedBeforeDelete: String? = null
+
     /** The word a swipe just put in, while its alternatives show in the strip. */
     private var swiped: String? = null
 
@@ -85,8 +88,19 @@ class HexInputMethod : InputMethodService() {
     private fun loadDictionaries() {
         val words = learned.toMap()
         loader.execute {
+            // On the first start the phone's languages are downloaded and switched on.
+            // Offline, the ones missing are tried again on the next start.
+            var files = Dictionaries.enabled(this)
+            if (!Dictionaries.chosen(this)) {
+                val languages = Dictionaries.deviceLanguages(this)
+                files = languages.filter { file ->
+                    Dictionaries.isAvailable(this, file) ||
+                        runCatching { Dictionaries.download(this, file) {} }.isSuccess
+                }.toSet()
+                if (files == languages) Dictionaries.setEnabled(this, files)
+            }
             val fresh = Core.lexiconCreate()
-            for (file in Dictionaries.enabled(this)) {
+            for (file in files) {
                 Dictionaries.read(this, file)?.let { Core.lexiconAdd(fresh, it) }
             }
             for ((word, times) in words) Core.lexiconLearn(fresh, word, times)
@@ -116,14 +130,23 @@ class HexInputMethod : InputMethodService() {
             when (kind) {
                 "delete" -> {
                     val (pieces, words, started) = text.split(" ").map { it.toInt() }
-                    if (started == 1) deleted.clear()
                     var before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                    if (started == 1) {
+                        deleted.clear()
+                        swipedBeforeDelete = justSwiped?.takeIf { before.endsWith(it) }
+                    }
+                    val word = swipedBeforeDelete
                     connection.beginBatchEdit()
-                    // A selection goes first, as one piece, as backspace takes it.
+                    // A selection goes first, as one piece, as backspace takes it; so
+                    // does a word just swiped.
                     val selected = connection.getSelectedText(0)?.toString().orEmpty()
                     if (deleted.isEmpty() && pieces > 0 && selected.isNotEmpty()) {
                         connection.commitText("", 1)
                         deleted.addLast(selected)
+                    } else if (deleted.isEmpty() && pieces > 0 && word != null && before.endsWith(word)) {
+                        connection.deleteSurroundingText(word.length, 0)
+                        before = before.dropLast(word.length)
+                        deleted.addLast(word)
                     }
                     while (deleted.size < pieces && before.isNotEmpty()) {
                         // A word goes with the spaces after it, as ctrl and backspace take it.
@@ -169,7 +192,11 @@ class HexInputMethod : InputMethodService() {
                         keyboard?.note("corrected", "$typed -> $word")
                     } else {
                         if (text in SEPARATORS) keyboard?.unknown?.let { learn(it, 1) }
-                        connection.commitText(text, 1)
+                        // A letter right after a swiped word starts the next word, as on
+                        // other keyboards; punctuation stays attached to the word.
+                        val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                        val space = justSwiped != null && before.endsWith(justSwiped) && text.firstOrNull()?.isLetterOrDigit() == true
+                        connection.commitText(if (space) " $text" else text, 1)
                     }
                 }
                 "backspace" -> {

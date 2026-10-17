@@ -38,6 +38,28 @@ object Dictionaries {
     fun enabled(context: Context): Set<String> =
         preferences(context).getStringSet(ENABLED, null) ?: setOf(BUILT_IN)
 
+    /**
+     * The languages to start with, as every keyboard does: English, which
+     * is built in, and each of the phone's own languages the catalog has,
+     * by its country variant where there is one.
+     */
+    fun deviceLanguages(context: Context): Set<String> {
+        val catalog = catalog(context)
+        val locales = android.content.res.Resources.getSystem().configuration.locales
+        val chosen = mutableSetOf(BUILT_IN)
+        for (i in 0 until locales.size()) {
+            val locale = locales[i]
+            val exact = "${locale.language}_${locale.country}".lowercase()
+            val match = catalog.firstOrNull { it.locale.lowercase() == exact }
+                ?: catalog.firstOrNull { it.locale.lowercase() == locale.language.lowercase() }
+            if (match != null) chosen += match.file
+        }
+        return chosen
+    }
+
+    /** Whether languages have been chosen yet, or the phone's are still to be taken. */
+    fun chosen(context: Context) = preferences(context).contains(ENABLED)
+
     fun setEnabled(context: Context, files: Set<String>) {
         preferences(context).edit().putStringSet(ENABLED, files).apply()
     }

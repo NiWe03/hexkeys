@@ -33,6 +33,7 @@ fn main() {
             "warp" => tuning.warp = value as usize,
             "turn_weight" => tuning.turn_weight = value,
             "turn_angle" => tuning.turn_angle = value,
+            "context_weight" => tuning.context_weight = value,
             _ => panic!("no weight {name}"),
         }
     }
