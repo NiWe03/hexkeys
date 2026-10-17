@@ -621,6 +621,7 @@ class HexInputMethod : InputMethodService() {
         keyboard?.startInput()
         keyboard?.theme = Theme.current(this)
         keyboard?.passwordsAvailable = passwordManager() != null
+        keyboard?.passwordIcon = passwordManagerPackage()?.let { runCatching { packageManager.getApplicationIcon(it) }.getOrNull() }
         keyboard?.listening = voice.listening
         keyboard?.recognising = voice.pending
         keyboard?.heldText = held
@@ -718,11 +719,14 @@ class HexInputMethod : InputMethodService() {
      * keyboard cannot ask it to fill a field, only the app being typed into
      * can; opening it lets the user look up and copy what the field needs.
      */
-    private fun passwordManager(): Intent? {
+    private fun passwordManager(): Intent? =
+        passwordManagerPackage()?.let { packageManager.getLaunchIntentForPackage(it) }
+
+    /** The app of the autofill service chosen in the system's settings, which is the password manager. */
+    private fun passwordManagerPackage(): String? {
         val service = android.provider.Settings.Secure.getString(contentResolver, "autofill_service") ?: return null
         val component = android.content.ComponentName.unflattenFromString(service) ?: return null
-        if (component.packageName == packageName) return null
-        return packageManager.getLaunchIntentForPackage(component.packageName)
+        return component.packageName.takeIf { it != packageName }
     }
 
     private val voice by lazy { Voice(this) }

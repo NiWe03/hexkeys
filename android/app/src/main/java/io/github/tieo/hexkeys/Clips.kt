@@ -24,14 +24,22 @@ class Clips(private val context: Context, private val changed: () -> Unit = {}) 
     var copiedAt = 0L
         private set
 
-    private val listener = ClipboardManager.OnPrimaryClipChangedListener { take() }
+    private val listener = ClipboardManager.OnPrimaryClipChangedListener { take(fresh = true) }
 
-    fun listen() = clipboard.addPrimaryClipChangedListener(listener)
+    /**
+     * Follows the clipboard from now on, and keeps what is on it already: the
+     * system holds only the latest clip, and tells only a running keyboard
+     * when it changes.
+     */
+    fun listen() {
+        clipboard.addPrimaryClipChangedListener(listener)
+        take(fresh = false)
+    }
 
     fun stop() = clipboard.removePrimaryClipChangedListener(listener)
 
     /** Keeps what is on the clipboard now, unless it is sensitive or empty. */
-    private fun take() {
+    private fun take(fresh: Boolean = true) {
         val clip = clipboard.primaryClip ?: return
         if (clip.itemCount == 0) return
         val sensitive = Build.VERSION.SDK_INT >= 33 &&
@@ -40,9 +48,11 @@ class Clips(private val context: Context, private val changed: () -> Unit = {}) 
         val text = clip.getItemAt(0).coerceToText(context)?.toString().orEmpty()
         if (text.isBlank()) return
         val now = System.currentTimeMillis()
-        val pinned = all().any { it.text == text && it.pinned }
-        save(listOf(Clip(text, now, pinned)) + all().filter { it.text != text })
-        copiedAt = now
+        val known = all().firstOrNull { it.text == text }
+        // Found on the clipboard when starting, a text kept already stays where it was.
+        if (!fresh && known != null) return
+        save(listOf(Clip(text, now, known?.pinned == true)) + all().filter { it.text != text })
+        if (fresh) copiedAt = now
         changed()
     }
 

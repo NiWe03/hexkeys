@@ -161,8 +161,15 @@ class KeyboardView(
             invalidate()
         }
 
-    /** Whether a password manager is set up, which the key button at the strip's right end opens. */
+    /** Whether a password manager is set up, which the button at the strip's right end opens. */
     var passwordsAvailable = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** The password manager's own app icon, for its button; the key icon without one. */
+    var passwordIcon: android.graphics.drawable.Drawable? = null
         set(value) {
             field = value
             invalidate()
@@ -487,7 +494,15 @@ class KeyboardView(
         drawIcon(canvas, R.drawable.icon_settings, stripSide / 2f, middle, iconSize, theme.label)
         drawIcon(canvas, R.drawable.icon_content_paste, stripSide * 1.5f, middle, iconSize, theme.label)
         if (passwordsAvailable && !chipsShown) {
-            drawIcon(canvas, R.drawable.icon_key, width - stripSide / 2f, middle, iconSize, theme.label)
+            val icon = passwordIcon
+            if (icon != null) {
+                val half = (iconSize * 0.6f).toInt()
+                val x = (width - stripSide / 2f).toInt()
+                icon.setBounds(x - half, middle.toInt() - half, x + half, middle.toInt() + half)
+                icon.draw(canvas)
+            } else {
+                drawIcon(canvas, R.drawable.icon_key, width - stripSide / 2f, middle, iconSize, theme.label)
+            }
         }
         val micX = width - stripSide * 1.5f
         if (listening) {
