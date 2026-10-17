@@ -588,11 +588,26 @@ class HexInputMethod : InputMethodService() {
             .build()
     }
 
-    /** Shows what the autofill service offers; an empty answer clears it. */
+    /** Counts the autofill service's answers, so only the newest one is shown. */
+    private var inlineAnswer = 0
+
+    /**
+     * Shows what the autofill service offers; an empty answer clears it. The
+     * service may answer again before an answer's chips are drawn, and only
+     * the newest answer's chips are shown.
+     */
     @TargetApi(Build.VERSION_CODES.R)
     override fun onInlineSuggestionsResponse(response: InlineSuggestionsResponse): Boolean {
         val frame = frame ?: return false
         val suggestions = response.inlineSuggestions
+        val answer = ++inlineAnswer
+        if (GestureLog.enabled(this)) {
+            GestureLog.write(this, org.json.JSONObject()
+                .put("time", System.currentTimeMillis())
+                .put("inline", suggestions.size)
+                .put("pinned", suggestions.count { it.info.isPinned })
+                .put("sources", org.json.JSONArray(suggestions.map { it.info.source })))
+        }
         if (suggestions.isEmpty()) {
             frame.show(emptyList())
             return true
@@ -604,7 +619,7 @@ class HexInputMethod : InputMethodService() {
             suggestion.inflate(this, size, mainExecutor) { view ->
                 if (view != null) views[index] = view to suggestion.info.isPinned
                 pending -= 1
-                if (pending == 0) frame.show(views.filterNotNull())
+                if (pending == 0 && answer == inlineAnswer) frame.show(views.filterNotNull())
             }
         }
         return true
@@ -616,6 +631,8 @@ class HexInputMethod : InputMethodService() {
         voice.stop()
         // A language picked by hand holds for the field it was picked in.
         if (pinned != null) pinLanguage(null)
+        // Chips of an answer still being drawn belong to the field that closed.
+        inlineAnswer += 1
         frame?.show(emptyList())
     }
 
