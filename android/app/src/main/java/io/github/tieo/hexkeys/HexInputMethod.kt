@@ -612,14 +612,45 @@ class HexInputMethod : InputMethodService() {
             frame.show(emptyList())
             return true
         }
-        val views = arrayOfNulls<Pair<View, Boolean>>(suggestions.size)
+        // Drawn at the size the service likes first; one too wide for its place
+        // is drawn again at exactly the room it has, which the service fills by
+        // shortening its text, instead of being cut off at the edge.
+        val views = arrayOfNulls<View>(suggestions.size)
+        val marks = suggestions.map { it.info.isPinned }
         var pending = suggestions.size
-        val size = Size(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        val wrap = Size(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        fun done() {
+            pending -= 1
+            if (pending == 0 && answer == inlineAnswer) {
+                frame.show(views.withIndex().mapNotNull { (i, view) -> view?.let { it to marks[i] } })
+                if (GestureLog.enabled(this)) {
+                    GestureLog.write(this, org.json.JSONObject()
+                        .put("time", System.currentTimeMillis())
+                        .put("chips", org.json.JSONArray(views.map { it?.layoutParams?.width ?: -1 }))
+                        .put("pinnedRoom", frame.pinnedRoom)
+                        .put("chipRoom", frame.chipRoom))
+                }
+            }
+        }
         for ((index, suggestion) in suggestions.withIndex()) {
-            suggestion.inflate(this, size, mainExecutor) { view ->
-                if (view != null) views[index] = view to suggestion.info.isPinned
-                pending -= 1
-                if (pending == 0 && answer == inlineAnswer) frame.show(views.filterNotNull())
+            suggestion.inflate(this, wrap, mainExecutor) { view ->
+                val room = if (frame.takesSlot(marks, index)) frame.pinnedRoom else frame.chipRoom
+                val wide = view?.let {
+                    val given = it.layoutParams?.width ?: ViewGroup.LayoutParams.WRAP_CONTENT
+                    if (given > 0) given else {
+                        it.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+                        it.measuredWidth
+                    }
+                } ?: 0
+                if (view == null || wide <= room) {
+                    views[index] = view
+                    done()
+                } else {
+                    suggestion.inflate(this, Size(room, ViewGroup.LayoutParams.WRAP_CONTENT), mainExecutor) { fitted ->
+                        views[index] = fitted ?: view
+                        done()
+                    }
+                }
             }
         }
         return true

@@ -161,13 +161,23 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
      * is taken for its button: services add theirs last (Bitwarden does,
      * unpinned), so it is the one that has to stay in reach.
      */
+    /** How wide the right end slot for the service's button can be. */
+    val pinnedRoom get() = keyboard.measuredWidth / 3
+
+    /** How wide one suggestion left of that slot can be: the whole room, so none is cut. */
+    val chipRoom get() = keyboard.measuredWidth - 2 * keyboard.stripSide - pinnedRoom - gap
+
+    /** Whether, among suggestions with these pinned marks, the one at `index` takes the right end slot. */
+    fun takesSlot(pinnedMarks: List<Boolean>, index: Int) =
+        pinnedMarks[index] || (pinnedMarks.none { it } && index == pinnedMarks.lastIndex)
+
     fun show(suggestions: List<Pair<View, Boolean>>) {
         chips.removeAllViews()
         pinned.removeAllViews()
-        val anyPinned = suggestions.any { it.second }
+        val marks = suggestions.map { it.second }
         for ((index, entry) in suggestions.withIndex()) {
-            val (view, servicePinned) = entry
-            val isPinned = servicePinned || (!anyPinned && index == suggestions.lastIndex)
+            val view = entry.first
+            val isPinned = takesSlot(marks, index)
             // The view comes sized to what the service rendered; keep that.
             val given = view.layoutParams
             val params = LinearLayout.LayoutParams(
