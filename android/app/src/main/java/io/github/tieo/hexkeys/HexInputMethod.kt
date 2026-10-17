@@ -617,7 +617,13 @@ class HexInputMethod : InputMethodService() {
         // A language picked by hand holds for the field it was picked in.
         if (pinned != null) pinLanguage(null)
         frame?.show(emptyList())
+    }
+
+    /** Closed, the keyboard opens next time on its keys, whichever field it is. */
+    override fun onWindowHidden() {
+        super.onWindowHidden()
         closePanels()
+        shownField = null
     }
 
     /** Back to the keys: the emoji, their search and the clipboard closed. */
@@ -640,9 +646,15 @@ class HexInputMethod : InputMethodService() {
         suggesting = !password && !noSuggestions
         swiped = null
         // Device colours follow the wallpaper and dark mode, which may have changed.
-        keyboard?.startInput()
-        // The keyboard opens on its keys however it was closed.
-        if (!restarting) closePanels()
+        // Another field opens on the letters, with the keys rather than a panel. The
+        // same field started over keeps everything: Paseo starts its field over when
+        // it is emptied, in the middle of a delete slide.
+        val field = fieldOf(info)
+        if (field != shownField) {
+            keyboard?.startInput()
+            closePanels()
+        }
+        shownField = field
         keyboard?.theme = Theme.current(this)
         keyboard?.passwordsAvailable = passwordManager() != null
         keyboard?.passwordIcon = passwordManagerPackage()?.let { runCatching { packageManager.getApplicationIcon(it) }.getOrNull() }
@@ -800,6 +812,9 @@ class HexInputMethod : InputMethodService() {
         clips.spend()
         keyboard?.freshClip = ""
     }
+
+    /** The field the keyboard was last shown for, as [fieldOf] names it. */
+    private var shownField: String? = null
 
     /** The field a dictation was started in, as [fieldOf] names it. */
     private var dictationField: String? = null

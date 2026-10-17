@@ -1518,10 +1518,10 @@ impl Keyboard {
         }
     }
 
-    /// Back to the letters with shift off and no finger down, for a new field.
+    /// Back to the letters with shift off, for a new field. A finger still
+    /// down carries on with what it is doing.
     pub fn reset(&mut self) {
         self.show(0);
-        self.touch = None;
     }
 
     fn show(&mut self, layer: usize) -> Action {
