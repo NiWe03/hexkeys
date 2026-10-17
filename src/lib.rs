@@ -12,6 +12,8 @@
 //! by the stretch, which keeps the nearest-centre regions equal to the
 //! stretched hexagons.
 
+pub mod dictionary;
+
 /// One key as authored in a layout: what it is and how many cells it spans.
 #[derive(Clone, Debug, PartialEq)]
 pub struct KeySpec {
