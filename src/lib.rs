@@ -622,6 +622,10 @@ const MORE_SYMBOLS: &str = "§¢£¥₹©®™✓•¶∆π√÷×±≈≠≤≥
 /// The key that turns to the second symbol page, and on it back to the first.
 const MORE: &str = "=\\<";
 
+/// Symbols of the first page that sit on a letter's cell: the brackets on
+/// u and i, a pair on keys the fingers know.
+const PLACED: &[(&str, &str)] = &[("u", "("), ("i", ")")];
+
 /// A symbol page shaped exactly like `letters`: the number row, space,
 /// enter, backspace and the punctuation keys stay where they are, the key
 /// to the symbols turns into the key back to the letters in the same
@@ -637,7 +641,11 @@ pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
         .filter(|label| !is_letter(label))
         .collect();
     let pool = if page == 0 { SYMBOLS } else { MORE_SYMBOLS };
-    let mut symbols = pool.chars().map(String::from).filter(|symbol| !on_letters.contains(symbol));
+    let placed: &[(&str, &str)] = if page == 0 { PLACED } else { &[] };
+    let mut symbols = pool
+        .chars()
+        .map(String::from)
+        .filter(|symbol| !on_letters.contains(symbol) && !placed.iter().any(|(_, s)| s == symbol));
     let has_shift = spec.rows.iter().any(|row| row.left_edge.as_deref() == Some("⇧"));
     let turn = if page == 0 { MORE } else { SYMBOLS_KEY };
     let last_letter = spec
@@ -653,6 +661,8 @@ pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
             } else if is_letter(&key.label) {
                 key.label = if !has_shift && Some((r, k)) == last_letter {
                     turn.into()
+                } else if let Some((_, symbol)) = placed.iter().find(|(letter, _)| *letter == key.label) {
+                    (*symbol).into()
                 } else {
                     symbols.next().unwrap_or_default()
                 };
@@ -1228,7 +1238,7 @@ impl Keyboard {
                 Action::Commit(upper(&label))
             }
             // On punctuation the capital gesture types the key's first alternative.
-            _ if self.is_capital(gesture) && !alternates(&label).is_empty() => Action::Commit(alternates(&label)[0].to_owned()),
+            _ if self.is_capital(gesture) && flicked(&label).is_some() => Action::Commit(flicked(&label).unwrap_or_default().to_owned()),
             Gesture::Path if self.is_swipe(&touch) => {
                 self.swiped = Some(Swiped { path: touch.path, capital: self.shift != Shift::Off });
                 self.letter_typed();
@@ -1425,7 +1435,7 @@ impl Keyboard {
             // What a flick up types already is not offered again.
             None => alternates(label)
                 .iter()
-                .skip(if self.gestures.capital == Capital::FlickUp { 1 } else { 0 })
+                .skip(if self.gestures.capital == Capital::FlickUp && flicked(label).is_some() { 1 } else { 0 })
                 .map(|c| (*c).to_owned())
                 .collect(),
         };
@@ -1497,7 +1507,7 @@ impl Keyboard {
         if self.gestures.capital != Capital::FlickUp {
             return "";
         }
-        alternates(&self.layout.keys[index].label).first().copied().unwrap_or("")
+        flicked(&self.layout.keys[index].label).unwrap_or("")
     }
 
     /// The QWERTZ row of the key's letter, for themes; None for other keys.
@@ -1545,11 +1555,24 @@ pub fn qwertz_row(label: &str) -> Option<usize> {
 /// Long-press alternatives of punctuation, left to right. Letters offer
 /// the accented letters of the languages in use instead, see
 /// [`Keyboard::accents`].
+/// What flicking up on a key that is no letter types: its first alternate,
+/// except on the digits, whose fractions are only offered when held and so
+/// are not shown on them.
+fn flicked(label: &str) -> Option<&'static str> {
+    if label.chars().all(|c| c.is_ascii_digit()) { None } else { alternates(label).first().copied() }
+}
+
 fn alternates(label: &str) -> &'static [&'static str] {
     match label {
         "." => &[",", ":", "-", ";"],
         "?" => &["!", "'", "\"", "¿", "¡"],
         "," => &[":", "-", ";", "'", "\""],
+        // The digits that start fractions: the fractions they start, most used
+        // first. The number row's other digits keep it for the cursor and
+        // deleting.
+        "1" => &["½", "⅓", "¼", "⅕", "⅙", "⅛"],
+        "2" => &["⅔", "⅖"],
+        "3" => &["¾", "⅗", "⅜"],
         _ => &[],
     }
 }
@@ -1794,6 +1817,10 @@ mod tests {
         let at = keyboard_index(&keyboard, "@");
         assert_eq!(keyboard.press(at), Action::Commit("@".into()));
         assert!(keyboard.layout.keys.iter().all(|key| !is_letter(&key.label)), "no letters left");
+        let u = keyboard.layers[0].find("u").cells[0];
+        assert_eq!(keyboard.layout.key_at(u).unwrap().label, "(");
+        let i = keyboard.layers[0].find("i").cells[0];
+        assert_eq!(keyboard.layout.key_at(i).unwrap().label, ")");
         let more = keyboard_index(&keyboard, "=\\<");
         keyboard.press(more);
         let pi = keyboard_index(&keyboard, "π");
