@@ -111,6 +111,18 @@ class KeyboardView(
             invalidate()
         }
 
+    /** The language on the space bar, and whether it was picked rather than guessed. */
+    var spaceLabel = ""
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var spacePinned = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     /** Enter's icon, and the small one for what holding it does, from the field's action. */
     var enterIcon = R.drawable.icon_keyboard_return
         set(value) {
@@ -544,8 +556,16 @@ class KeyboardView(
 
     /** Single characters large, words such as "space" smaller so they fit their key. */
     private fun drawLabel(canvas: Canvas, label: String, position: FloatArray, cellWidth: Float) {
-        // Space is the long key; it needs no name.
-        if (label == "space") return
+        // Space carries the language being written, faint while it is a guess.
+        if (label == "space") {
+            if (spaceLabel.isEmpty()) return
+            val alpha = labelPaint.alpha
+            labelPaint.textSize = cellWidth * 0.2f
+            labelPaint.alpha = if (spacePinned) alpha else alpha * 2 / 5
+            canvas.drawText(spaceLabel, position[0], position[1] - (labelPaint.descent() + labelPaint.ascent()) / 2, labelPaint)
+            labelPaint.alpha = alpha
+            return
+        }
         (if (label == "⏎") enterIcon else KEY_ICONS[label])?.let { id ->
             drawIcon(canvas, id, position[0], position[1], cellWidth * 0.36f, labelPaint.color)
             return

@@ -115,9 +115,7 @@ class HexInputMethod : InputMethodService() {
                 if (files == languages) Dictionaries.setEnabled(this, files)
             }
             val fresh = Core.lexiconCreate()
-            for (file in files) {
-                Dictionaries.read(this, file)?.let { Core.lexiconAdd(fresh, it) }
-            }
+            val added = files.filter { file -> Dictionaries.read(this, file)?.let { Core.lexiconAdd(fresh, it) } == true }
             for ((word, times) in words) Core.lexiconLearn(fresh, word, times)
             val accents = Core.lexiconAccents(fresh)
             Core.words.execute {
@@ -128,6 +126,8 @@ class HexInputMethod : InputMethodService() {
                 Core.lexiconDestroy(lexicon)
                 lexicon = fresh
                 mainExecutor.execute {
+                    lexiconFiles = added
+                    pinLanguage(null)
                     this.accents = accents
                     keyboard?.accents = accents
                     refreshStrip()
@@ -331,6 +331,14 @@ class HexInputMethod : InputMethodService() {
             // app that sends on the enter key does not; holding it does the field's action.
             "enter" -> if (multiLine) connection.commit("\n") else performAction()
             "enter_action" -> performAction()
+            "language" -> {
+                // Guessing, then each language in turn, then guessing again.
+                val count = lexiconFiles.size
+                if (count == 0) return
+                val order = listOf<Int?>(null) + (0 until count)
+                val at = order.indexOf(pinned)
+                pinLanguage(order[(at + text.toInt() + order.size) % order.size])
+            }
             "cursor" -> {
                 val (dx, dy) = text.split(" ").map { it.toInt() }
                 connection.moveCursor(dx, dy)
@@ -419,6 +427,8 @@ class HexInputMethod : InputMethodService() {
         super.onFinishInputView(finishingInput)
         // Hidden, the keyboard stops listening; what was said is still put in.
         voice.stop()
+        // A language picked by hand holds for the field it was picked in.
+        if (pinned != null) pinLanguage(null)
         frame?.show(emptyList())
         frame?.showEmoji(false)
     }
@@ -580,11 +590,11 @@ class HexInputMethod : InputMethodService() {
 
     /** The languages of the enabled dictionaries as ISO codes, for recognising speech. */
     private fun voiceLanguages(): String {
+        // The language being written first: models told one language take it.
+        val current = language?.let { lexiconFiles.getOrNull(it) }?.let(::languageCode)
         val enabled = Dictionaries.enabled(this)
-        return Dictionaries.catalog(this).filter { it.file in enabled }
-            .map { it.locale.substringBefore('_').lowercase() }
-            .distinct()
-            .joinToString(",")
+        val all = Dictionaries.catalog(this).filter { it.file in enabled }.map { languageCode(it.file) }
+        return (listOfNotNull(current) + all).distinct().joinToString(",")
     }
 
     /** Counts a word no dictionary has as kept, when learning is switched on. */
@@ -598,6 +608,37 @@ class HexInputMethod : InputMethodService() {
             }
         }
     }
+
+    /** The dictionaries in the lexicon, in its order. */
+    private var lexiconFiles = emptyList<String>()
+
+    /** The dictionary the language is taken from, as the last strip had it, and whether the user picked it. */
+    private var language: Int? = null
+    private var pinned: Int? = null
+
+    /**
+     * Picks a language for this field, or goes back to guessing it from the
+     * words written with null.
+     */
+    private fun pinLanguage(index: Int?) {
+        pinned = index
+        Core.words.execute { if (lexicon != 0L) Core.lexiconPin(lexicon, index ?: -1) }
+        showLanguage(index ?: language)
+        refreshStrip()
+    }
+
+    /** Shows the language on the space bar, dim while it is only a guess. */
+    private fun showLanguage(index: Int?) {
+        language = index
+        val file = index?.let { lexiconFiles.getOrNull(it) }
+        val name = file?.let { f -> Dictionaries.catalog(this).firstOrNull { it.file == f }?.name } ?: if (file == Dictionaries.BUILT_IN) "English" else null
+        keyboard?.spaceLabel = name?.substringBefore(" (").orEmpty()
+        keyboard?.spacePinned = pinned != null
+    }
+
+    /** The ISO code of a dictionary's language. */
+    private fun languageCode(file: String) =
+        (Dictionaries.catalog(this).firstOrNull { it.file == file }?.locale ?: "en").substringBefore('_').lowercase()
 
     /** Counts strips asked for, so only the newest one is shown. */
     @Volatile
@@ -642,7 +683,10 @@ class HexInputMethod : InputMethodService() {
             val took = SystemClock.uptimeMillis() - started
             mainExecutor.execute {
                 view.slow("suggest (words thread)", took)
-                if (request == stripRequest) view.showStrip(before, strip)
+                if (request == stripRequest) {
+                    view.showStrip(before, strip)
+                    showLanguage(strip.getOrNull(7)?.toIntOrNull()?.takeIf { it >= 0 })
+                }
             }
         }
     }

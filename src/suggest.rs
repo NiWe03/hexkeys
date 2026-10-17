@@ -279,6 +279,10 @@ pub struct Lexicon {
     /// Frequency points each dictionary's words gain from the language of
     /// the text being written, by [`Lexicon::set_context`].
     boosts: Vec<f32>,
+    /// The dictionary whose language the text seems to be in.
+    guess: Option<usize>,
+    /// The dictionary the user picked for the language, over the guess.
+    pub pinned: Option<usize>,
 }
 
 /// The most frequency points the language of the last words written gives
@@ -316,8 +320,22 @@ impl Lexicon {
                 counts[only] += 1.0;
             }
         }
+        if let Some(pinned) = self.pinned.filter(|&d| d < self.dictionaries.len()) {
+            self.boosts = (0..self.dictionaries.len()).map(|d| if d == pinned { LANGUAGE_BOOST } else { 0.0 }).collect();
+            self.guess = Some(pinned);
+            return;
+        }
         let total: f32 = counts.iter().sum();
         self.boosts = counts.iter().map(|count| if total > 0.0 { LANGUAGE_BOOST * count / total } else { 0.0 }).collect();
+        // A new guess needs words for it; without any the last one stands.
+        if total > 0.0 {
+            self.guess = (0..counts.len()).max_by(|&a, &b| counts[a].total_cmp(&counts[b]));
+        }
+    }
+
+    /// The dictionary the language is taken from: picked, or else guessed.
+    pub fn language(&self) -> Option<usize> {
+        self.pinned.or(self.guess)
     }
 
     /// What the context gives a word of dictionary `index`.
@@ -726,6 +744,10 @@ mod tests {
         assert_eq!(words(&lexicon, "im", None)[0], "im");
         lexicon.set_context("and also ");
         assert_eq!(words(&lexicon, "im", None)[0], "I'm");
+        assert_eq!(lexicon.language(), Some(0));
+        lexicon.pinned = Some(1);
+        lexicon.set_context("and also ");
+        assert_eq!((words(&lexicon, "im", None)[0].as_str(), lexicon.language()), ("im", Some(1)), "a picked language wins");
     }
 
     #[test]

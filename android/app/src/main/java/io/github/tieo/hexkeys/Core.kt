@@ -102,6 +102,9 @@ object Core {
     /** Drops every learned word. */
     external fun lexiconForget(lexicon: Long)
 
+    /** Picks the dictionary, by the order they were added, whose language the text is in; -1 guesses again. */
+    external fun lexiconPin(lexicon: Long, index: Int)
+
     /**
      * The suggestion strip for the text before the cursor: left, middle and
      * right word (empty when unused), how many code points a choice replaces,

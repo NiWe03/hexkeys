@@ -665,6 +665,9 @@ pub enum Action {
     Enter,
     /// Enter held: the field's own action, such as send or search.
     EnterAction,
+    /// A sideways flick on space: the next language, or the previous one
+    /// when `forward` is false.
+    Language { forward: bool },
     /// Space held and the finger moved: the cursor moves `dx` characters
     /// right (left when negative) and `dy` lines down.
     Cursor { dx: i32, dy: i32 },
@@ -1195,6 +1198,10 @@ impl Keyboard {
                 Action::Delete { pieces, words: false, started: true }
             }
             Gesture::Tap => self.press(touch.key),
+            // A flick sideways on space steps through the languages.
+            Gesture::Aborted if label == "space" && (touch.at.x - touch.start.x).abs() > (touch.at.y - touch.start.y).abs() => {
+                Action::Language { forward: touch.at.x > touch.start.x }
+            }
             // A flick up on enter, towards the action drawn above its arrow, does the field's action.
             Gesture::Up if label == "⏎" => Action::EnterAction,
             _ if is_letter(&label) && self.is_capital(gesture) => {
@@ -1353,7 +1360,9 @@ impl Keyboard {
         // A small honeycomb above the key: the most used straight above it, the
         // next to its right, then left; more go into an interlocking row above.
         // It is pushed inwards where it would leave the sides.
-        let places = popup_places(choices.len());
+        // Towards the middle of the keyboard: mirrored on its right half.
+        let mirror = if center.x > layout.width / 2.0 { -1.0 } else { 1.0 };
+        let places: Vec<(f32, usize)> = popup_places(choices.len()).into_iter().map(|(o, row)| (o * mirror, row)).collect();
         let (lowest, highest) = places.iter().fold((0f32, 0f32), |(lo, hi), &(o, _)| (lo.min(o), hi.max(o)));
         let shift = (w / 2.0 - (center.x + lowest * w)).max(0.0) - (center.x + highest * w - (layout.width - w / 2.0)).max(0.0);
         // Overlapping the key's top point a little, as the honeycomb's rows overlap.
@@ -1893,7 +1902,7 @@ mod tests {
         assert_eq!(popup.choices, ["ä", "à"]);
         assert_eq!(popup.selected, None);
         assert!((popup.cells[0].x - near(&keyboard, "a", 0.0, 0.0).x).abs() < 1.0, "the most used accent sits above the key");
-        assert!(popup.cells[1].x > popup.cells[0].x, "the next one to its right");
+        assert!(popup.cells[1].x > popup.cells[0].x, "the next one towards the middle, to its right");
         // A finger never holds perfectly still; a little drift keeps the capital.
         keyboard.touch_move(near(&keyboard, "a", 0.1, 0.05), 1250);
         assert_eq!(keyboard.touch_up(near(&keyboard, "a", 0.1, 0.05), 1300), Action::Redraw);
@@ -1935,6 +1944,14 @@ mod tests {
         assert_eq!(keyboard.touch_move(at(-0.35), 550), Action::Cursor { dx: -3, dy: 0 });
         assert_eq!(keyboard.touch_up(at(-0.35), 600), Action::Redraw, "lifting types no space");
         assert!(!keyboard.moving_cursor());
+    }
+
+    #[test]
+    fn a_sideways_flick_on_space_steps_through_languages() {
+        let mut keyboard = Keyboard::new(space_bottom(), 1008.0, 1.0, 400);
+        assert_eq!(gesture(&mut keyboard, "space", &[(0.6, 0.0)]), Action::Language { forward: true });
+        assert_eq!(gesture(&mut keyboard, "space", &[(-0.6, 0.05)]), Action::Language { forward: false });
+        assert_eq!(gesture(&mut keyboard, "space", &[]), Action::Commit(" ".into()));
     }
 
     #[test]

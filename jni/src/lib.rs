@@ -213,6 +213,7 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Enter => ("enter", String::new()),
         Action::EnterAction => ("enter_action", String::new()),
         Action::Cursor { dx, dy } => ("cursor", format!("{dx} {dy}")),
+        Action::Language { forward } => ("language", if forward { "1" } else { "-1" }.to_owned()),
         Action::Redraw => ("redraw", String::new()),
         Action::Nothing => ("nothing", String::new()),
         Action::Swipe => ("swipe", String::new()),
@@ -315,6 +316,13 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_shiftState(_env: JNIEnv,
     keyboard(handle).shift_state() as jint
 }
 
+/// Picks the dictionary whose language the text is in, over the guess;
+/// -1 goes back to guessing.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconPin(_env: JNIEnv, _class: JClass, handle: jlong, index: jint) {
+    lexicon(handle).pinned = usize::try_from(index).ok();
+}
+
 /// Width of one cell, which labels are sized from.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_cellWidth(
@@ -389,7 +397,8 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconForget(_env: JNIE
 /// The suggestion strip for the text before the cursor, as the left,
 /// middle and right slot (empty when unused), the number of code points
 /// a choice replaces, the autocorrection, the typed word when it is not a
-/// word yet, and its obvious fix (each empty when none).
+/// word yet, and its obvious fix (each empty when none), then the index of
+/// the dictionary whose language the text is taken to be in, -1 for none.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
     mut env: JNIEnv,
@@ -409,6 +418,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
     let correction = strip.correction.unwrap_or_default();
     let unknown = strip.unknown.unwrap_or_default();
     let fix = strip.fix.unwrap_or_default();
+    let language = lexicon.language().map_or(-1, |index| index as i64).to_string();
     let values = [
         strip.slots[0].as_str(),
         strip.slots[1].as_str(),
@@ -417,6 +427,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
         correction.as_str(),
         unknown.as_str(),
         fix.as_str(),
+        language.as_str(),
     ];
     let array = env
         .new_object_array(values.len() as i32, "java/lang/String", jni::objects::JObject::null())
