@@ -80,8 +80,9 @@ class KeyboardView(
     /** Speech input's state: listening since [listeningSince], and stretches still being recognised. */
     var listening = false
         set(value) {
+            val starting = value && !field
             field = value
-            if (value) {
+            if (starting) {
                 listeningSince = SystemClock.uptimeMillis()
                 levels.clear()
             }
@@ -306,6 +307,9 @@ class KeyboardView(
     /** Every layer tiles the same area, so a layer change only swaps the outlines. */
     private fun loadOutlines() {
         paths = (0 until Core.keyCount(handle)).map { path(Core.outline(handle, it)) }
+        // Corners rounded in drawing only; touches still go by the sharp hexagons.
+        val corners = android.graphics.CornerPathEffect(Core.cellWidth(handle) * CORNER)
+        for (paint in listOf(keyPaint, gapPaint, popupPaint, selectedPaint)) paint.pathEffect = corners
     }
 
     override fun onDetachedFromWindow() {
@@ -706,6 +710,9 @@ class KeyboardView(
 
         /** Marks that sit high or low on the line and look misplaced unless centred on their ink. */
         private val INK_CENTRED = setOf(".", ",", ";", ":", "'", "\"", "…", "!", "?", "¡", "¿")
+
+        /** How round the keys' corners are drawn, in key widths. */
+        const val CORNER = 0.12f
 
         /** Tenths of a second of voice the waveform shows. */
         private const val LEVELS = 48

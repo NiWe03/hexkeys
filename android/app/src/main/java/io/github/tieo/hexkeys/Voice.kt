@@ -39,7 +39,19 @@ class Dictation(
 class Voice(private val context: Context) {
 
     private val main = Handler(Looper.getMainLooper())
-    private val worker = Executors.newSingleThreadExecutor()
+
+    /**
+     * Recognition runs below the keyboard's own priority, as do the threads
+     * whisper starts from it, which inherit it: at full speed on every fast
+     * core it held up the keyboard's drawing for over a second at a time.
+     */
+    private val worker = Executors.newSingleThreadExecutor { task ->
+        Thread {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            task.run()
+        }
+    }
+
     private var model = 0L
     private var loadedFile: String? = null
 
@@ -196,7 +208,8 @@ class Voice(private val context: Context) {
                 }
                 if (model == 0L) return@runCatching ""
                 val started = System.currentTimeMillis()
-                val text = Core.voiceTranscribe(model, audio, languages)
+                // A new line in the text would send the message in some apps.
+                val text = Core.voiceTranscribe(model, audio, languages).replace(Regex("\\s+"), " ").trim()
                 measured(context, chosen, System.currentTimeMillis() - started, audio.size * 1000L / RATE)
                 text
             }.getOrDefault("")
@@ -222,10 +235,10 @@ class Voice(private val context: Context) {
         private const val CHUNK = RATE * CHUNK_MS / 1000
 
         /** A pause this long after speech ends a stretch. */
-        private const val PAUSE_MS = 700
+        private const val PAUSE_MS = 1000
 
         /** A stretch is at least this long, so a short breath does not split a sentence. */
-        private const val MIN_STRETCH_MS = 2000
+        private const val MIN_STRETCH_MS = 4000
 
         /** A stretch is at most this long; whisper hears 30 seconds at a time. */
         private const val MAX_STRETCH_MS = 28_000

@@ -26,6 +26,8 @@ class VoiceTestReceiver : BroadcastReceiver() {
         if (intent.getBooleanExtra("dictate", false)) {
             val audio = ShortArray(pcm.remaining()).also { pcm.get(it) }
             val voice = Voice(context.applicationContext)
+            // Kept alive until done: a receiver's process is frozen soon after it returns.
+            val pending = goAsync()
             val started = System.currentTimeMillis()
             voice.dictate(audio, languages, Dictation(
                 level = {},
@@ -33,6 +35,7 @@ class VoiceTestReceiver : BroadcastReceiver() {
                 changed = {
                     if (!voice.listening && voice.pending == 0) {
                         Log.i("hexkeys", "voice test: done at ${System.currentTimeMillis() - started} ms for ${audio.size / 16} ms of audio")
+                        pending.finish()
                     }
                 },
             ))

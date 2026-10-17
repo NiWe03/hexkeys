@@ -1213,9 +1213,9 @@ impl Keyboard {
     }
 
     /// Opens the key's popup if it has alternatives; returns whether it did.
-    /// The choices sit in a row of small hexagons just above the key,
-    /// centred on it; a letter held for its capital has its accents start
-    /// above it instead, with none chosen until the finger moves to one.
+    /// The choices sit in a row of small hexagons centred just above the
+    /// key; a letter held for its capital has none of its accents chosen
+    /// until the finger moves to one.
     pub fn long_press(&mut self, index: usize) -> bool {
         let choices = self.choices(index);
         if choices.is_empty() {
@@ -1226,9 +1226,8 @@ impl Keyboard {
         let (w, h) = (layout.cell_width * POPUP_SCALE, layout.cell_height * POPUP_SCALE);
         let n = choices.len() as f32;
         let holding = self.holds_for_capital(index);
-        // Pushed inwards so no cell leaves the sides.
-        let start = if holding { center.x } else { center.x - (n - 1.0) / 2.0 * w };
-        let first = start.clamp(w / 2.0, layout.width - w / 2.0 - (n - 1.0) * w);
+        // Centred above the key, then pushed inwards so no cell leaves the sides.
+        let first = (center.x - (n - 1.0) / 2.0 * w).clamp(w / 2.0, layout.width - w / 2.0 - (n - 1.0) * w);
         // Overlapping the key's top point a little, as the honeycomb's rows overlap.
         let y = center.y - layout.cell_height / 2.0 - h / 4.0;
         let cells: Vec<Point> = (0..choices.len()).map(|i| Point { x: first + i as f32 * w, y }).collect();
@@ -1712,7 +1711,8 @@ mod tests {
         let popup = keyboard.popup.clone().expect("popup");
         assert_eq!(popup.choices, ["ä", "à"]);
         assert_eq!(popup.selected, None);
-        assert!((popup.cells[0].x - near(&keyboard, "a", 0.0, 0.0).x).abs() < 1.0, "the first accent sits above the key");
+        let middle = (popup.cells[0].x + popup.cells[1].x) / 2.0;
+        assert!((middle - near(&keyboard, "a", 0.0, 0.0).x).abs() < 1.0, "the accents are centred above the key");
         // A finger never holds perfectly still; a little drift keeps the capital.
         keyboard.touch_move(near(&keyboard, "a", 0.1, 0.05), 1250);
         assert_eq!(keyboard.touch_up(near(&keyboard, "a", 0.1, 0.05), 1300), Action::Redraw);

@@ -583,10 +583,14 @@ private class LayoutPreview(context: Context, private val space_middle: Boolean)
         if (handle == 0L) return
         val corner = resources.displayMetrics.density * 8
         paint.color = theme.background
+        paint.pathEffect = null
         canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), corner, corner, paint)
         val cell = Core.cellWidth(handle)
         gap.color = theme.background
         gap.strokeWidth = cell * 0.06f
+        val corners = android.graphics.CornerPathEffect(cell * KeyboardView.CORNER)
+        paint.pathEffect = corners
+        gap.pathEffect = corners
         labels.color = theme.label
         for (index in 0 until Core.keyCount(handle)) {
             val corners = Core.outline(handle, index)

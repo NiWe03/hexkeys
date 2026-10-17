@@ -326,6 +326,8 @@ class HexInputMethod : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        // Hidden, the keyboard stops listening; what was said is still put in.
+        voice.stop()
         frame?.show(emptyList())
         frame?.showEmoji(false)
     }
@@ -345,6 +347,8 @@ class HexInputMethod : InputMethodService() {
         // Device colours follow the wallpaper and dark mode, which may have changed.
         keyboard?.theme = Theme.current(this)
         keyboard?.passwordsAvailable = passwordManager() != null
+        keyboard?.listening = voice.listening
+        keyboard?.recognising = voice.pending
         // The field's own action for enter, such as send or search, and whether it takes new lines.
         action = when {
             info.actionLabel != null -> info.actionId
