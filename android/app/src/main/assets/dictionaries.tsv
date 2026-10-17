@@ -1,0 +1,55 @@
+# language	locale	file	license
+Afrikaans	af	main_af__experimental.dict	source lists under CC BY 4.0
+Azerbaijani	az	main_az.dict	CC BY-SA 4.0 (Data) & Leipzig Corpora
+Basque	eu	main_eu.dict	source lists under Apache-2.0 license
+Bosnian	bs	main_bs.dict	LGPL-3.0
+Catalan	ca	main_ca__experimental.dict	source lists under CC BY 4.0
+Cebuano	ceb	main_ceb__experimental.dict	source lists under CC BY 4.0
+Croatian	hr	main_hr__experimental.dict	source lists under CC BY 4.0
+Czech	cs	main_cs__experimental.dict	source lists under CC BY 4.0
+Danish	da	main_da__experimental.dict	source lists under CC BY 4.0
+Dutch	nl	main_nl__experimental.dict	source lists under CC BY 4.0
+English (Australia)	en_au	main_en_au.dict	source
+English (Canada)	en_ca	main_en_ca__experimental.dict	source lists under CC BY 4.0
+English (United Kingdom)	en_gb	main_en_gb__experimental.dict	source lists under CC BY 4.0
+English (United States)	en_us	main_en_us.dict	source
+Esperanto	eo	main_eo__experimental.dict	source lists under CC BY 4.0
+Estonian	et	main_et__experimental.dict	source lists under CC BY 4.0
+Filipino	tl	main_tl__experimental.dict	source lists under CC BY 4.0
+Finnish	fi	main_fi__experimental.dict	source lists under CC BY 4.0
+French	fr	main_fr__experimental.dict	source lists under CC BY 4.0
+Galician	gl	main_gl__experimental.dict	source lists under CC BY 4.0
+German	de	main_de.dict	source lists under CC BY 4.0
+German (Austria)	de_at	main_de_at.dict	source lists under CC BY 4.0
+German (Switzerland)	de_ch	main_de_ch.dict	source
+Goan Konkani	gom	main_gom.dict	GPLv2
+Hinglish	hi_zz	main_hi_zz.dict	source
+Hungarian	hu	main_hu__experimental.dict	source lists under CC BY 4.0
+Icelandic	is	main_is__experimental.dict	source lists under CC BY 4.0
+Indonesian	id	main_id__experimental.dict	source lists under CC BY 4.0
+Irish	ga	main_ga.dict	source lists under CC BY 4.0
+Italian	it	main_it__experimental.dict	source lists under CC BY 4.0
+Kabyle	kab	main_kab__experimental.dict	source lists under CC BY 4.0
+Latin	la	main_la.dict	GPLv2
+Latvian	lv	main_lv__experimental.dict	source lists under CC BY 4.0
+Lithuanian	lt	main_lt__experimental.dict	source lists under CC BY 4.0
+Luxembourgish	lb	main_lb.dict	source
+Malagasy	mg	main_mg.dict	source lists under CC BY 4.0
+Mirandese	mwl	main_mwl__experimental.dict	source under CC BY 4.0
+Norwegian Bokmål	nb	main_nb__experimental.dict	source lists under CC BY 4.0
+Norwegian Nynorsk	nn	main_nn.dict	CC-BY-SA 4.0 (Wikipedia)
+Piedmontese	pms	main_pms__experimental.dict	source lists under CC BY-NC-ND 3.0 IT
+Polish	pl	main_pl__experimental.dict	source lists under CC BY 4.0
+Portuguese (Brazil)	pt_br	main_pt_br.dict	source
+Portuguese (Portugal)	pt_pt	main_pt_pt__experimental.dict	source lists under CC BY 4.0
+Romanian	ro	main_ro__experimental.dict	source lists under CC BY 4.0
+Sardinian	sc	main_sc__experimental.dict	source
+Serbian (Latin)	sr_zz	main_sr_zz.dict	source
+Slovak	sk	main_sk.dict	source word list under CC BY-NC 4.0
+Slovenian	sl	main_sl__experimental.dict	source lists under CC BY 4.0
+Spanish	es	main_es__experimental.dict	source lists under CC BY 4.0
+Standard Moroccan Tamazight (Latin)	zgh_zz	main_zgh_zz.dict	source
+Swedish	sv	main_sv__experimental.dict	source lists under CC BY 4.0
+Toki Pona	tok	main_tok.dict	CC by-sa 3.0 and 4.0 combined
+Turkish	tr	main_tr.dict	source
+Vietnamese	vi	main_vi__experimental.dict	source lists under CC BY 4.0

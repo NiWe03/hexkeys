@@ -1,5 +1,6 @@
 package io.github.tieo.hexkeys
 
+import android.content.SharedPreferences
 import android.inputmethodservice.InputMethodService
 import android.text.InputType
 import android.view.KeyEvent
@@ -14,16 +15,30 @@ class HexInputMethod : InputMethodService() {
     /** Off in password fields and where the app asks for no suggestions. */
     private var suggesting = false
 
+    /** Reloads the dictionaries when the languages change in settings. */
+    private val settingsChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == Dictionaries.ENABLED) loadDictionaries()
+    }
+
     override fun onCreate() {
         super.onCreate()
         lexicon = Core.lexiconCreate()
-        assets.open(DEFAULT_DICTIONARY).use { Core.lexiconAdd(lexicon, it.readBytes()) }
+        loadDictionaries()
+        Dictionaries.preferences(this).registerOnSharedPreferenceChangeListener(settingsChanged)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        Dictionaries.preferences(this).unregisterOnSharedPreferenceChangeListener(settingsChanged)
         Core.lexiconDestroy(lexicon)
         lexicon = 0L
+    }
+
+    private fun loadDictionaries() {
+        Core.lexiconClear(lexicon)
+        for (file in Dictionaries.enabled(this)) {
+            Dictionaries.read(this, file)?.let { Core.lexiconAdd(lexicon, it) }
+        }
     }
 
     override fun onCreateInputView(): View = KeyboardView(
@@ -95,9 +110,6 @@ class HexInputMethod : InputMethodService() {
     }
 
     private companion object {
-        /** English (US) from the AOSP dictionaries, built in so the keyboard suggests from the start. */
-        const val DEFAULT_DICTIONARY = "main_en_us.dict"
-
         /** Enough text before the cursor for the word being typed and the one before it. */
         const val CONTEXT_LENGTH = 64
     }
