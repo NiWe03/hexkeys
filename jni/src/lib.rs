@@ -116,6 +116,12 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_keyRow(
     keyboard(handle).key_row(index as usize).map_or(-1, |row| row as jint)
 }
 
+/// Whether the key is one of the number row's.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_inNumberRow(_env: JNIEnv, _class: JClass, handle: jlong, index: jint) -> jboolean {
+    keyboard(handle).in_number_row(index as usize) as jboolean
+}
+
 /// The key the finger went down on, or -1 when no finger is down.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_pressed(

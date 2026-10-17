@@ -292,6 +292,26 @@ class KeyboardView(
         invalidate()
     }
 
+    /**
+     * While a panel covers the letters, the number row is a slim bar of its
+     * cells without their digits, for sliding to delete and to move the
+     * cursor; taps on it type nothing.
+     */
+    var gestureBar = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** How tall the number row is as a bar. */
+    val gestureBarHeight get() = (numbersHeight * GESTURE_BAR).toInt()
+
+    /** A touch's height in the keys' own terms: the bar stands for the whole number row. */
+    private fun keysY(y: Float): Float {
+        val inKeys = y - keysTop
+        return if (gestureBar && inKeys >= 0) inKeys / GESTURE_BAR else inKeys
+    }
+
     /** The width and layout settings the keys were last laid out for. */
     private var builtFor = ""
 
@@ -418,7 +438,9 @@ class KeyboardView(
         val shiftState = Core.shiftState(handle)
         spaceKeys = paths.indices.count { Core.label(handle, it) == "space" }
         spacesDrawn = 0
+        if (gestureBar) canvas.scale(1f, GESTURE_BAR)
         for ((index, path) in paths.withIndex()) {
+            if (gestureBar && !Core.inNumberRow(handle, index)) continue
             val color = keyColor(index)
             keyPaint.color = if (index == pressed || index == flashKey) theme.pressed(color) else color
             // Shift shows its state: lit for the next letter, in the accent colour while locked.
@@ -429,6 +451,7 @@ class KeyboardView(
             }
             canvas.drawPath(path, keyPaint)
             canvas.drawPath(path, gapPaint)
+            if (gestureBar) continue
             val position = Core.labelPosition(handle, index)
             val hint = Core.keyHint(handle, index)
             val enterSmall = enterHint
@@ -451,7 +474,7 @@ class KeyboardView(
                 drawCentred(canvas, hint, position[0], position[1] + side * cellWidth * 0.26f, hintPaint)
             }
         }
-        val choices = Core.popupCount(handle)
+        val choices = if (gestureBar) 0 else Core.popupCount(handle)
         if (choices > 0) {
             val selected = Core.popupSelected(handle)
             for (index in 0 until choices) {
@@ -817,7 +840,7 @@ class KeyboardView(
                     lift(fingerX, fingerY, time, "rollover")
                 }
                 val x = event.getX(index)
-                val y = event.getY(index) - keysTop
+                val y = keysY(event.getY(index))
                 stripTouch = if (y < 0) stripSlot(x) + 2 else -1
                 if (stripTouch >= 0) {
                     finger = -1
@@ -834,14 +857,14 @@ class KeyboardView(
                 val at = event.findPointerIndex(finger)
                 if (at < 0) return true
                 fingerX = event.getX(at)
-                fingerY = event.getY(at) - keysTop
+                fingerY = keysY(event.getY(at))
                 addPoint(fingerX, fingerY, time)
                 val action = Core.touchMove(handle, fingerX, fingerY, time)
                 if (action[0] != "nothing") act(action)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val x = event.getX(index)
-                val y = event.getY(index) - keysTop
+                val y = keysY(event.getY(index))
                 if (stripTouch >= 0 && event.actionMasked == MotionEvent.ACTION_UP) {
                     val slot = stripSlot(x)
                     val touched = stripTouch - 2
@@ -925,6 +948,8 @@ class KeyboardView(
 
     private fun act(action: Array<String>) {
         val (kind, text) = action
+        // The bar only slides; a digit tapped or held there is dropped.
+        if (gestureBar && kind == "commit") return
         note(kind, text)
         if (kind == "redraw") loadOutlines()
         onAction(kind, text)
@@ -941,6 +966,9 @@ class KeyboardView(
     companion object {
         /** The key to the symbols, which a flick up on opens the emoji. */
         private const val SYMBOLS_KEY = "@#€"
+
+        /** How tall the number row is as the bar under a panel, of its full height. */
+        private const val GESTURE_BAR = 0.4f
 
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f

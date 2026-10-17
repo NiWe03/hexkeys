@@ -1558,6 +1558,11 @@ impl Keyboard {
     }
 
     /// The QWERTZ row of the key's letter, for themes; None for other keys.
+    /// Whether the key is one of the number row's.
+    pub fn in_number_row(&self, index: usize) -> bool {
+        self.layout.keys[index].row == NUMBER_ROW
+    }
+
     pub fn key_row(&self, index: usize) -> Option<usize> {
         qwertz_row(&self.layout.keys[index].label)
     }

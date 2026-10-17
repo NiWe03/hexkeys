@@ -148,7 +148,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
 
     /** The query with a cursor after it in the accent colour, blinking. */
     private fun paintQuery() {
-        val text = android.text.SpannableStringBuilder(queryText).append("\u2009|")
+        val text = android.text.SpannableStringBuilder(queryText).append("|")
         val color = if (cursorShown) keyboard.theme.accent else 0
         text.setSpan(android.text.style.ForegroundColorSpan(color), text.length - 1, text.length, 0)
         query.text = text
@@ -192,6 +192,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
             clipboard.visibility = GONE
         }
         emoji.visibility = if (on) VISIBLE else GONE
+        keyboard.gestureBar = emojiShown || clipboardShown
         requestLayout()
     }
 
@@ -204,6 +205,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
             emoji.visibility = GONE
         }
         clipboard.visibility = if (on) VISIBLE else GONE
+        keyboard.gestureBar = emojiShown || clipboardShown
         requestLayout()
     }
 
@@ -212,13 +214,13 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         keyboard.measure(widthMeasureSpec, heightMeasureSpec)
         val keysTop = keyboard.headroom + keyboard.stripTall
-        // The panels take the letters' place and leave the number row, where the
-        // digits, the cursor and deleting are, as it is.
+        // The panels take the letters' place and leave the number row as a slim
+        // bar for sliding to delete and to move the cursor.
         for (panel in listOf(emoji, clipboard)) {
             panel.measure(
                 MeasureSpec.makeMeasureSpec(keyboard.measuredWidth, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(
-                    keyboard.measuredHeight - keysTop - keyboard.numbersHeight - keyboard.navigationBar, MeasureSpec.EXACTLY,
+                    keyboard.measuredHeight - keysTop - keyboard.gestureBarHeight - keyboard.navigationBar, MeasureSpec.EXACTLY,
                 ),
             )
         }
@@ -245,7 +247,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         pinned.layout(width - pinned.measuredWidth, stripTop, width, stripTop + pinned.measuredHeight)
         val start = 2 * keyboard.stripSide
         val keysTop = keyboard.headroom + keyboard.stripTall
-        val panelTop = keysTop + keyboard.numbersHeight
+        val panelTop = keysTop + keyboard.gestureBarHeight
         emoji.layout(0, panelTop, width, panelTop + emoji.measuredHeight)
         clipboard.layout(0, panelTop, width, panelTop + clipboard.measuredHeight)
         scroller.layout(start, stripTop, start + scroller.measuredWidth, stripTop + scroller.measuredHeight)

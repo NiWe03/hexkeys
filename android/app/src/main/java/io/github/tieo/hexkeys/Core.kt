@@ -51,6 +51,9 @@ object Core {
     /** The QWERTZ row of the key's letter, 0 to 2, which themes colour it by; -1 for other keys. */
     external fun keyRow(handle: Long, index: Int): Int
 
+    /** Whether the key is one of the number row's. */
+    external fun inNumberRow(handle: Long, index: Int): Boolean
+
     /** Whether space is held and the keyboard moves the cursor. */
     external fun movingCursor(handle: Long): Boolean
 
