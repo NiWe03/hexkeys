@@ -104,12 +104,34 @@ class Editor(private val service: InputMethodService) {
         connection?.endBatchEdit()
     }
 
-    /** Moves the cursor `dx` characters right and `dy` lines down, as the arrow keys do. */
+    /**
+     * Moves the cursor `dx` characters right and `dy` lines down. Sideways it
+     * is placed directly and stops at the text's ends: an arrow key pressed
+     * there moves the focus out of the field instead, which closes the
+     * keyboard. Up and down go by arrow keys, only while there is text that way.
+     */
     fun moveCursor(dx: Int, dy: Int) {
-        val horizontal = if (dx > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
-        val vertical = if (dy > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP
-        repeat(kotlin.math.abs(dx)) { sendKey(horizontal) }
-        repeat(kotlin.math.abs(dy)) { sendKey(vertical) }
+        val connection = connection ?: return
+        if (dx != 0) {
+            val room = if (dx > 0) {
+                connection.getTextAfterCursor(dx, 0)?.length ?: 0
+            } else {
+                minOf(-dx, maxOf(selectionStart, 0))
+            }
+            val target = maxOf(0, selectionStart) + if (dx > 0) room else -room
+            if (room > 0) {
+                connection.setSelection(target, target)
+                selectionStart = target
+                selectionEnd = target
+                before = null
+            }
+        }
+        if (dy != 0) {
+            val textThatWay = if (dy > 0) connection.getTextAfterCursor(1, 0) else connection.getTextBeforeCursor(1, 0)
+            if (!textThatWay.isNullOrEmpty()) {
+                repeat(kotlin.math.abs(dy)) { sendKey(if (dy > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP) }
+            }
+        }
     }
 
     /** Sends a key to the app, which changes the text in its own way. */

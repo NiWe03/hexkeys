@@ -14,9 +14,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
 
-/** A speech model the user can download, by size. */
-data class VoiceModel(val id: String, val name: String, val file: String, val megabytes: Int)
-
 /** What a dictation tells the keyboard while it runs; all of it arrives on the main thread. */
 class Dictation(
     /** The loudness of the last tenth of a second, 0 to 1. */
@@ -52,8 +49,8 @@ class Voice(private val context: Context) {
         }
     }
 
-    private var model = 0L
-    private var loadedFile: String? = null
+    private var recognizer: Recognizer? = null
+    private var loaded: VoiceModel? = null
 
     /** Whether it is listening now. */
     @Volatile
@@ -200,16 +197,15 @@ class Voice(private val context: Context) {
         worker.execute {
             val text = runCatching {
                 val chosen = chosen(context) ?: return@runCatching ""
-                val file = file(context, chosen)
-                if (file.path != loadedFile) {
-                    if (model != 0L) Core.voiceFree(model)
-                    model = Core.voiceLoad(file.path)
-                    loadedFile = file.path
+                if (chosen != loaded) {
+                    recognizer?.release()
+                    recognizer = VoiceModels.load(chosen, folder(context, chosen), THREADS)
+                    loaded = chosen
                 }
-                if (model == 0L) return@runCatching ""
                 val started = System.currentTimeMillis()
                 // A new line in the text would send the message in some apps.
-                val text = Core.voiceTranscribe(model, audio, languages).replace(Regex("\\s+"), " ").trim()
+                val text = recognizer!!.transcribe(audio, languages.split(','))
+                    .replace(Regex("\\s+"), " ").trim()
                 measured(context, chosen, System.currentTimeMillis() - started, audio.size * 1000L / RATE)
                 text
             }.getOrDefault("")
@@ -223,7 +219,7 @@ class Voice(private val context: Context) {
 
     fun release() {
         listening = false
-        worker.execute { if (model != 0L) Core.voiceFree(model) }
+        worker.execute { recognizer?.release() }
         worker.shutdown()
     }
 
@@ -255,9 +251,8 @@ class Voice(private val context: Context) {
         /** Preference naming the chosen model's id. */
         const val MODEL = "voice_model"
 
-        /** whisper.cpp's quantised multilingual models, at a pinned commit of their repository. */
-        private const val COMMIT = "5359861c739e955e79d9a303bcbc70fb988958b1"
-        private const val BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/$COMMIT/"
+        /** Threads recognition runs on: the phone's fast cores. */
+        const val THREADS = 4
 
         /** Preference prefix for a model's time for a sentence, by its id. */
         private const val TIMING = "voice_timing_"
@@ -266,23 +261,35 @@ class Voice(private val context: Context) {
         const val SENTENCE_MS = 5000L
 
         /**
-         * How long the models take compared with each other, from timing
-         * all three on the same recordings with the same build.
+         * How long the whisper models take compared with each other, from
+         * timing all three on the same recordings with the same build. The
+         * other engines differ too much to be worked out from them.
          */
         private val RELATIVE_TIME = mapOf("tiny" to 10L, "base" to 32L, "small" to 133L)
 
-        val MODELS = listOf(
-            VoiceModel("tiny", "Fast", "ggml-tiny-q5_1.bin", 32),
-            VoiceModel("base", "Balanced", "ggml-base-q5_1.bin", 60),
-            VoiceModel("small", "Accurate", "ggml-small-q5_1.bin", 190),
-        )
+        val MODELS get() = VoiceModels.ALL
 
         fun chosen(context: Context): VoiceModel? {
             val id = Dictionaries.preferences(context).getString(MODEL, null)
-            return MODELS.firstOrNull { it.id == id }?.takeIf { file(context, it).exists() }
+            return MODELS.firstOrNull { it.id == id }?.takeIf { downloaded(context, it) }
         }
 
-        fun file(context: Context, model: VoiceModel) = File(File(context.filesDir, "voice"), model.file)
+        /** Where a model's files are: a folder per model. */
+        fun folder(context: Context, model: VoiceModel): File {
+            val folder = File(File(context.filesDir, "voice"), model.id)
+            // Whisper models used to lie in the voice folder itself.
+            if (model.engine == Engine.WHISPER) {
+                val old = File(folder.parentFile, model.files[0].name)
+                if (old.exists()) {
+                    folder.mkdirs()
+                    old.renameTo(File(folder, old.name))
+                }
+            }
+            return folder
+        }
+
+        fun downloaded(context: Context, model: VoiceModel) =
+            model.files.all { File(folder(context, model), it.name).length() == it.bytes }
 
         fun permitted(context: Context) =
             context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -290,37 +297,51 @@ class Voice(private val context: Context) {
         /** Whether speaking can start: a model is downloaded and the microphone allowed. */
         fun ready(context: Context) = chosen(context) != null && permitted(context)
 
-        /** Downloads a model, reporting progress from 0 to 1; throws when it fails. */
+        /**
+         * Downloads a model's files, reporting progress from 0 to 1, each
+         * checked against the SHA-256 it had at the pinned commit; throws
+         * when one fails. Files already in place are kept.
+         */
         fun download(context: Context, model: VoiceModel, progress: (Float) -> Unit) {
-            val target = file(context, model)
-            target.parentFile?.mkdirs()
-            val partial = File(target.path + ".part")
-            val connection = URL(BASE + model.file).openConnection() as HttpURLConnection
-            try {
-                connection.connectTimeout = 15_000
-                connection.readTimeout = 30_000
-                connection.instanceFollowRedirects = true
-                if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                    throw java.io.IOException("HTTP ${connection.responseCode}")
+            val folder = folder(context, model).apply { mkdirs() }
+            val total = model.files.sumOf { it.bytes }.toFloat()
+            var done = 0L
+            for (file in model.files) {
+                val target = File(folder, file.name)
+                if (target.length() == file.bytes) {
+                    done += file.bytes
+                    continue
                 }
-                val total = connection.contentLengthLong
-                connection.inputStream.use { input ->
-                    partial.outputStream().use { output ->
-                        val buffer = ByteArray(256 * 1024)
-                        var done = 0L
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            output.write(buffer, 0, read)
-                            done += read
-                            if (total > 0) progress(done.toFloat() / total)
+                val partial = File(target.path + ".part")
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                val connection = URL(model.url(file)).openConnection() as HttpURLConnection
+                try {
+                    connection.connectTimeout = 15_000
+                    connection.readTimeout = 30_000
+                    connection.instanceFollowRedirects = true
+                    if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+                        throw java.io.IOException("HTTP ${connection.responseCode}")
+                    }
+                    connection.inputStream.use { input ->
+                        partial.outputStream().use { output ->
+                            val buffer = ByteArray(256 * 1024)
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                output.write(buffer, 0, read)
+                                digest.update(buffer, 0, read)
+                                done += read
+                                progress(done / total)
+                            }
                         }
                     }
+                    val hash = digest.digest().joinToString("") { "%02x".format(it) }
+                    if (file.sha256.isNotEmpty() && hash != file.sha256) throw java.io.IOException("${file.name} is not the file pinned")
+                    if (!partial.renameTo(target)) throw java.io.IOException("cannot store ${file.name}")
+                } finally {
+                    connection.disconnect()
+                    partial.delete()
                 }
-                if (!partial.renameTo(target)) throw java.io.IOException("cannot store ${model.file}")
-            } finally {
-                connection.disconnect()
-                partial.delete()
             }
         }
 
@@ -338,8 +359,9 @@ class Voice(private val context: Context) {
          */
         fun expectedTiming(context: Context, model: VoiceModel): Pair<Long, Boolean>? {
             timing(context, model)?.let { return it to true }
-            val other = MODELS.firstOrNull { timing(context, it) != null } ?: return null
-            return timing(context, other)!! * RELATIVE_TIME.getValue(model.id) / RELATIVE_TIME.getValue(other.id) to false
+            val own = RELATIVE_TIME[model.id] ?: return null
+            val other = MODELS.firstOrNull { it.id in RELATIVE_TIME && timing(context, it) != null } ?: return null
+            return timing(context, other)!! * own / RELATIVE_TIME.getValue(other.id) to false
         }
 
         /** Counts one recognition of `audioMs` that took `ms`, scaled to a sentence and averaged with the earlier ones. */
@@ -356,20 +378,16 @@ class Voice(private val context: Context) {
             val bytes = context.assets.open("sentence.wav").use { it.readBytes() }
             val pcm = java.nio.ByteBuffer.wrap(bytes, 44, bytes.size - 44).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer()
             val audio = FloatArray(pcm.remaining()) { pcm.get(it) / 32768f }
-            val handle = Core.voiceLoad(file(context, model).path)
-            if (handle == 0L) return
+            val recognizer = VoiceModels.load(model, folder(context, model), THREADS)
             try {
+                // Once to load everything it needs, then timed.
+                recognizer.transcribe(audio, listOf("en", "de"))
                 val started = System.currentTimeMillis()
-                Core.voiceTranscribe(handle, audio, "en,de")
+                recognizer.transcribe(audio, listOf("en", "de"))
                 measured(context, model, System.currentTimeMillis() - started, audio.size * 1000L / RATE)
             } finally {
-                Core.voiceFree(handle)
+                recognizer.release()
             }
-        }
-
-        /** Removes every model but `keep`. */
-        fun deleteOthers(context: Context, keep: VoiceModel?) {
-            for (model in MODELS) if (model != keep) file(context, model).delete()
         }
     }
 }

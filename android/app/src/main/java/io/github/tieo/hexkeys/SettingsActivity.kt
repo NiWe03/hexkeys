@@ -132,9 +132,11 @@ class SettingsActivity : Activity() {
                 start()
             }
         }
-        if (Voice.chosen(this) != null && !Voice.permitted(this)) {
+        if (!Voice.permitted(this)) {
             requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1)
         }
+        // With no model yet, the default one starts downloading right away.
+        if (Voice.chosen(this) == null) startDefault()
     }
 
     private fun android.animation.Animator.doOnEnd(action: () -> Unit) = addListener(object : android.animation.AnimatorListenerAdapter() {
@@ -167,6 +169,9 @@ class SettingsActivity : Activity() {
 
     private lateinit var microphone: Button
     private lateinit var voice: View
+
+    /** Downloads the default speech model, for the microphone button arriving with none. */
+    private var startDefault: () -> Unit = {}
     private lateinit var layouts: LayoutTiles
 
     /**
@@ -198,17 +203,10 @@ class SettingsActivity : Activity() {
             }
             model.id to label
         }
-        var choice: View? = null
-        choice = ui.segmented(options, chosen, columns = 4) { id ->
-            val model = Voice.MODELS.firstOrNull { it.id == id }
-            if (model == null || Voice.file(this, model).exists()) {
-                ui.preferences.edit().putString(Voice.MODEL, model?.id).apply()
-                Voice.deleteOthers(this, model)
-                if (model != null && Voice.timing(this, model) == null) recreate()
-                return@segmented
-            }
-            choice?.isEnabled = false
+        // Downloaded models stay, so switching between them to compare costs nothing.
+        fun fetch(model: VoiceModel) {
             progress.progress = 0
+            progress.isIndeterminate = false
             progress.visibility = View.VISIBLE
             downloads.execute {
                 val ok = runCatching {
@@ -218,13 +216,20 @@ class SettingsActivity : Activity() {
                 }.isSuccess
                 runOnUiThread {
                     progress.visibility = View.GONE
-                    if (ok) {
-                        ui.preferences.edit().putString(Voice.MODEL, model.id).apply()
-                        Voice.deleteOthers(this, model)
-                    }
+                    if (ok) ui.preferences.edit().putString(Voice.MODEL, model.id).apply()
                     recreate()
                 }
             }
+        }
+        startDefault = { fetch(VoiceModels.DEFAULT) }
+        val choice = ui.segmented(options, chosen, columns = 3) { id ->
+            val model = Voice.MODELS.firstOrNull { it.id == id }
+            if (model == null || Voice.downloaded(this, model)) {
+                ui.preferences.edit().putString(Voice.MODEL, model?.id).apply()
+                if (model != null && Voice.timing(this, model) == null) recreate()
+                return@segmented
+            }
+            fetch(model)
         }
         microphone = ui.primaryButton("Allow the microphone").apply {
             setOnClickListener { requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1) }

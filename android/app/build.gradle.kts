@@ -1,3 +1,6 @@
+import java.net.URI
+import java.security.MessageDigest
+
 plugins {
     alias(libs.plugins.android.application)
 }
@@ -74,7 +77,29 @@ val cargoNdk by tasks.registering(Exec::class) {
 
 tasks.named("preBuild") { dependsOn(cargoNdk) }
 
+/**
+ * sherpa-onnx, which runs the speech models other than whisper (Parakeet,
+ * Canary, Kroko, Moonshine), as its release's Android library: fetched once
+ * into libs, checked against the hash it had when it was picked, and kept
+ * out of the repository like the core's libraries.
+ */
+val sherpaVersion = "1.13.8"
+val sherpaHash = "633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96"
+val sherpa = file("libs/sherpa-onnx-$sherpaVersion.aar").also { aar ->
+    fun sha256(file: File) = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+        .joinToString("") { "%02x".format(it) }
+    if (!aar.exists() || sha256(aar) != sherpaHash) {
+        aar.parentFile.mkdirs()
+        val url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/sherpa-onnx-$sherpaVersion.aar"
+        val partial = File(aar.path + ".part")
+        URI(url).toURL().openStream().use { input -> partial.outputStream().use { input.copyTo(it) } }
+        check(sha256(partial) == sherpaHash) { "sherpa-onnx $sherpaVersion does not have the hash it was picked with" }
+        partial.renameTo(aar)
+    }
+}
+
 dependencies {
     // Styles for the autofill service's inline suggestions, in the format services render.
     implementation("androidx.autofill:autofill:1.1.0")
+    implementation(files(sherpa))
 }

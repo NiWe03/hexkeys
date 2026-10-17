@@ -10,7 +10,7 @@ import java.nio.ByteOrder
 
 /**
  * Runs a 16 kHz mono 16-bit WAV file through speech recognition with the
- * chosen model, or the one named by `model` (tiny, base, small), and logs
+ * chosen model, or the one named by `model` (an id of [VoiceModels.ALL]), and logs
  * the text and the time it took, for testing on an emulator, which has no
  * microphone to speak into:
  * `adb shell am broadcast -n io.github.tieo.hexkeys/.VoiceTestReceiver --es wav /data/local/tmp/test.wav --es languages en,de --es model tiny`
@@ -44,14 +44,13 @@ class VoiceTestReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             val audio = FloatArray(pcm.remaining()) { pcm.get(it) / 32768f }
-            val model = (Voice.MODELS.firstOrNull { it.id == intent.getStringExtra("model") } ?: Voice.chosen(context))
-                ?.let { Voice.file(context, it) }
+            val model = Voice.MODELS.firstOrNull { it.id == intent.getStringExtra("model") } ?: Voice.chosen(context)
             val started = System.currentTimeMillis()
-            val handle = model?.let { Core.voiceLoad(it.path) } ?: 0L
+            val recognizer = model?.let { VoiceModels.load(it, Voice.folder(context, it), Voice.THREADS) }
             val loaded = System.currentTimeMillis()
-            val text = if (handle != 0L) Core.voiceTranscribe(handle, audio, languages) else "(no model)"
+            val text = recognizer?.transcribe(audio, languages.split(',')) ?: "(no model)"
             val done = System.currentTimeMillis()
-            if (handle != 0L) Core.voiceFree(handle)
+            recognizer?.release()
             Log.i("hexkeys", "voice test: load ${loaded - started} ms, recognise ${done - loaded} ms for ${audio.size / 16} ms of audio: $text")
             pending.finish()
         }.start()

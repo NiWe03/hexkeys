@@ -727,8 +727,10 @@ const FLICK: f32 = 0.35;
 const STILL: f32 = 0.25;
 
 /// How near the delete edge a touch has to start to be a delete swipe, in
-/// key widths: a finger sliding in from the edge lands close to it.
-const EDGE: f32 = 0.8;
+/// key widths: a finger sliding in from the edge lands close to it. In the
+/// phone's log most strokes leftwards from within 1.1 key widths of the
+/// right edge were deletes started a little too far in, decoded as swipes.
+const EDGE: f32 = 1.1;
 
 /// How far a delete swipe may bend away from the straight line between
 /// where it started and where the finger is, before it counts as swipe
@@ -1507,9 +1509,9 @@ pub fn qwertz_row(label: &str) -> Option<usize> {
 /// [`Keyboard::accents`].
 fn alternates(label: &str) -> &'static [&'static str] {
     match label {
-        "." => &[",", ";", ":", "…", "-"],
+        "." => &[",", ":", "-", ";", "…"],
         "?" => &["!", "'", "\"", "¿", "¡"],
-        "," => &[";", ":", "'", "\"", "-"],
+        "," => &[":", "-", ";", "'", "\""],
         _ => &[],
     }
 }
@@ -1769,7 +1771,7 @@ mod tests {
         assert_eq!(keyboard.label(g), "G");
         assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.1, -0.6), 40), Action::Commit("G".into()));
         assert_eq!(keyboard.label(g), "g");
-        assert_eq!(gesture(&mut keyboard, ",", &[(0.0, -0.6)]), Action::Commit(";".into()), "punctuation gives its first alternative");
+        assert_eq!(gesture(&mut keyboard, ",", &[(0.0, -0.6)]), Action::Commit(":".into()), "punctuation gives its first alternative");
         assert_eq!(gesture(&mut keyboard, "space", &[(0.0, -0.6)]), Action::Nothing);
     }
 
@@ -2088,8 +2090,8 @@ mod tests {
         keyboard.touch_down(h, 0);
         keyboard.touch_move(Point { x: h.x + 0.1 * w, y: h.y - 0.8 * w }, 150);
         assert_eq!(keyboard.touch_up(Point { x: h.x + 0.2 * w, y: h.y - 1.6 * w }, 300), Action::Swipe);
-        // Left from the right third, quickly: deletes on lifting.
-        let o = keyboard.layout.find("o").cells[0];
+        // Left from the right third, short of the edge, quickly: deletes on lifting.
+        let o = keyboard.layout.find("i").cells[0];
         keyboard.touch_down(o, 0);
         keyboard.touch_move(Point { x: o.x - 0.7 * w, y: o.y }, 50);
         assert_eq!(keyboard.touch_up(Point { x: o.x - 1.4 * w, y: o.y + 0.1 * w }, 100), Action::Delete { pieces: 1, words: false, started: true }, "a flick takes one");
