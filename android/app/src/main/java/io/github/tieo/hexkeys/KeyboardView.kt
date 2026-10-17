@@ -74,22 +74,31 @@ class KeyboardView(
             if (handle != 0L) Core.setAccents(handle, value)
         }
 
-    /** Speech input's state, for how the microphone button looks. */
+    /** Speech input's state: listening since [listeningSince], and stretches still being recognised. */
     var listening = false
         set(value) {
             field = value
+            if (value) {
+                listeningSince = SystemClock.uptimeMillis()
+                levels.clear()
+            }
             invalidate()
         }
-    var recognising = false
+    var recognising = 0
         set(value) {
             field = value
             invalidate()
         }
-    var voiceLevel = 0f
-        set(value) {
-            field = value
-            invalidate()
-        }
+    private var listeningSince = 0L
+
+    /** The loudness of the latest tenths of a second, the newest last, for the waveform. */
+    private val levels = ArrayDeque<Float>()
+
+    fun voiceLevel(level: Float) {
+        levels.addLast(level)
+        while (levels.size > LEVELS) levels.removeFirst()
+        invalidate()
+    }
 
     /** Whether a password manager is set up, which the key button at the strip's right end opens. */
     var passwordsAvailable = false
@@ -138,6 +147,14 @@ class KeyboardView(
     private val dividerPaint = Paint().apply {
         strokeWidth = density
     }
+    private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val spinnerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f * density
+        strokeCap = Paint.Cap.ROUND
+    }
     private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 5f * density
@@ -163,6 +180,7 @@ class KeyboardView(
         hintPaint.alpha = 0xA8
         stripPaint.color = theme.label
         dividerPaint.color = theme.other
+        spinnerPaint.color = theme.accent
         trailPaint.color = theme.accent
         trailPaint.alpha = 0xB0
     }
@@ -338,14 +356,23 @@ class KeyboardView(
         if (passwordsAvailable && !chipsShown) {
             drawIcon(canvas, R.drawable.icon_key, width - stripSide / 2f, middle, iconSize, theme.label)
         }
-        // The microphone: in the accent colour and swelling with the voice while listening, dimmed while recognising.
-        val micColor = when {
-            listening -> theme.accent
-            recognising -> (theme.label and 0x00FFFFFF) or 0x66000000
-            else -> theme.label
+        val micX = width - stripSide * 1.5f
+        if (listening) {
+            drawIcon(canvas, R.drawable.icon_stop_circle, micX, middle, iconSize * 1.15f, theme.accent)
+        } else {
+            drawIcon(canvas, R.drawable.icon_mic, micX, middle, iconSize, theme.label)
         }
-        val micSize = if (listening) iconSize * (1f + (voiceLevel * 6f).coerceAtMost(0.4f)) else iconSize
-        drawIcon(canvas, R.drawable.icon_mic, width - stripSide * 1.5f, middle, micSize, micColor)
+        if (recognising > 0) {
+            // A turning arc around the button while speech is still being turned into text.
+            val radius = iconSize * 0.8f
+            val turn = (SystemClock.uptimeMillis() % 1000) * 0.36f
+            canvas.drawArc(micX - radius, middle - radius, micX + radius, middle + radius, turn, 100f, false, spinnerPaint)
+            postInvalidateOnAnimation()
+        }
+        if (listening || recognising > 0) {
+            drawDictation(canvas, middle)
+            return
+        }
         if (chipsShown) return
         val slotWidth = (width - 4f * stripSide) / 3f
         for ((index, word) in slots.withIndex()) {
@@ -361,6 +388,36 @@ class KeyboardView(
         for (index in 1..2) {
             val x = 2 * stripSide + slotWidth * index
             canvas.drawLine(x, headroom + stripHeight * 0.3f, x, headroom + stripHeight * 0.7f, dividerPaint)
+        }
+    }
+
+    /**
+     * In place of the words while dictating: the voice as bars, newest at
+     * the right, and how long it has been listening; the bars dim once
+     * listening stops and only the recognising is left.
+     */
+    private fun drawDictation(canvas: Canvas, middle: Float) {
+        val left = 2 * stripSide + 8 * density
+        stripPaint.isFakeBoldText = false
+        stripPaint.textSize = 15 * resources.displayMetrics.scaledDensity
+        val seconds = ((SystemClock.uptimeMillis() - listeningSince) / 1000).toInt()
+        val clock = "%d:%02d".format(seconds / 60, seconds % 60)
+        val clockWidth = stripPaint.measureText("00:00")
+        val right = width - 2 * stripSide - clockWidth - 12 * density
+        if (listening) {
+            canvas.drawText(clock, right + 6 * density + clockWidth / 2, middle - (stripPaint.descent() + stripPaint.ascent()) / 2, stripPaint)
+            postInvalidateDelayed(250)
+        }
+        val step = (right - left) / LEVELS
+        wavePaint.color = theme.accent
+        wavePaint.alpha = if (listening) 0xFF else 0x60
+        wavePaint.strokeWidth = step * 0.6f
+        val tallest = stripHeight * 0.32f
+        for ((index, level) in levels.withIndex()) {
+            val x = right - (levels.size - index - 0.5f) * step
+            // Loudness spans a wide range; its square root shows quiet speech too.
+            val half = maxOf(1.5f * density, tallest * kotlin.math.sqrt((level * 8f).coerceAtMost(1f)))
+            canvas.drawLine(x, middle - half, x, middle + half, wavePaint)
         }
     }
 
@@ -625,6 +682,9 @@ class KeyboardView(
 
         /** Marks that sit high or low on the line and look misplaced unless centred on their ink. */
         private val INK_CENTRED = setOf(".", ",", ";", ":", "'", "\"", "…", "!", "?", "¡", "¿")
+
+        /** Tenths of a second of voice the waveform shows. */
+        private const val LEVELS = 48
 
         /** Main thread time from which a step counts as slow in the gesture log, in ms. */
         private const val SLOW_MS = 8L

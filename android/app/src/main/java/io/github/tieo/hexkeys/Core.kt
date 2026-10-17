@@ -55,6 +55,7 @@ object Core {
 
     /** Choices in the open popup, 0 when none is open. */
     external fun popupCount(handle: Long): Int
+    /** The choice lifting the finger takes, or -1 for none. */
     external fun popupSelected(handle: Long): Int
     external fun popupOutline(handle: Long, index: Int): FloatArray
     external fun popupLabelPosition(handle: Long, index: Int): FloatArray

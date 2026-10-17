@@ -17,11 +17,24 @@ import java.util.concurrent.Executors
 /** A speech model the user can download, by size. */
 data class VoiceModel(val id: String, val name: String, val file: String, val megabytes: Int)
 
+/** What a dictation tells the keyboard while it runs; all of it arrives on the main thread. */
+class Dictation(
+    /** The loudness of the last tenth of a second, 0 to 1. */
+    val level: (Float) -> Unit,
+    /** Text recognised from one stretch of speech, in the order it was said. */
+    val text: (String) -> Unit,
+    /** Listening stopped, or a stretch was handed on or finished recognising. */
+    val changed: () -> Unit,
+)
+
 /**
  * Speech input: the whisper models offered for download, recording from the
  * microphone at 16 kHz, and handing the recording to whisper.cpp in the
- * core. Recording and recognition run off the main thread; results come
- * back on it.
+ * core. A dictation is cut into stretches at pauses; each is recognised
+ * while the next is still being spoken and its text put in at once, so a
+ * long dictation needs no more than its last stretch recognised after it
+ * ends, and nothing said is lost to a length limit. Recording and
+ * recognition run off the main thread.
  */
 class Voice(private val context: Context) {
 
@@ -29,16 +42,18 @@ class Voice(private val context: Context) {
     private val worker = Executors.newSingleThreadExecutor()
     private var model = 0L
     private var loadedFile: String? = null
-    private var recorder: AudioRecord? = null
-    private var samples = FloatArray(0)
-    private var count = 0
 
     /** Whether it is listening now. */
+    @Volatile
     var listening = false
         private set
 
-    /** Whether recognition is under way. */
-    var working = false
+    /** Stretches handed on and not recognised yet. */
+    var pending = 0
+        private set
+
+    /** When listening started, as [android.os.SystemClock.uptimeMillis]. */
+    var startedAt = 0L
         private set
 
     /**
@@ -46,8 +61,8 @@ class Voice(private val context: Context) {
      * use the microphone, which settings take care of.
      */
     @SuppressLint("MissingPermission")
-    fun start(level: (Float) -> Unit): Boolean {
-        if (listening || working) return false
+    fun start(languages: String, dictation: Dictation): Boolean {
+        if (listening) return false
         if (!ready(context)) return false
         val minimum = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val record = AudioRecord(
@@ -58,72 +73,171 @@ class Voice(private val context: Context) {
             record.release()
             return false
         }
-        recorder = record
-        samples = FloatArray(RATE * MAX_SECONDS)
-        count = 0
         listening = true
+        startedAt = android.os.SystemClock.uptimeMillis()
         record.startRecording()
         Thread {
-            val chunk = ShortArray(RATE / 10)
-            while (listening) {
-                val read = record.read(chunk, 0, chunk.size)
-                if (read <= 0) continue
-                var sum = 0f
-                for (i in 0 until read) {
-                    val value = chunk[i] / 32768f
-                    if (count < samples.size) samples[count++] = value
-                    sum += value * value
-                }
-                val rms = kotlin.math.sqrt(sum / read)
-                main.post { level(rms) }
-                // Whisper hears 30 seconds at a time; stop there.
-                if (count >= samples.size) main.post { listening = false }
+            try {
+                listen({ chunk -> record.read(chunk, 0, chunk.size) }, languages, dictation)
+            } finally {
+                record.stop()
+                record.release()
             }
         }.start()
         return true
     }
 
-    /** Stops listening and recognises what was said; `done` gets the text, empty when nothing was made out. */
-    fun stop(languages: String, done: (String) -> Unit) {
-        if (!listening) return
+    /**
+     * Dictates from recorded 16 kHz audio instead of the microphone, at the
+     * pace it was spoken, for testing where there is no microphone.
+     */
+    fun dictate(audio: ShortArray, languages: String, dictation: Dictation) {
+        if (listening) return
+        listening = true
+        startedAt = android.os.SystemClock.uptimeMillis()
+        var position = 0
+        Thread {
+            listen({ chunk ->
+                Thread.sleep(CHUNK_MS.toLong())
+                val count = minOf(chunk.size, audio.size - position)
+                if (count <= 0) {
+                    listening = false
+                    return@listen 0
+                }
+                audio.copyInto(chunk, 0, position, position + count)
+                position += count
+                count
+            }, languages, dictation)
+        }.start()
+    }
+
+    /** Stops listening; what was said last is still recognised and put in. */
+    fun stop() {
         listening = false
-        working = true
-        val record = recorder
-        recorder = null
-        val audio = samples.copyOf(count)
+    }
+
+    /**
+     * Records until stopped or [MAX_MINUTES] are up, cutting a stretch off
+     * after a pause once some speech came before it, or at the quietest
+     * moment of its last seconds when it grows to [MAX_STRETCH_MS].
+     * Stretches without speech are dropped: whisper makes up words for
+     * silence.
+     */
+    private fun listen(read: (ShortArray) -> Int, languages: String, dictation: Dictation) {
+        val chunk = ShortArray(CHUNK)
+        val stretch = FloatArray(RATE * MAX_STRETCH_MS / 1000)
+        var count = 0
+        val loudness = ArrayList<Float>()
+        var spoken = false
+        var quietFor = 0
+        var floor = 1f
+        val until = startedAt + MAX_MINUTES * 60_000L
+        fun handOn(end: Int) {
+            if (spoken) recognise(stretch.copyOf(end), languages, dictation)
+            stretch.copyInto(stretch, 0, end, count)
+            count -= end
+            loudness.subList(0, minOf(loudness.size, end / CHUNK)).clear()
+            spoken = loudness.any { it > threshold(floor) }
+            quietFor = 0
+        }
+        try {
+            while (listening && android.os.SystemClock.uptimeMillis() < until) {
+                val read = read(chunk)
+                if (read <= 0) continue
+                var sum = 0f
+                for (i in 0 until read) {
+                    val value = chunk[i] / 32768f
+                    stretch[count++] = value
+                    sum += value * value
+                }
+                val rms = kotlin.math.sqrt(sum / read)
+                loudness += rms
+                // The quietest moment so far is the room's own noise.
+                floor = minOf(floor, rms.coerceAtLeast(0.001f))
+                if (rms > threshold(floor)) {
+                    spoken = true
+                    quietFor = 0
+                } else {
+                    quietFor += CHUNK_MS
+                }
+                main.post { dictation.level(rms) }
+                if (spoken && quietFor >= PAUSE_MS && count >= RATE * MIN_STRETCH_MS / 1000) {
+                    handOn(count)
+                } else if (count + CHUNK > stretch.size) {
+                    // Too long without a pause: cut at the quietest tenth of a second of the last few.
+                    val recent = loudness.size - CUT_SEARCH_CHUNKS
+                    val quietest = (maxOf(1, recent) until loudness.size).minBy { loudness[it] }
+                    handOn(quietest * CHUNK)
+                }
+            }
+            handOn(count)
+        } finally {
+            listening = false
+            main.post { dictation.changed() }
+        }
+    }
+
+    private fun threshold(floor: Float) = maxOf(SPEECH_LEVEL, floor * 3f)
+
+    /** Recognises one stretch after those before it and hands on its text. */
+    private fun recognise(audio: FloatArray, languages: String, dictation: Dictation) {
+        main.post {
+            pending += 1
+            dictation.changed()
+        }
         worker.execute {
-            record?.stop()
-            record?.release()
             val text = runCatching {
-                val file = chosen(context)?.let { file(context, it) }
-                if (file != null && file.path != loadedFile) {
+                val chosen = chosen(context) ?: return@runCatching ""
+                val file = file(context, chosen)
+                if (file.path != loadedFile) {
                     if (model != 0L) Core.voiceFree(model)
                     model = Core.voiceLoad(file.path)
                     loadedFile = file.path
                 }
-                if (model == 0L || audio.size < RATE / 4) return@runCatching ""
+                if (model == 0L) return@runCatching ""
                 val started = System.currentTimeMillis()
                 val text = Core.voiceTranscribe(model, audio, languages)
-                chosen(context)?.let { measured(context, it, System.currentTimeMillis() - started, audio.size * 1000L / RATE) }
+                measured(context, chosen, System.currentTimeMillis() - started, audio.size * 1000L / RATE)
                 text
             }.getOrDefault("")
             main.post {
-                working = false
-                done(text)
+                pending -= 1
+                if (text.isNotBlank()) dictation.text(text.trim())
+                dictation.changed()
             }
         }
     }
 
     fun release() {
         listening = false
-        recorder?.release()
         worker.execute { if (model != 0L) Core.voiceFree(model) }
         worker.shutdown()
     }
 
     companion object {
         private const val RATE = 16_000
-        private const val MAX_SECONDS = 30
+
+        /** Audio is read a tenth of a second at a time. */
+        private const val CHUNK_MS = 100
+        private const val CHUNK = RATE * CHUNK_MS / 1000
+
+        /** A pause this long after speech ends a stretch. */
+        private const val PAUSE_MS = 700
+
+        /** A stretch is at least this long, so a short breath does not split a sentence. */
+        private const val MIN_STRETCH_MS = 2000
+
+        /** A stretch is at most this long; whisper hears 30 seconds at a time. */
+        private const val MAX_STRETCH_MS = 28_000
+
+        /** Where a stretch too long for a pause is cut: its quietest tenth of a second within the last four seconds. */
+        private const val CUT_SEARCH_CHUNKS = 40
+
+        /** Loudness below which nothing counts as speech, however quiet the room. */
+        private const val SPEECH_LEVEL = 0.01f
+
+        /** The longest dictation. */
+        private const val MAX_MINUTES = 10
 
         /** Preference naming the chosen model's id. */
         const val MODEL = "voice_model"

@@ -32,6 +32,12 @@ import android.widget.TextView
  */
 class SettingsActivity : Activity() {
 
+    companion object {
+        /** Extra naming the part of the settings to show, such as [VOICE]. */
+        const val SECTION = "section"
+        const val VOICE = "voice"
+    }
+
     private lateinit var setup: View
     private lateinit var setupButton: Button
     private lateinit var languages: TextView
@@ -95,9 +101,41 @@ class SettingsActivity : Activity() {
             startActivity(Intent(this, LanguagesActivity::class.java))
         }).apply { (layoutParams as LinearLayout.LayoutParams).topMargin = ui.dp(24) })
 
-        setContentView(ui.page(column))
+        val page = ui.page(column)
+        setContentView(page)
         title = "Hexkeys"
+        if (intent.getStringExtra(SECTION) == VOICE) showVoice(page)
     }
+
+    /**
+     * Opened from the microphone button while speaking is not set up yet:
+     * the voice setting scrolled into view and lit up, and the microphone
+     * asked for at once when a model is there already.
+     */
+    private fun showVoice(page: android.widget.ScrollView) {
+        page.post {
+            page.smoothScrollTo(0, voice.top - ui.dp(48))
+            val highlight = GradientDrawable().apply {
+                cornerRadius = ui.dp(20).toFloat()
+                setColor(0x14FFFFFF)
+                setStroke(ui.dp(2), ui.accent)
+            }
+            val plain = voice.background
+            voice.background = highlight
+            android.animation.ObjectAnimator.ofInt(highlight, "alpha", 255, 90, 255, 90, 255).apply {
+                duration = 1600
+                doOnEnd { voice.background = plain }
+                start()
+            }
+        }
+        if (Voice.chosen(this) != null && !Voice.permitted(this)) {
+            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1)
+        }
+    }
+
+    private fun android.animation.Animator.doOnEnd(action: () -> Unit) = addListener(object : android.animation.AnimatorListenerAdapter() {
+        override fun onAnimationEnd(animation: android.animation.Animator) = action()
+    })
 
     override fun onResume() {
         super.onResume()
@@ -124,6 +162,7 @@ class SettingsActivity : Activity() {
     }
 
     private lateinit var microphone: Button
+    private lateinit var voice: View
     private lateinit var layouts: LayoutTiles
 
     /**
@@ -144,11 +183,16 @@ class SettingsActivity : Activity() {
             }
         }
         // Each model with its size and, once one has been timed on this phone, how long a sentence takes.
-        val options = listOf("off" to "Off") + Voice.MODELS.map { model ->
-            val time = Voice.expectedTiming(this, model)?.let { (ms, measured) ->
-                "\n${if (measured) "" else "≈"}${"%.1f".format(ms / 1000f)} s"
-            }.orEmpty()
-            model.id to "${model.name}\n${model.megabytes} MB$time"
+        val options = listOf<Pair<String, CharSequence>>("off" to "Off") + Voice.MODELS.map { model ->
+            val label = android.text.SpannableStringBuilder("${model.name}\n${model.megabytes} MB")
+            Voice.expectedTiming(this, model)?.let { (ms, measured) ->
+                label.append("\n")
+                val icon = label.length
+                label.append(" ")
+                label.setSpan(IconSpan(getDrawable(R.drawable.icon_timer)!!), icon, icon + 1, 0)
+                label.append(" ${if (measured) "" else "≈"}${"%.1f".format(ms / 1000f)} s")
+            }
+            model.id to label
         }
         var choice: View? = null
         choice = ui.segmented(options, chosen, columns = 4) { id ->
@@ -181,7 +225,8 @@ class SettingsActivity : Activity() {
         microphone = ui.primaryButton("Allow the microphone").apply {
             setOnClickListener { requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1) }
         }
-        return ui.card(ui.label("Size and time for a spoken sentence on this phone"), choice, progress, microphone)
+        voice = ui.card(choice, progress, microphone)
+        return voice
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -408,7 +453,7 @@ class Ui(private val activity: Activity) {
      * when another is tapped.
      */
     fun segmented(
-        options: List<Pair<String, String>>,
+        options: List<Pair<String, CharSequence>>,
         chosen: String,
         columns: Int = options.size,
         choose: (String) -> Unit,
@@ -418,7 +463,7 @@ class Ui(private val activity: Activity) {
         // Every button as tall as the label with the most lines, counting a long one as wrapping once.
         val width = activity.resources.displayMetrics.widthPixels / density / columns
         val lines = options.maxOf { (_, name) ->
-            name.split('\n').sumOf { line -> if (line.length * 8.5f > width - 24) 2 else 1 }
+            name.toString().split('\n').sumOf { line -> if (line.length * 8.5f > width - 24) 2 else 1 }
         }
         val tallest = dp(24 + 20 * lines)
         fun paint(current: String) {
@@ -563,5 +608,22 @@ private class LayoutPreview(context: Context, private val space_middle: Boolean)
             labels.textSize = cell * if (label.codePointCount(0, label.length) == 1) 0.4f else 0.24f
             canvas.drawText(label, x, y - (labels.descent() + labels.ascent()) / 2, labels)
         }
+    }
+}
+
+/** An icon in a line of text, as tall as the text and in its colour, which follows the button's state. */
+private class IconSpan(private val icon: android.graphics.drawable.Drawable) : android.text.style.ReplacementSpan() {
+    override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int, fm: Paint.FontMetricsInt?) =
+        (paint.textSize * 1.05f).toInt()
+
+    override fun draw(
+        canvas: Canvas, text: CharSequence?, start: Int, end: Int,
+        x: Float, top: Int, y: Int, bottom: Int, paint: Paint,
+    ) {
+        val size = (paint.textSize * 1.05f).toInt()
+        val iconTop = y + paint.fontMetricsInt.ascent / 2 - size / 2 + (paint.fontMetricsInt.descent) / 2
+        icon.setTint(paint.color)
+        icon.setBounds(x.toInt(), iconTop, x.toInt() + size, iconTop + size)
+        icon.draw(canvas)
     }
 }

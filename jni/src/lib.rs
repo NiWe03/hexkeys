@@ -254,7 +254,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_popupSelected(
     _class: JClass,
     handle: jlong,
 ) -> jint {
-    keyboard(handle).popup.as_ref().map_or(-1, |popup| popup.selected as jint)
+    keyboard(handle).popup.as_ref().and_then(|popup| popup.selected).map_or(-1, |selected| selected as jint)
 }
 
 #[unsafe(no_mangle)]
@@ -264,10 +264,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_popupOutline(
     handle: jlong,
     index: jint,
 ) -> jfloatArray {
-    let keyboard = keyboard(handle);
-    let popup = keyboard.popup.as_ref().expect("no popup open");
-    let flat: Vec<f32> =
-        keyboard.layout.hexagon(popup.cells[index as usize]).iter().flat_map(|p| [p.x, p.y]).collect();
+    let flat: Vec<f32> = keyboard(handle).popup_outline(index as usize).iter().flat_map(|p| [p.x, p.y]).collect();
     floats(&env, &flat)
 }
 

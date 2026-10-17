@@ -690,13 +690,23 @@ pub struct Popup {
     /// Centres of the choice cells, in keyboard coordinates. The row sits one
     /// row above the key, so over the top row it is above the keyboard.
     pub cells: Vec<Point>,
-    pub selected: usize,
+    /// Width of a choice's hexagon, smaller than a key's.
+    pub cell_width: f32,
+    /// The choice lifting the finger takes, if any.
+    pub selected: Option<usize>,
     /// Where the finger was when the popup opened; the selection follows
     /// it only once it has moved away from there.
     pub origin: Point,
     /// The finger has moved away from `origin`.
     pub moved: bool,
+    /// A capital typed already by holding its letter, which a chosen
+    /// accent replaces; lifting without choosing one keeps it.
+    pub replaces: Option<String>,
 }
+
+/// How big a popup's hexagons are next to a key's, as on other keyboards
+/// whose long-press choices are smaller than the keys.
+const POPUP_SCALE: f32 = 0.72;
 
 /// Below this distance from where it went down, a finger is tapping, in key
 /// widths. Above it the touch is a flick, up to one key width; anything
@@ -1067,8 +1077,8 @@ impl Keyboard {
 
     pub fn touch_up(&mut self, at: Point, time: u64) -> Action {
         if self.popup.is_some() {
-            let typed = self.touch.take().is_some_and(|touch| touch.capital_typed);
-            return if typed { self.popup_swap() } else { self.popup_release() };
+            self.touch = None;
+            return self.popup_release();
         }
         let moved = self.touch_move(at, time);
         let Some(touch) = self.touch.take() else { return moved };
@@ -1146,9 +1156,9 @@ impl Keyboard {
             Gesture::Tap if self.holds_for_capital(touch.key) => {
                 self.touch.as_mut().expect("touch").capital_typed = true;
                 let capital = upper(&self.layout.keys[touch.key].label);
-                // Only a letter with accents has anything to slide to.
-                if self.choices(touch.key).len() > 1 {
-                    self.long_press(touch.key);
+                // A letter with accents offers them to slide to, in place of the capital.
+                if self.long_press(touch.key) {
+                    self.popup.as_mut().expect("popup").replaces = Some(capital.clone());
                 }
                 self.shift = Shift::Off;
                 Action::Commit(capital)
@@ -1195,6 +1205,9 @@ impl Keyboard {
     }
 
     /// Opens the key's popup if it has alternatives; returns whether it did.
+    /// The choices sit in a row of small hexagons just above the key,
+    /// centred on it; a letter held for its capital has its accents start
+    /// above it instead, with none chosen until the finger moves to one.
     pub fn long_press(&mut self, index: usize) -> bool {
         let choices = self.choices(index);
         if choices.is_empty() {
@@ -1202,23 +1215,30 @@ impl Keyboard {
         }
         let layout = &self.layout;
         let center = layout.keys[index].center();
-        let w = layout.cell_width;
+        let (w, h) = (layout.cell_width * POPUP_SCALE, layout.cell_height * POPUP_SCALE);
         let n = choices.len() as f32;
-        // Centred over the key, then pushed inwards so no cell leaves the sides.
-        // A capital typed by holding starts above the key, the accents after it.
-        let start = if self.holds_for_capital(index) { center.x } else { center.x - (n - 1.0) / 2.0 * w };
+        let holding = self.holds_for_capital(index);
+        // Pushed inwards so no cell leaves the sides.
+        let start = if holding { center.x } else { center.x - (n - 1.0) / 2.0 * w };
         let first = start.clamp(w / 2.0, layout.width - w / 2.0 - (n - 1.0) * w);
-        let y = center.y - layout.cell_height * 0.75;
+        // Overlapping the key's top point a little, as the honeycomb's rows overlap.
+        let y = center.y - layout.cell_height / 2.0 - h / 4.0;
         let cells: Vec<Point> = (0..choices.len()).map(|i| Point { x: first + i as f32 * w, y }).collect();
-        // Holding a letter for its capital starts on the capital.
-        let selected = if self.holds_for_capital(index) {
-            choices.iter().position(|choice| *choice == upper(&layout.keys[index].label)).unwrap_or(0)
-        } else {
-            nearest_by_x(&cells, center.x)
-        };
+        let selected = if holding { None } else { Some(nearest_by_x(&cells, center.x)) };
         let origin = self.touch.as_ref().map_or(center, |touch| touch.at);
-        self.popup = Some(Popup { choices, cells, selected, origin, moved: false });
+        self.popup = Some(Popup { choices, cells, cell_width: w, selected, origin, moved: false, replaces: None });
         true
+    }
+
+    /// The outline of a popup choice's hexagon.
+    pub fn popup_outline(&self, index: usize) -> Vec<Point> {
+        let Some(popup) = &self.popup else { return Vec::new() };
+        let center = popup.cells[index];
+        self.layout
+            .hexagon(center)
+            .into_iter()
+            .map(|p| Point { x: center.x + (p.x - center.x) * POPUP_SCALE, y: center.y + (p.y - center.y) * POPUP_SCALE })
+            .collect()
     }
 
     /// The key's long-press alternatives in the current shift state.
@@ -1232,9 +1252,6 @@ impl Keyboard {
         if shifted {
             choices = choices.iter().map(|c| upper(c)).collect();
         }
-        if self.holds_for_capital(index) {
-            choices.insert(0, upper(label));
-        }
         choices
     }
 
@@ -1247,33 +1264,26 @@ impl Keyboard {
     /// Follows the finger along an open popup.
     pub fn popup_move(&mut self, touch: Point) {
         let still = STILL * self.layout.cell_width;
+        let key_top = self.layout.cell_height * POPUP_SCALE;
         if let Some(popup) = &mut self.popup {
             popup.moved |= distance(touch, popup.origin) > still;
             if popup.moved {
-                popup.selected = nearest_by_x(&popup.cells, touch.x);
+                // Back down on the key, a held capital is kept after all.
+                let back = popup.replaces.is_some() && touch.y > popup.cells[0].y + key_top;
+                popup.selected = if back { None } else { Some(nearest_by_x(&popup.cells, touch.x)) };
             }
         }
     }
 
-    /// Lifting the finger from the popup of a letter whose capital is typed
-    /// already: the capital stays, or the chosen accent replaces it.
-    fn popup_swap(&mut self) -> Action {
-        match self.popup.take() {
-            Some(popup) if popup.selected != 0 => {
-                Action::Replace { old: popup.choices[0].clone(), new: popup.choices[popup.selected].clone() }
-            }
-            _ => Action::Redraw,
-        }
-    }
-
-    /// Lifting the finger commits the selected alternative.
+    /// Lifting the finger commits the chosen alternative, in place of a
+    /// capital typed by holding when there is one.
     pub fn popup_release(&mut self) -> Action {
-        match self.popup.take() {
-            Some(popup) => {
-                self.shift = Shift::Off;
-                Action::Commit(popup.choices[popup.selected].clone())
-            }
-            None => Action::Redraw,
+        let Some(popup) = self.popup.take() else { return Action::Redraw };
+        self.shift = Shift::Off;
+        match (popup.selected, popup.replaces) {
+            (Some(index), Some(old)) => Action::Replace { old, new: popup.choices[index].clone() },
+            (Some(index), None) => Action::Commit(popup.choices[index].clone()),
+            (None, _) => Action::Redraw,
         }
     }
 
@@ -1688,19 +1698,19 @@ mod tests {
         assert!(keyboard.popup.is_none());
         assert_eq!(keyboard.deadline(), None);
         assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.0, 0.0), 900), Action::Redraw);
-        // Accents open with the capital typed and chosen.
+        // Accents open with the capital typed and none of them chosen.
         keyboard.touch_down(near(&keyboard, "a", 0.0, 0.0), 1000);
         assert_eq!(keyboard.tick(1000 + CAPITAL_HOLD_MS), Action::Commit("A".into()));
         let popup = keyboard.popup.clone().expect("popup");
-        assert_eq!(popup.choices, ["A", "ä", "à"]);
-        assert_eq!(popup.selected, 0);
-        assert!(popup.cells[0].x - near(&keyboard, "a", 0.0, 0.0).x < 1.0, "the capital sits above the key");
+        assert_eq!(popup.choices, ["ä", "à"]);
+        assert_eq!(popup.selected, None);
+        assert!((popup.cells[0].x - near(&keyboard, "a", 0.0, 0.0).x).abs() < 1.0, "the first accent sits above the key");
         // A finger never holds perfectly still; a little drift keeps the capital.
         keyboard.touch_move(near(&keyboard, "a", 0.1, 0.05), 1250);
         assert_eq!(keyboard.touch_up(near(&keyboard, "a", 0.1, 0.05), 1300), Action::Redraw);
         keyboard.touch_down(near(&keyboard, "a", 0.0, 0.0), 2000);
         keyboard.tick(2000 + CAPITAL_HOLD_MS);
-        let cell = keyboard.popup.as_ref().unwrap().cells[1];
+        let cell = keyboard.popup.as_ref().unwrap().cells[0];
         keyboard.touch_move(cell, 2400);
         assert_eq!(keyboard.touch_up(cell, 2450), Action::Replace { old: "A".into(), new: "ä".into() });
         // Punctuation keeps the long press.

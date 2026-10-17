@@ -417,23 +417,32 @@ class HexInputMethod : InputMethodService() {
     private fun toggleVoice() {
         val view = keyboard ?: return
         if (voice.listening) {
-            view.listening = false
-            view.recognising = true
-            voice.stop(voiceLanguages()) { text ->
-                view.recognising = false
-                if (currentInputConnection == null || text.isEmpty()) return@stop
+            voice.stop()
+            return
+        }
+        if (!Voice.ready(this)) {
+            startActivity(
+                Intent(this, SettingsActivity::class.java)
+                    .putExtra(SettingsActivity.SECTION, SettingsActivity.VOICE)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+            )
+            return
+        }
+        val started = voice.start(voiceLanguages(), Dictation(
+            level = { view.voiceLevel(it) },
+            text = { text ->
+                if (currentInputConnection == null) return@Dictation
                 editor.finishComposing()
                 val last = editor.textBefore().lastOrNull()
                 val space = last != null && !last.isWhitespace() && last !in OPENING
                 editor.commit((if (space) " " else "") + text)
-            }
-            return
-        }
-        if (!Voice.ready(this)) {
-            startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            return
-        }
-        if (voice.start { level -> view.voiceLevel = level }) view.listening = true
+            },
+            changed = {
+                view.listening = voice.listening
+                view.recognising = voice.pending
+            },
+        ))
+        if (started) view.listening = true
     }
 
     /** The languages of the enabled dictionaries as ISO codes, for recognising speech. */
