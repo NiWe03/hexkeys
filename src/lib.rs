@@ -547,17 +547,20 @@ pub fn honeycomb() -> LayoutSpec {
     }
 }
 
-/// [`space_middle`] with space and the marks at the bottom: they trade places
-/// with x c v b, which keeps every other key where it is in [`space_middle`].
-/// The bottom row reads . space ? as the reference layout's middle row does, and ?123
-/// and enter stay in their cells.
+/// [`space_middle`] with space and the marks at the bottom. Its top two letter
+/// rows are the reference layout's; the 13 letters left are exactly QWERTZ's home row
+/// s d f h j k and bottom row y x c v b n m, which fill the next two rows
+/// in QWERTZ order, f h and y in the cells the reference layout has them in. Keeping
+/// the reference layout's y s d n m j k instead leaves no room for b left of n. The
+/// bottom row reads . space ? as the reference layout's middle row does, and ?123 and
+/// enter stay in their cells.
 pub fn space_bottom() -> LayoutSpec {
     LayoutSpec {
         rows: vec![
             row(0, letters("wetzio")),
             row(0, letters("qargulp")),
-            row(0, letters("xcfhvb")),
-            row(0, letters("ysdnmjk")),
+            row(0, letters("sdfhjk")),
+            row(0, letters("yxcvbnm")),
             row(0, keys(&[(".", 1), ("space", 2), ("?", 1), ("?123", 1), ("⏎", 1)])),
         ],
         first_row_shifted: true,
@@ -1858,20 +1861,16 @@ mod tests {
     }
 
     #[test]
-    fn space_at_the_bottom_differs_from_space_middle_in_eight_keys_only() {
+    fn space_at_the_bottom_keeps_qwertz_order_below_the_shared_rows() {
         let (middle, bottom) = (space_middle(), space_bottom());
-        let mut moved = Vec::new();
-        for (a, b) in middle.rows.iter().zip(&bottom.rows) {
-            let cells = |row: &RowSpec| row.keys.iter().flat_map(|key| vec![key.label.clone(); key.span]).collect::<Vec<_>>();
-            for (x, y) in cells(a).into_iter().zip(cells(b)) {
-                if x != y {
-                    moved.push(x);
-                }
-            }
+        assert_eq!(middle.rows[..2], bottom.rows[..2], "the top letter rows are the reference layout's");
+        let labels = |row: &RowSpec| row.keys.iter().map(|key| key.label.clone()).collect::<Vec<_>>().concat();
+        assert_eq!(labels(&bottom.rows[2]), "sdfhjk");
+        assert_eq!(labels(&bottom.rows[3]), "yxcvbnm");
+        // f, h and y stay in the cells the middle layout has them in.
+        for (row, column) in [(2, 2), (2, 3), (3, 0)] {
+            assert_eq!(middle.rows[row].keys[column], bottom.rows[row].keys[column]);
         }
-        moved.sort();
-        moved.dedup();
-        assert_eq!(moved, [".", "?", "b", "c", "space", "v", "x"]);
     }
 
     #[test]
