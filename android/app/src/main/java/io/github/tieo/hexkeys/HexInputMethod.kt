@@ -185,6 +185,10 @@ class HexInputMethod : InputMethodService() {
     private var slideUndo: Correction? = null
     private var slideUndone = false
 
+    /** The most pieces the delete slide under way has asked for, and how many it then had deleted. */
+    private var slidePeak = 0
+    private var slidePeakDeleted = 0
+
     /** Puts back what was typed in place of a correction; the first word put back stays as typed. */
     private fun undoCorrection(undo: Correction) {
         editor.deleteBefore(undo.inserted.length)
@@ -292,6 +296,8 @@ class HexInputMethod : InputMethodService() {
                     swipedBeforeDelete = justSwiped?.takeIf { before.endsWith(it) }
                     slideUndo = undo?.takeIf { before.endsWith(it.inserted) }
                     slideUndone = false
+                    slidePeak = 0
+                    slidePeakDeleted = 0
                 }
                 val word = swipedBeforeDelete
                 connection.beginBatch()
@@ -299,8 +305,14 @@ class HexInputMethod : InputMethodService() {
                 // what was typed comes back, as backspace brings it back, and sliding
                 // back to the start puts the correction in again.
                 val undoing = slideUndo
-                val pieces = if (undoing == null) slid else slid - 1
-                if (undoing != null && pieces >= 0 && !slideUndone) {
+                val asked = if (undoing == null) slid else slid - 1
+                // The core counts on past the end of the text; coming back from there
+                // puts back what was really deleted in the same proportion.
+                val pieces = when {
+                    asked >= slidePeak || slidePeak == 0 -> asked
+                    else -> (asked.toLong() * slidePeakDeleted / slidePeak).toInt()
+                }
+                if (undoing != null && asked >= 0 && !slideUndone) {
                     undoCorrection(undoing)
                     slideUndone = true
                     before = connection.textBefore()
@@ -330,7 +342,11 @@ class HexInputMethod : InputMethodService() {
                     deleted.addLast(piece)
                 }
                 while (deleted.size > maxOf(pieces, 0)) connection.commit(deleted.removeLast())
-                if (undoing != null && pieces < 0 && slideUndone) {
+                if (asked >= slidePeak) {
+                    slidePeak = asked
+                    slidePeakDeleted = deleted.size
+                }
+                if (undoing != null && asked < 0 && slideUndone) {
                     connection.deleteBefore(undoing.typed.length)
                     connection.commit(undoing.inserted)
                     keptEnd = -1

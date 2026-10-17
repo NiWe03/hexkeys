@@ -1197,7 +1197,15 @@ impl Keyboard {
             if forwards > deleting.characters {
                 deleting.characters = forwards;
             } else if back < deleting.characters {
+                // Coming back puts everything back in proportion, the letters taken
+                // while resting and the words too, all of it at the start.
+                let scaled = deleting.pieces() * back / deleting.characters;
                 deleting.characters = back;
+                let mut over = deleting.pieces().saturating_sub(scaled);
+                let words = over.min(deleting.words);
+                deleting.words -= words;
+                over -= words;
+                deleting.held -= over.min(deleting.held);
             }
             if started || deleting.pieces() != before {
                 action = Action::Delete { pieces: deleting.pieces(), words: false, started };
@@ -1972,6 +1980,29 @@ mod tests {
             .collect();
         assert!(pauses.windows(2).all(|pair| pair[1] <= pair[0]), "{pauses:?}");
         assert!(keyboard.deleting().unwrap().2);
+    }
+
+    #[test]
+    fn sliding_back_to_the_start_puts_back_what_resting_took() {
+        let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
+        let w = keyboard.layout.cell_width;
+        let y = keyboard.layout.numbers_bottom / 2.0;
+        keyboard.touch_down(Point { x: 1007.0, y }, 0);
+        keyboard.touch_move(Point { x: 0.5 * w, y }, 500);
+        let mut time = 500;
+        for _ in 0..20 {
+            time = keyboard.deadline().unwrap();
+            keyboard.tick(time);
+        }
+        let mut last = Action::Nothing;
+        for step in 1..=20 {
+            let x = 0.5 * w + (1007.0 - 0.5 * w) * step as f32 / 20.0;
+            let action = keyboard.touch_move(Point { x, y }, time + step * 20);
+            if action != Action::Nothing {
+                last = action;
+            }
+        }
+        assert!(matches!(last, Action::Delete { pieces: 0, .. }), "{last:?}");
     }
 
     #[test]
