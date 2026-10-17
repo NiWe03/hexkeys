@@ -152,6 +152,9 @@ class KeyboardView(
     /** The slot a finger went down on, or -1 when the touch is not in the strip. */
     private var stripTouch = -1
 
+    /** Height of the number row, which emoji search covers with what it finds. */
+    val numbersHeight get() = if (handle != 0L) Core.numbersBottom(handle).toInt() else 0
+
     /** Where the keys start, below headroom and strip. */
     private val keysTop get() = headroom + stripHeight
 

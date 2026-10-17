@@ -179,7 +179,8 @@ class HexInputMethod : InputMethodService() {
     }
 
     private fun showEmojiResults() {
-        val found = if (query.isBlank()) emptyList() else emojiSearch.find(query.toString())
+        // Until something is typed, the recently used are at hand.
+        val found = if (query.isBlank()) frame?.emoji?.recent().orEmpty() else emojiSearch.find(query.toString())
         frame?.showResults(query.toString(), found) { emoji ->
             editor.finishComposing()
             editor.commit(emoji)

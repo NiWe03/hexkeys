@@ -42,6 +42,10 @@ class EmojiPanel(
         selector = GradientDrawable()
     }
     private val bottom = LinearLayout(context).apply { orientation = HORIZONTAL }
+    private val searchField = android.widget.ImageView(context).apply {
+        setImageResource(R.drawable.icon_search)
+        scaleType = android.widget.ImageView.ScaleType.FIT_START
+    }
     private var theme = Theme.current(context)
 
     init {
@@ -53,6 +57,11 @@ class EmojiPanel(
             val (name, emoji) = line.split('\t').takeIf { it.size == 2 } ?: return@mapNotNull null
             name to emoji.split(' ').filter { paint.hasGlyph(it) }
         }
+        // Searching by name: a search field across the top, as the search field it opens.
+        addView(searchField, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply {
+            setMargins(dp(8), dp(6), dp(8), dp(2))
+        })
+        searchField.setOnClickListener { onSearch() }
         addView(tabs, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         addView(grid, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         addView(bottom, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
@@ -63,7 +72,8 @@ class EmojiPanel(
         }
         for ((label, weight, action) in listOf(
             Triple("ABC", 1f, onClose),
-            Triple("space", 3f, onSpace),
+            // Space is the long key, unnamed as on the keyboard.
+            Triple("", 3f, onSpace),
             Triple("", 1f, onBackspace),
         )) {
             bottom.addView(bar(label, action), LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight).apply {
@@ -79,6 +89,12 @@ class EmojiPanel(
     fun apply(theme: Theme) {
         this.theme = theme
         setBackgroundColor(theme.background)
+        searchField.setColorFilter(theme.label)
+        searchField.setPadding(dp(14), dp(9), 0, dp(9))
+        searchField.background = GradientDrawable().apply {
+            setColor(theme.other)
+            cornerRadius = dp(20).toFloat()
+        }
         for (i in 0 until bottom.childCount) {
             val view = bottom.getChildAt(i) as TextView
             view.setTextColor(theme.label)
@@ -105,7 +121,8 @@ class EmojiPanel(
 
     private fun current(): List<String> = if (shown == 0) recent() else groups[shown - 1].second
 
-    private fun recent(): List<String> =
+    /** The recently used, most recent first. */
+    fun recent(): List<String> =
         Dictionaries.preferences(context).getString(RECENT, "").orEmpty().split(' ').filter { it.isNotEmpty() }
 
     /** Puts an emoji first among the recently used. */
@@ -116,14 +133,6 @@ class EmojiPanel(
 
     private fun rebuildTabs() {
         tabs.removeAllViews()
-        // Searching by name comes first, as a magnifier.
-        tabs.addView(android.widget.ImageView(context).apply {
-            setImageResource(R.drawable.icon_search)
-            setColorFilter(theme.label)
-            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            setOnClickListener { onSearch() }
-        }, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         val icons = listOf("") + groups.map { it.second.firstOrNull() ?: "" }
         for ((index, icon) in icons.withIndex()) {
             tabs.addView(TextView(context).apply {

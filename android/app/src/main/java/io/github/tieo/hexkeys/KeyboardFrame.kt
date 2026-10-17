@@ -29,8 +29,10 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
     private val density = resources.displayMetrics.density
 
     /**
-     * Searching emoji by name, over the strip while the letters type the
-     * query: a way back to the emoji, the query, and the emoji it finds.
+     * Searching emoji by name while the letters type the query: over the
+     * strip a way back to the emoji and the query in a search field with
+     * its cursor, and over the number row the emoji it finds, the recently
+     * used until something is typed.
      */
     private val search = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -43,13 +45,28 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
     private val query = android.widget.TextView(context).apply {
         textSize = 17f
         maxLines = 1
-        setPadding((8 * density).toInt(), 0, (8 * density).toInt(), 0)
-        compoundDrawablePadding = (6 * density).toInt()
+        gravity = android.view.Gravity.CENTER_VERTICAL
+        setPadding((12 * density).toInt(), 0, (12 * density).toInt(), 0)
+        compoundDrawablePadding = (8 * density).toInt()
     }
-    private val results = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+    private val results = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = android.view.Gravity.CENTER_VERTICAL
+    }
     private val resultScroller = HorizontalScrollView(context).apply {
         isHorizontalScrollBarEnabled = false
         addView(results)
+        // Touches between the emoji must not reach the number keys underneath.
+        isClickable = true
+    }
+    private var cursorShown = true
+    private var queryText = ""
+    private val blink = object : Runnable {
+        override fun run() {
+            cursorShown = !cursorShown
+            paintQuery()
+            postDelayed(this, 530)
+        }
     }
 
     init {
@@ -60,48 +77,69 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         addView(emoji)
         emoji.visibility = GONE
         search.addView(searchBack, LinearLayout.LayoutParams(keyboard.stripSide, ViewGroup.LayoutParams.MATCH_PARENT))
-        search.addView(query, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        search.addView(resultScroller, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        search.addView(query, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+            setMargins(0, gap, gap * 2, gap)
+        })
         addView(search)
+        addView(resultScroller)
         search.visibility = GONE
+        resultScroller.visibility = GONE
         show(emptyList())
     }
 
     val searching get() = search.visibility == VISIBLE
 
-    /** Shows or hides the emoji search over the strip; `back` returns to the emoji. */
+    /** Shows or hides the emoji search; `back` returns to the emoji. */
     fun showSearch(on: Boolean, back: () -> Unit = {}) {
         search.visibility = if (on) VISIBLE else GONE
+        resultScroller.visibility = search.visibility
+        removeCallbacks(blink)
         if (on) {
             val theme = keyboard.theme
             search.setBackgroundColor(theme.background)
+            resultScroller.setBackgroundColor(theme.background)
             searchBack.setColorFilter(theme.label)
             searchBack.setOnClickListener { back() }
             query.setTextColor(theme.label)
+            query.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(theme.other)
+                cornerRadius = 100 * density
+            }
             val magnifier = context.getDrawable(R.drawable.icon_search)!!.mutate()
             magnifier.setTint(theme.label)
             val size = (20 * density).toInt()
             magnifier.setBounds(0, 0, size, size)
             query.setCompoundDrawables(magnifier, null, null, null)
             showEmoji(false)
+            post(blink)
         }
         requestLayout()
     }
 
     /** The query typed so far and the emoji it finds; tapping one picks it. */
     fun showResults(text: String, found: List<String>, pick: (String) -> Unit) {
-        query.text = text
+        queryText = text
+        cursorShown = true
+        paintQuery()
         results.removeAllViews()
         for (emoji in found) {
             results.addView(android.widget.TextView(context).apply {
                 this.text = emoji
-                textSize = 24f
+                textSize = 28f
                 gravity = android.view.Gravity.CENTER
-                setPadding((6 * density).toInt(), 0, (6 * density).toInt(), 0)
+                setPadding((8 * density).toInt(), 0, (8 * density).toInt(), 0)
                 setOnClickListener { pick(emoji) }
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         resultScroller.scrollTo(0, 0)
+    }
+
+    /** The query with a cursor after it in the accent colour, blinking. */
+    private fun paintQuery() {
+        val text = android.text.SpannableStringBuilder(queryText).append("\u2009|")
+        val color = if (cursorShown) keyboard.theme.accent else 0
+        text.setSpan(android.text.style.ForegroundColorSpan(color), text.length - 1, text.length, 0)
+        query.text = text
     }
 
     /**
@@ -162,6 +200,10 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
             MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(keyboard.stripTall, MeasureSpec.EXACTLY),
         )
+        resultScroller.measure(
+            MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(keyboard.numbersHeight, MeasureSpec.EXACTLY),
+        )
         setMeasuredDimension(width, keyboard.measuredHeight)
     }
 
@@ -175,6 +217,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         emoji.layout(0, keysTop, width, keysTop + emoji.measuredHeight)
         scroller.layout(start, stripTop, start + scroller.measuredWidth, stripTop + scroller.measuredHeight)
         search.layout(0, keyboard.headroom, width, keyboard.headroom + search.measuredHeight)
+        resultScroller.layout(0, keysTop, width, keysTop + resultScroller.measuredHeight)
         post { clipChips() }
     }
 
