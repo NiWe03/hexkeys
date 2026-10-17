@@ -569,8 +569,6 @@ class KeyboardView(
             val reach = if (far) width - edge else deleting[1]
             deletePaint.color = if (far) DELETE_FAR_COLOR else DELETE_COLOR
             canvas.drawRect(minOf(edge, reach), 0f, maxOf(edge, reach), Core.height(handle), deletePaint)
-            // Above the thumb, where it is not hidden under it.
-            drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerDrawnY - cellWidth * 0.9f, cellWidth * (if (far) 0.6f else 0.45f), theme.label)
         }
         // Moving the cursor fades the labels; the bar, which has none, takes the accent colour instead.
         if (Core.movingCursor(handle) && barProgress > 0f) {
@@ -937,9 +935,6 @@ class KeyboardView(
     private var fingerX = 0f
     private var fingerY = 0f
 
-    /** Where the finger is on screen below the strip, for what is drawn at it: under the bar it differs from [fingerY]. */
-    private var fingerDrawnY = 0f
-
 
     /**
      * Touches go to the core, which tells taps, flicks and holds apart; the
@@ -973,7 +968,6 @@ class KeyboardView(
                 downTime = time
                 fingerX = x
                 fingerY = y
-                fingerDrawnY = event.getY(index) - keysTop
                 Core.touchDown(handle, x, y, time)
                 startRecord(x, y, time)
             }
@@ -982,7 +976,6 @@ class KeyboardView(
                 if (at < 0) return true
                 fingerX = event.getX(at)
                 fingerY = keysY(event.getY(at))
-                fingerDrawnY = event.getY(at) - keysTop
                 addPoint(fingerX, fingerY, time)
                 val action = Core.touchMove(handle, fingerX, fingerY, time)
                 if (action[0] != "nothing") act(action)

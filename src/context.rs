@@ -81,6 +81,17 @@ impl Contexts {
         Self { sets, words }
     }
 
+    /// The most written spelling of `plain`'s set that `known` accepts, other
+    /// than `plain` itself.
+    fn likeliest(&self, plain: &str, known: impl Fn(&str) -> bool) -> Option<&str> {
+        self.sets
+            .get(plain)?
+            .iter()
+            .filter(|s| s.word != plain && known(&s.word))
+            .max_by_key(|s| s.count)
+            .map(|s| s.word.as_str())
+    }
+
     /// The spelling the plain word `plain` stands for between `before` and
     /// `after` (lower case, punctuation as itself), when another is enough
     /// more likely there; `known` says which spellings may be used.
@@ -195,12 +206,29 @@ impl Lexicon {
     /// The spelling of `plain` its context calls for, from the counts of
     /// the language the text is in first, then any other's; only spellings
     /// that language's dictionary has are used.
+    /// Whether `word` is in dictionary `index` and in no other, as it is
+    /// written or capitalised.
+    fn only_in(&self, index: usize, word: &str) -> bool {
+        let has = |d: &crate::dictionary::Dictionary| {
+            [word.to_owned(), capitalise(word)].iter().any(|form| d.find(form).ok().flatten().is_some_and(|node| !node.hidden))
+        };
+        self.dictionaries.iter().enumerate().all(|(i, d)| has(d) == (i == index))
+    }
+
     fn respell(&self, plain: &str, before: &str, after: &str) -> Option<String> {
         let mut order: Vec<&(usize, Contexts)> = self.contexts.iter().collect();
         order.sort_by_key(|(index, _)| Some(*index) != self.language());
         for (index, contexts) in order {
             let Some(dictionary) = self.dictionaries.get(*index) else { continue };
             let known = |word: &str| dictionary.find(word).ok().flatten().is_some_and(|node| !node.hidden);
+            // A plain word this language's dictionary does not have, next to a word
+            // only this language has, is a slip for the spelling it does have, as
+            // "im" before "happy" is for "I'm", whatever German makes of "im".
+            if !known(plain) && (self.only_in(*index, before) || self.only_in(*index, after)) {
+                if let Some(word) = contexts.likeliest(plain, &known) {
+                    return Some(word.to_owned());
+                }
+            }
             if let Some(word) = contexts.judge(plain, before, after, known) {
                 return Some(word.to_owned());
             }
@@ -250,6 +278,16 @@ mod tests {
         // "Weg" is in the counts but in no dictionary loaded.
         let lexicon = lexicon();
         assert_eq!(amend(&lexicon, "der weg ist ", None), None);
+    }
+
+    #[test]
+    fn a_word_only_another_language_has_takes_the_spelling_of_the_one_in_use() {
+        let english = Dictionary::new(crate::dictionary::tests::encode(&[("I'm", 150), ("happy", 160), ("so", 200)], &[])).unwrap();
+        let german = Dictionary::new(crate::dictionary::tests::encode(&[("im", 200), ("Haus", 160)], &[])).unwrap();
+        let mut lexicon = Lexicon::new(vec![english, german]);
+        lexicon.add_contexts(0, Contexts::parse("im\tim\t100\t\thappy:30\nim\tI'm\t1000\t\thappy:100\n"));
+        assert_eq!(amend(&lexicon, "ok im happy ", None).map(|(_, text)| text), Some("I'm happy ".into()));
+        assert_eq!(amend(&lexicon, "im Haus ", None), None, "German stays German");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Types sentences word by word, as with a space after each, and prints what
 //! context autocorrect makes of them:
-//! `cargo run --release --example amend -- FILE.dict CONTEXTS.tsv "its good" ...`.
+//! `cargo run --release --example amend -- FILE.dict[,FILE.dict...] CONTEXTS.tsv "its good" ...`,
+//! the counts belonging to the first dictionary.
 
 use hexkeys::context::{Contexts, amend};
 use hexkeys::dictionary::Dictionary;
@@ -8,9 +9,9 @@ use hexkeys::suggest::Lexicon;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let dictionary = Dictionary::new(std::fs::read(args.next().expect("dictionary")).expect("read")).expect("parse");
+    let dictionaries = args.next().expect("dictionary").split(',').map(|path| Dictionary::new(std::fs::read(path).expect("read")).expect("parse")).collect();
     let counts = std::fs::read_to_string(args.next().expect("contexts")).expect("read");
-    let mut lexicon = Lexicon::new(vec![dictionary]);
+    let mut lexicon = Lexicon::new(dictionaries);
     lexicon.add_contexts(0, Contexts::parse(&counts));
     for sentence in args {
         let mut text = String::new();
