@@ -1,0 +1,25 @@
+//! Suggestions from `.dict` files for typed words, timed:
+//! `cargo run --release --example suggest -- FILE[,FILE...] [PREVIOUS:]WORD...`.
+
+use hexkeys::dictionary::Dictionary;
+use hexkeys::{Layout, honeycomb, suggest};
+
+fn main() {
+    let mut args = std::env::args().skip(1);
+    let paths = args.next().expect("usage: suggest FILE[,FILE...] [PREVIOUS:]WORD...");
+    let dictionaries: Vec<Dictionary> =
+        paths.split(',').map(|path| Dictionary::new(std::fs::read(path).expect("read")).expect("parse")).collect();
+    let layout = Layout::fit(&honeycomb(), 1080.0, 1.0);
+    let substitution = |typed: char, meant: char| layout.substitution(typed, meant);
+    for arg in args {
+        let (previous, typed) = match arg.split_once(':') {
+            Some((previous, typed)) => (Some(previous), typed),
+            None => (None, arg.as_str()),
+        };
+        let started = std::time::Instant::now();
+        let found = suggest::suggest(&dictionaries, typed, previous, &substitution, 5).expect("read");
+        let elapsed = started.elapsed();
+        let list: Vec<String> = found.iter().map(|s| format!("{} {:.0}{}", s.word, s.score, if s.exact { "*" } else { "" })).collect();
+        println!("{arg:>16} {:>6.1?}  {}", elapsed, list.join(", "));
+    }
+}

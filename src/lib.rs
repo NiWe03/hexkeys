@@ -13,6 +13,7 @@
 //! stretched hexagons.
 
 pub mod dictionary;
+pub mod suggest;
 
 /// One key as authored in a layout: what it is and how many cells it spans.
 #[derive(Clone, Debug, PartialEq)]
@@ -183,6 +184,26 @@ impl Layout {
             .iter()
             .map(|&(dx, dy)| Point { x: center.x + dx, y: center.y + dy })
             .collect()
+    }
+
+    /// What typing `typed` where the word has `meant` costs: nothing for the
+    /// same letter, less for a key touching it than for one farther away,
+    /// since a finger slips onto a neighbour far more often.
+    pub fn substitution(&self, typed: char, meant: char) -> f32 {
+        if typed == meant {
+            return 0.0;
+        }
+        let centre = |c: char| {
+            self.keys.iter().find(|key| key.label.chars().eq(std::iter::once(c))).map(Key::center)
+        };
+        match (centre(typed), centre(meant)) {
+            (Some(a), Some(b)) => {
+                let stretch = self.cell_height / (self.cell_width * 2.0 / 3f32.sqrt());
+                let apart = (a.x - b.x).hypot((a.y - b.y) / stretch) / self.cell_width;
+                if apart < 1.1 { 0.6 } else { 1.0 }
+            }
+            _ => 1.0,
+        }
     }
 
     pub fn find(&self, label: &str) -> &Key {
