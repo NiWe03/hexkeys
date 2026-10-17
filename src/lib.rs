@@ -749,15 +749,20 @@ const FAR_HOLD_MS: u64 = 250;
 const BACKSPACE_REPEAT_MS: u64 = 60;
 
 /// How far a delete swipe moves inwards for its first character, in key
-/// widths. Further characters come faster: n characters take
-/// `DELETE_FIRST * n^(2/3)`, so a short slide deletes a letter or two with
-/// care and a long one clears a lot.
+/// widths. Further characters come faster (see [`DELETE_GROWTH`]), so a
+/// short slide deletes a letter or two with care and a long one clears more.
 const DELETE_FIRST: f32 = 0.7;
 
 /// How much farther back a delete swipe has to move before it puts a
 /// character back, in key widths, so a finger easing off does not undo
 /// more than it means to.
 const RESTORE_SLACK: f32 = 0.25;
+
+/// How much faster characters go the farther a delete swipe reaches: n
+/// characters take `DELETE_FIRST * n^(1/DELETE_GROWTH)`. At 1.5 slides from
+/// the phone's log took 5 characters over 2.1 key widths, more than meant;
+/// now 3, and whole words are for the far side.
+const DELETE_GROWTH: f32 = 1.2;
 
 /// How long a delete swipe has to have lasted for its distance to count in
 /// full, in ms. A quicker stroke counts for less, so a flick takes a
@@ -768,7 +773,7 @@ const DELETE_RAMP_MS: f32 = 350.0;
 /// in `elapsed` ms.
 fn delete_count(inwards: f32, elapsed: u64) -> u32 {
     let counted = inwards * (elapsed as f32 / DELETE_RAMP_MS).min(1.0);
-    if counted <= 0.0 { 0 } else { (counted / DELETE_FIRST).powf(1.5) as u32 }
+    if counted <= 0.0 { 0 } else { (counted / DELETE_FIRST).powf(DELETE_GROWTH) as u32 }
 }
 
 /// Strokes quicker than this, in ms, that run straight are gestures even
@@ -1370,8 +1375,10 @@ impl Keyboard {
         let places: Vec<(f32, usize)> = popup_places(choices.len()).into_iter().map(|(o, row)| (o * mirror, row)).collect();
         let (lowest, highest) = places.iter().fold((0f32, 0f32), |(lo, hi), &(o, _)| (lo.min(o), hi.max(o)));
         let shift = (w / 2.0 - (center.x + lowest * w)).max(0.0) - (center.x + highest * w - (layout.width - w / 2.0)).max(0.0);
-        // Overlapping the key's top point a little, as the honeycomb's rows overlap.
-        let y = center.y - layout.cell_height / 2.0 - h / 4.0;
+        // Overlapping the key's top point a little, as the honeycomb's rows overlap,
+        // and no higher than the room above the keyboard, which the number row's
+        // popups would leave.
+        let y = (center.y - layout.cell_height / 2.0 - h / 4.0).max(h / 2.0 - self.headroom());
         let cells: Vec<Point> =
             places.iter().map(|&(o, row)| Point { x: center.x + o * w + shift, y: y - row as f32 * h * 0.75 }).collect();
         // The most used choice comes first and starts chosen, wherever it sits.
@@ -1526,6 +1533,17 @@ fn alternates(label: &str) -> &'static [&'static str] {
         "." => &[",", ":", "-", ";", "…"],
         "?" => &["!", "'", "\"", "¿", "¡"],
         "," => &[":", "-", ";", "'", "\""],
+        // Digits offer their superscript and the fractions they start, as other keyboards do.
+        "1" => &["¹", "½", "⅓", "¼", "⅛"],
+        "2" => &["²", "⅔"],
+        "3" => &["³", "¾", "⅜"],
+        "4" => &["⁴"],
+        "5" => &["⁵", "⅝"],
+        "6" => &["⁶"],
+        "7" => &["⁷", "⅞"],
+        "8" => &["⁸", "∞"],
+        "9" => &["⁹"],
+        "0" => &["⁰", "∅", "ⁿ"],
         _ => &[],
     }
 }
@@ -1800,7 +1818,7 @@ mod tests {
         assert_eq!(keyboard.touch_move(at(1007.0 - 0.4 * w), 200), Action::Delete { pieces: 0, words: false, started: true });
         assert_eq!(keyboard.touch_move(at(1007.0 - 0.75 * w), 400), Action::Delete { pieces: 1, words: false, started: false });
         assert_eq!(keyboard.touch_move(at(1007.0 - 1.4 * w), 500), Action::Delete { pieces: 2, words: false, started: false });
-        assert_eq!(keyboard.touch_move(at(1007.0 - 2.0 * w), 600), Action::Delete { pieces: 4, words: false, started: false }, "faster farther in");
+        assert_eq!(keyboard.touch_move(at(1007.0 - 2.0 * w), 600), Action::Delete { pieces: 3, words: false, started: false }, "faster farther in");
         assert_eq!(keyboard.touch_move(at(1007.0 - 1.9 * w), 700), Action::Nothing, "easing back a little keeps them");
         assert_eq!(keyboard.touch_move(at(1007.0 - 1.2 * w), 800), Action::Delete { pieces: 2, words: false, started: false });
         assert_eq!(keyboard.pressed(), None);
@@ -2112,7 +2130,7 @@ mod tests {
                 last = action;
             }
         }
-        assert!(matches!(last, Action::Delete { pieces, .. } if pieces >= 5), "{last:?}");
+        assert!(matches!(last, Action::Delete { pieces, .. } if pieces >= 4), "{last:?}");
     }
 
     #[test]
