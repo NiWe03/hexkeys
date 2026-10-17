@@ -111,12 +111,22 @@ class KeyboardView(
             invalidate()
         }
 
-    /** The language on the space bar, and whether it was picked rather than guessed. */
-    var spaceLabel = ""
+    /**
+     * The languages on the space bar as short codes, the one being written
+     * first, and whether it was picked rather than guessed.
+     */
+    var spaceLanguages = emptyList<String>()
         set(value) {
             field = value
             invalidate()
         }
+    /** Space keys on the layer shown, and how many of them this frame has drawn. */
+    private var spaceKeys = 0
+    private var spacesDrawn = 0
+
+    /** Whether the first of [spaceLanguages] is known to be the one written. */
+    var spaceInUse = false
+
     var spacePinned = false
         set(value) {
             field = value
@@ -374,6 +384,8 @@ class KeyboardView(
         // Holding space turns the keys into a touchpad for the cursor: their labels fade.
         labelPaint.alpha = if (Core.movingCursor(handle)) 0x40 else 0xFF
         val shiftState = Core.shiftState(handle)
+        spaceKeys = paths.indices.count { Core.label(handle, it) == "space" }
+        spacesDrawn = 0
         for ((index, path) in paths.withIndex()) {
             val color = keyColor(index)
             keyPaint.color = if (index == pressed || index == flashKey) theme.pressed(color) else color
@@ -562,13 +574,32 @@ class KeyboardView(
 
     /** Single characters large, words such as "space" smaller so they fit their key. */
     private fun drawLabel(canvas: Canvas, label: String, position: FloatArray, cellWidth: Float) {
-        // Space carries the language being written, faint while it is a guess.
+        // Space carries the languages in their order, the one being written first and
+        // brightest, faint while it is a guess; two space keys carry one each.
         if (label == "space") {
-            if (spaceLabel.isEmpty()) return
+            val shown = if (spaceKeys > 1) listOfNotNull(spaceLanguages.getOrNull(spacesDrawn)) else spaceLanguages
+            val first = spacesDrawn == 0
+            spacesDrawn++
+            if (shown.isEmpty()) return
             val alpha = labelPaint.alpha
             labelPaint.textSize = cellWidth * 0.2f
-            labelPaint.alpha = if (spacePinned) alpha else alpha * 2 / 5
-            canvas.drawText(spaceLabel, position[0], position[1] - (labelPaint.descent() + labelPaint.ascent()) / 2, labelPaint)
+            val gap = labelPaint.measureText("  ")
+            val widths = shown.map { labelPaint.measureText(it) }
+            var x = position[0] - (widths.sum() + gap * (shown.size - 1)) / 2
+            val y = position[1] - (labelPaint.descent() + labelPaint.ascent()) / 2
+            val align = labelPaint.textAlign
+            labelPaint.textAlign = Paint.Align.LEFT
+            for ((i, code) in shown.withIndex()) {
+                val inUse = first && i == 0 && spaceInUse
+                labelPaint.alpha = when {
+                    inUse && spacePinned -> alpha
+                    inUse -> alpha * 3 / 5
+                    else -> alpha / 4
+                }
+                canvas.drawText(code, x, y, labelPaint)
+                x += widths[i] + gap
+            }
+            labelPaint.textAlign = align
             labelPaint.alpha = alpha
             return
         }

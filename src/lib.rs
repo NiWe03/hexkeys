@@ -623,8 +623,8 @@ const MORE_SYMBOLS: &str = "§¢£¥₹©®™✓•¶∆π√÷×±≈≠≤≥
 const MORE: &str = "=\\<";
 
 /// Symbols of the first page that sit on a letter's cell: the brackets on
-/// u and i, a pair on keys the fingers know.
-const PLACED: &[(&str, &str)] = &[("u", "("), ("i", ")")];
+/// u and l, side by side in one row.
+const PLACED: &[(&str, &str)] = &[("u", "("), ("l", ")")];
 
 /// A symbol page shaped exactly like `letters`: the number row, space,
 /// enter, backspace and the punctuation keys stay where they are, the key
@@ -1819,8 +1819,8 @@ mod tests {
         assert!(keyboard.layout.keys.iter().all(|key| !is_letter(&key.label)), "no letters left");
         let u = keyboard.layers[0].find("u").cells[0];
         assert_eq!(keyboard.layout.key_at(u).unwrap().label, "(");
-        let i = keyboard.layers[0].find("i").cells[0];
-        assert_eq!(keyboard.layout.key_at(i).unwrap().label, ")");
+        let l = keyboard.layers[0].find("l").cells[0];
+        assert_eq!(keyboard.layout.key_at(l).unwrap().label, ")");
         let more = keyboard_index(&keyboard, "=\\<");
         keyboard.press(more);
         let pi = keyboard_index(&keyboard, "π");

@@ -696,9 +696,10 @@ class HexInputMethod : InputMethodService() {
             }
         }
         language = index
-        val file = index?.let { lexiconFiles.getOrNull(it) }
-        val name = file?.let { f -> Dictionaries.catalog(this).firstOrNull { it.file == f }?.name } ?: if (file == Dictionaries.BUILT_IN) "English" else null
-        keyboard?.spaceLabel = name?.substringBefore(" (").orEmpty()
+        val codes = lexiconFiles.map { languageCode(it).uppercase() }
+        val current = index?.let { codes.getOrNull(it) }
+        keyboard?.spaceInUse = current != null
+        keyboard?.spaceLanguages = (listOfNotNull(current) + codes).distinct()
         keyboard?.spacePinned = pinned != null
     }
 
