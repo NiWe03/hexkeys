@@ -378,6 +378,8 @@ pub enum Action {
     Enter,
     /// Nothing for the app; the keyboard itself changed (shift, layer).
     Redraw,
+    /// Nothing changed.
+    Nothing,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -398,6 +400,51 @@ pub struct Popup {
     pub selected: usize,
 }
 
+/// Below this distance from where it went down, a finger is tapping, in key
+/// widths. Above it the touch is a flick, up to one key width; anything
+/// longer is a path over several keys, which belongs to swipe typing.
+const FLICK: f32 = 0.35;
+
+/// How far a finger may drift and still count as holding still, in key widths.
+const STILL: f32 = 0.25;
+
+/// Pause between repeated backspaces while a left flick is held, in ms.
+const REPEAT_MS: u64 = 50;
+
+/// What a touch amounts to so far.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Gesture {
+    Tap,
+    /// A short flick up: the touched letter as a capital.
+    Up,
+    /// A short flick left: backspace, repeating while the finger holds still.
+    Left,
+    /// A flick another way, or one pulled back to where it started: nothing.
+    Aborted,
+    /// Movement longer than a key: a swipe-typing path.
+    Path,
+}
+
+/// One finger on the keyboard. Times are in milliseconds on any clock that
+/// only moves forward, as long as every call uses the same one.
+#[derive(Clone, Debug)]
+struct Touch {
+    key: usize,
+    start: Point,
+    at: Point,
+    /// The farthest the finger has been from `start`.
+    extent: f32,
+    /// Where and since when the finger has held still.
+    anchor: Point,
+    anchor_time: u64,
+    /// When the next repeated backspace is due, once repeating has begun.
+    repeat_at: Option<u64>,
+}
+
+fn distance(a: Point, b: Point) -> f32 {
+    (a.x - b.x).hypot(a.y - b.y)
+}
+
 /// A fitted layout plus the state that decides what its keys mean.
 pub struct Keyboard {
     /// The layer on screen now.
@@ -406,12 +453,126 @@ pub struct Keyboard {
     layers: [Layout; 3],
     shift: Shift,
     pub popup: Option<Popup>,
+    touch: Option<Touch>,
+    /// How long a finger holds still before a long press, in ms.
+    long_press_ms: u64,
 }
 
 impl Keyboard {
-    pub fn new(width: f32, stretch: f32) -> Self {
+    pub fn new(width: f32, stretch: f32, long_press_ms: u64) -> Self {
         let layers = [honeycomb(), symbols(), more_symbols()].map(|spec| Layout::fit(&spec, width, stretch));
-        Self { layout: layers[0].clone(), layers, shift: Shift::Off, popup: None }
+        Self { layout: layers[0].clone(), layers, shift: Shift::Off, popup: None, touch: None, long_press_ms }
+    }
+
+    fn gesture(&self, touch: &Touch) -> Gesture {
+        let w = self.layout.cell_width;
+        if touch.extent >= w {
+            return Gesture::Path;
+        }
+        if touch.extent < FLICK * w {
+            return Gesture::Tap;
+        }
+        let (dx, dy) = (touch.at.x - touch.start.x, touch.at.y - touch.start.y);
+        if dx.hypot(dy) < FLICK * w {
+            Gesture::Aborted
+        } else if dx.abs() >= dy.abs() {
+            if dx < 0.0 { Gesture::Left } else { Gesture::Aborted }
+        } else if dy < 0.0 {
+            Gesture::Up
+        } else {
+            Gesture::Aborted
+        }
+    }
+
+    /// The key the finger went down on, which every gesture belongs to.
+    pub fn pressed(&self) -> Option<usize> {
+        self.touch.as_ref().map(|touch| touch.key)
+    }
+
+    pub fn touch_down(&mut self, at: Point, time: u64) {
+        self.popup = None;
+        self.touch = self.key_at(at).map(|key| Touch {
+            key,
+            start: at,
+            at,
+            extent: 0.0,
+            anchor: at,
+            anchor_time: time,
+            repeat_at: None,
+        });
+    }
+
+    pub fn touch_move(&mut self, at: Point, time: u64) {
+        if self.popup.is_some() {
+            self.popup_move(at);
+            return;
+        }
+        let still = STILL * self.layout.cell_width;
+        let Some(touch) = &mut self.touch else { return };
+        touch.at = at;
+        touch.extent = touch.extent.max(distance(at, touch.start));
+        if distance(at, touch.anchor) > still {
+            touch.anchor = at;
+            touch.anchor_time = time;
+        }
+        let touch = touch.clone();
+        if self.gesture(&touch) != Gesture::Left {
+            self.touch.as_mut().expect("touch").repeat_at = None;
+        }
+    }
+
+    pub fn touch_up(&mut self, at: Point, time: u64) -> Action {
+        if self.popup.is_some() {
+            self.touch = None;
+            return self.popup_release();
+        }
+        self.touch_move(at, time);
+        let Some(touch) = self.touch.take() else { return Action::Nothing };
+        match self.gesture(&touch) {
+            Gesture::Tap => self.press(touch.key),
+            Gesture::Up if is_letter(&self.layout.keys[touch.key].label) => {
+                self.shift = Shift::Off;
+                Action::Commit(upper(&self.layout.keys[touch.key].label))
+            }
+            Gesture::Left if touch.repeat_at.is_none() => Action::Backspace,
+            _ => Action::Nothing,
+        }
+    }
+
+    pub fn touch_cancel(&mut self) {
+        self.touch = None;
+        self.popup = None;
+    }
+
+    /// When `tick` next has something to do, if ever: the end of a hold that
+    /// would open a popup or start repeating, or the next repeat.
+    pub fn deadline(&self) -> Option<u64> {
+        if self.popup.is_some() {
+            return None;
+        }
+        let touch = self.touch.as_ref()?;
+        match self.gesture(touch) {
+            Gesture::Left => Some(touch.repeat_at.unwrap_or(touch.anchor_time + self.long_press_ms)),
+            Gesture::Tap if !self.choices(touch.key).is_empty() => Some(touch.anchor_time + self.long_press_ms),
+            _ => None,
+        }
+    }
+
+    /// Acts on a hold that has lasted long enough: opens the popup of a key
+    /// held still, or deletes again while a left flick is held.
+    pub fn tick(&mut self, time: u64) -> Action {
+        let Some(touch) = self.touch.clone() else { return Action::Nothing };
+        if self.popup.is_some() || self.deadline().is_none_or(|due| time < due) {
+            return Action::Nothing;
+        }
+        match self.gesture(&touch) {
+            Gesture::Left => {
+                self.touch.as_mut().expect("touch").repeat_at = Some(time + REPEAT_MS);
+                Action::Backspace
+            }
+            Gesture::Tap if self.long_press(touch.key) => Action::Redraw,
+            _ => Action::Nothing,
+        }
     }
 
     /// How far above the keyboard a popup can reach: one row's pitch.
@@ -421,10 +582,7 @@ impl Keyboard {
 
     /// Opens the key's popup if it has alternatives; returns whether it did.
     pub fn long_press(&mut self, index: usize) -> bool {
-        let label = self.layout.keys[index].label.as_str();
-        let shifted = self.shift == Shift::Once;
-        let choices: Vec<String> =
-            alternates(label).iter().map(|c| if shifted { upper(c) } else { (*c).to_owned() }).collect();
+        let choices = self.choices(index);
         if choices.is_empty() {
             return false;
         }
@@ -439,6 +597,15 @@ impl Keyboard {
         let selected = nearest_by_x(&cells, center.x);
         self.popup = Some(Popup { choices, cells, selected });
         true
+    }
+
+    /// The key's long-press alternatives in the current shift state.
+    fn choices(&self, index: usize) -> Vec<String> {
+        let shifted = self.shift == Shift::Once;
+        alternates(&self.layout.keys[index].label)
+            .iter()
+            .map(|c| if shifted { upper(c) } else { (*c).to_owned() })
+            .collect()
     }
 
     /// Follows the finger along an open popup.
@@ -470,13 +637,15 @@ impl Keyboard {
         self.popup = None;
     }
 
-    /// The text shown on a key in the current state.
+    /// The text shown on a key in the current state. A letter being flicked
+    /// up shows the capital it will type.
     pub fn label(&self, index: usize) -> String {
         let label = &self.layout.keys[index].label;
-        match self.shift {
-            Shift::Once if is_letter(label) => upper(label),
-            _ => label.clone(),
-        }
+        let flicked_up = self
+            .touch
+            .as_ref()
+            .is_some_and(|touch| touch.key == index && self.gesture(touch) == Gesture::Up);
+        if is_letter(label) && (self.shift == Shift::Once || flicked_up) { upper(label) } else { label.clone() }
     }
 
     pub fn key_at(&self, touch: Point) -> Option<usize> {
@@ -658,7 +827,7 @@ mod tests {
 
     #[test]
     fn shift_capitalises_one_letter() {
-        let mut keyboard = Keyboard::new(1008.0, 1.3);
+        let mut keyboard = Keyboard::new(1008.0, 1.3, 400);
         let index = |label: &str| keyboard_index(&keyboard, label);
         let (shift, a, b) = (index("⇧"), index("a"), index("b"));
         assert_eq!(keyboard.press(shift), Action::Redraw);
@@ -669,7 +838,7 @@ mod tests {
 
     #[test]
     fn long_press_on_s_gives_sharp_s_and_capital_after_shift() {
-        let mut keyboard = Keyboard::new(1008.0, 1.3);
+        let mut keyboard = Keyboard::new(1008.0, 1.3, 400);
         let (shift, s) = (keyboard_index(&keyboard, "⇧"), keyboard_index(&keyboard, "s"));
         assert!(keyboard.long_press(s));
         assert_eq!(keyboard.popup_release(), Action::Commit("ß".into()));
@@ -681,7 +850,7 @@ mod tests {
 
     #[test]
     fn popup_follows_the_finger_and_stays_on_screen() {
-        let mut keyboard = Keyboard::new(1008.0, 1.3);
+        let mut keyboard = Keyboard::new(1008.0, 1.3, 400);
         let q = keyboard_index(&keyboard, "q");
         assert!(!keyboard.long_press(q), "q has no alternatives");
         let u = keyboard_index(&keyboard, "u");
@@ -697,7 +866,7 @@ mod tests {
 
     #[test]
     fn symbol_layers_switch_and_type() {
-        let mut keyboard = Keyboard::new(1008.0, 1.0);
+        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
         let symbols = keyboard_index(&keyboard, "?123");
         assert_eq!(keyboard.press(symbols), Action::Redraw);
         let one = keyboard_index(&keyboard, "1");
@@ -719,6 +888,82 @@ mod tests {
             let expected = layout.width * layout.height;
             assert!((area - expected).abs() / expected < 1e-4);
         }
+    }
+
+    /// A point `right` key widths right and `down` key widths below the
+    /// centre of the key labelled `label`.
+    fn near(keyboard: &Keyboard, label: &str, right: f32, down: f32) -> Point {
+        let center = keyboard.layout.find(label).center();
+        let w = keyboard.layout.cell_width;
+        Point { x: center.x + right * w, y: center.y + down * w }
+    }
+
+    fn gesture(keyboard: &mut Keyboard, label: &str, path: &[(f32, f32)]) -> Action {
+        keyboard.touch_down(near(keyboard, label, 0.0, 0.0), 0);
+        for (i, &(right, down)) in path.iter().enumerate() {
+            keyboard.touch_move(near(keyboard, label, right, down), 10 * (i as u64 + 1));
+        }
+        let &(right, down) = path.last().unwrap_or(&(0.0, 0.0));
+        keyboard.touch_up(near(keyboard, label, right, down), 10 * (path.len() as u64 + 1))
+    }
+
+    #[test]
+    fn tap_types_the_key_even_when_the_finger_drifts() {
+        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        assert_eq!(gesture(&mut keyboard, "g", &[]), Action::Commit("g".into()));
+        assert_eq!(gesture(&mut keyboard, "g", &[(0.2, 0.1)]), Action::Commit("g".into()));
+    }
+
+    #[test]
+    fn flick_up_types_a_capital_and_previews_it() {
+        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        let g = keyboard_index(&keyboard, "g");
+        keyboard.touch_down(near(&keyboard, "g", 0.0, 0.0), 0);
+        keyboard.touch_move(near(&keyboard, "g", 0.1, -0.6), 30);
+        assert_eq!(keyboard.label(g), "G");
+        assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.1, -0.6), 40), Action::Commit("G".into()));
+        assert_eq!(keyboard.label(g), "g");
+        assert_eq!(gesture(&mut keyboard, ",", &[(0.0, -0.6)]), Action::Nothing, "only letters have capitals");
+    }
+
+    #[test]
+    fn flick_left_deletes_from_any_key() {
+        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        assert_eq!(gesture(&mut keyboard, "g", &[(-0.3, 0.0), (-0.6, 0.1)]), Action::Backspace);
+        assert_eq!(gesture(&mut keyboard, "space", &[(-0.6, 0.0)]), Action::Backspace);
+    }
+
+    #[test]
+    fn other_flicks_and_long_paths_type_nothing() {
+        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        assert_eq!(gesture(&mut keyboard, "g", &[(0.6, 0.0)]), Action::Nothing);
+        assert_eq!(gesture(&mut keyboard, "g", &[(0.0, 0.6)]), Action::Nothing);
+        assert_eq!(gesture(&mut keyboard, "g", &[(-0.6, 0.0), (0.0, 0.1)]), Action::Nothing, "pulled back");
+        assert_eq!(gesture(&mut keyboard, "g", &[(-0.6, 0.0), (-1.4, 0.0)]), Action::Nothing, "swipe path");
+    }
+
+    #[test]
+    fn holding_a_left_flick_repeats_backspace() {
+        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        keyboard.touch_down(near(&keyboard, "g", 0.0, 0.0), 0);
+        keyboard.touch_move(near(&keyboard, "g", -0.6, 0.0), 50);
+        assert_eq!(keyboard.deadline(), Some(450));
+        assert_eq!(keyboard.tick(449), Action::Nothing);
+        assert_eq!(keyboard.tick(450), Action::Backspace);
+        assert_eq!(keyboard.deadline(), Some(500));
+        assert_eq!(keyboard.tick(500), Action::Backspace);
+        assert_eq!(keyboard.touch_up(near(&keyboard, "g", -0.6, 0.0), 520), Action::Nothing, "no extra delete on lift");
+    }
+
+    #[test]
+    fn holding_still_opens_the_popup_and_lifting_commits_from_it() {
+        let mut keyboard = Keyboard::new(1008.0, 1.0, 400);
+        keyboard.touch_down(near(&keyboard, "s", 0.0, 0.0), 0);
+        assert_eq!(keyboard.tick(400), Action::Redraw);
+        assert!(keyboard.popup.is_some());
+        assert_eq!(keyboard.touch_up(near(&keyboard, "s", 0.0, 0.0), 500), Action::Commit("ß".into()));
+        keyboard.touch_down(near(&keyboard, "q", 0.0, 0.0), 0);
+        assert_eq!(keyboard.deadline(), None, "q has no popup to wait for");
     }
 
     fn keyboard_index(keyboard: &Keyboard, label: &str) -> usize {

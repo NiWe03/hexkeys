@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.os.Build
+import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -31,7 +32,6 @@ class KeyboardView(
 
     private var handle = 0L
     private var paths: List<Path> = emptyList()
-    private var pressed = -1
 
     /** Height of the transparent band above the keys. */
     var headroom = 0
@@ -58,9 +58,9 @@ class KeyboardView(
         textAlign = Paint.Align.CENTER
     }
 
-    private val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
-    private val openPopup = Runnable {
-        if (pressed >= 0 && Core.longPress(handle, pressed)) invalidate()
+    /** Calls the core back when a hold it is timing has lasted long enough. */
+    private val tick = Runnable {
+        if (handle != 0L) act(Core.tick(handle, SystemClock.uptimeMillis()))
     }
 
     init {
@@ -82,7 +82,7 @@ class KeyboardView(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         if (handle != 0L) Core.destroy(handle)
-        handle = Core.create(width.toFloat(), STRETCH)
+        handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong())
         headroom = Core.headroom(handle).toInt()
         loadOutlines()
         setMeasuredDimension(width, headroom + Core.height(handle).toInt() + navigationBar)
@@ -95,7 +95,7 @@ class KeyboardView(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        removeCallbacks(openPopup)
+        removeCallbacks(tick)
         if (handle != 0L) Core.destroy(handle)
         handle = 0L
     }
@@ -106,6 +106,7 @@ class KeyboardView(
         canvas.save()
         canvas.translate(0f, headroom.toFloat())
         val cellWidth = Core.cellWidth(handle)
+        val pressed = Core.pressed(handle)
         for ((index, path) in paths.withIndex()) {
             canvas.drawPath(path, if (index == pressed) pressedPaint else keyPaint)
             canvas.drawPath(path, gapPaint)
@@ -137,53 +138,43 @@ class KeyboardView(
         close()
     }
 
+    /**
+     * Touches go to the core, which tells taps, flicks and holds apart; the
+     * view only redraws, passes on what they mean, and wakes the core when
+     * a hold it is timing is due.
+     */
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (handle == 0L) return false
         val x = event.x
         val y = event.y - headroom
-        val popupOpen = Core.popupCount(handle) > 0
+        val time = event.eventTime
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                pressed = Core.keyAt(handle, x, y)
-                postDelayed(openPopup, longPressTimeout)
-                invalidate()
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (popupOpen) {
-                    Core.popupMove(handle, x, y)
-                } else {
-                    val key = Core.keyAt(handle, x, y)
-                    if (key != pressed) {
-                        // Sliding onto another key restarts the long-press wait there.
-                        pressed = key
-                        removeCallbacks(openPopup)
-                        postDelayed(openPopup, longPressTimeout)
-                    }
-                }
-                invalidate()
-            }
+            MotionEvent.ACTION_DOWN -> Core.touchDown(handle, x, y, time)
+            MotionEvent.ACTION_MOVE -> Core.touchMove(handle, x, y, time)
             MotionEvent.ACTION_UP -> {
-                removeCallbacks(openPopup)
-                val (kind, text) = if (popupOpen) {
-                    Core.popupRelease(handle)
-                } else {
-                    val key = Core.keyAt(handle, x, y)
-                    if (key >= 0) Core.press(handle, key) else arrayOf("redraw", "")
-                }
-                pressed = -1
-                if (kind == "redraw") loadOutlines()
-                onAction(kind, text)
-                invalidate()
+                act(Core.touchUp(handle, x, y, time))
+                return true
             }
-            MotionEvent.ACTION_CANCEL -> {
-                removeCallbacks(openPopup)
-                Core.popupCancel(handle)
-                pressed = -1
-                invalidate()
-            }
+            MotionEvent.ACTION_CANCEL -> Core.touchCancel(handle)
         }
+        schedule()
+        invalidate()
         return true
+    }
+
+    private fun act(action: Array<String>) {
+        val (kind, text) = action
+        if (kind == "redraw") loadOutlines()
+        onAction(kind, text)
+        schedule()
+        invalidate()
+    }
+
+    private fun schedule() {
+        removeCallbacks(tick)
+        val due = Core.deadline(handle)
+        if (due >= 0) postDelayed(tick, (due - SystemClock.uptimeMillis()).coerceAtLeast(0))
     }
 
     private companion object {

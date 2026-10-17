@@ -22,8 +22,9 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_create(
     _class: JClass,
     width: jfloat,
     stretch: jfloat,
+    long_press_ms: jlong,
 ) -> jlong {
-    Box::into_raw(Box::new(Keyboard::new(width, stretch))) as jlong
+    Box::into_raw(Box::new(Keyboard::new(width, stretch, long_press_ms as u64))) as jlong
 }
 
 #[unsafe(no_mangle)]
@@ -94,28 +95,83 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_label(
     env.new_string(keyboard(handle).label(index as usize)).expect("label").into_raw()
 }
 
-/// The key under a touch, or -1 when there is none.
+/// The key the finger went down on, or -1 when no finger is down.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_tieo_hexkeys_Core_keyAt(
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_pressed(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    keyboard(handle).pressed().map_or(-1, |index| index as jint)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchDown(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
     x: jfloat,
     y: jfloat,
-) -> jint {
-    keyboard(handle).key_at(Point { x, y }).map_or(-1, |index| index as jint)
+    time: jlong,
+) {
+    keyboard(handle).touch_down(Point { x, y }, time as u64);
 }
 
-/// What pressing the key means, as `[kind, text]` with kind one of
-/// `commit`, `backspace`, `enter`, `redraw`.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_tieo_hexkeys_Core_press(
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchMove(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    x: jfloat,
+    y: jfloat,
+    time: jlong,
+) {
+    keyboard(handle).touch_move(Point { x, y }, time as u64);
+}
+
+/// What lifting the finger means, as `[kind, text]` with kind one of
+/// `commit`, `backspace`, `enter`, `redraw`, `nothing`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchUp(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
-    index: jint,
+    x: jfloat,
+    y: jfloat,
+    time: jlong,
 ) -> jobjectArray {
-    let result = keyboard(handle).press(index as usize);
+    let result = keyboard(handle).touch_up(Point { x, y }, time as u64);
+    action(&mut env, result)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchCancel(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    keyboard(handle).touch_cancel();
+}
+
+/// When `tick` is next due, or -1 when nothing is waiting.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_deadline(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jlong {
+    keyboard(handle).deadline().map_or(-1, |time| time as jlong)
+}
+
+/// What a hold that has lasted long enough does, in the same form as `touchUp`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_tick(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    time: jlong,
+) -> jobjectArray {
+    let result = keyboard(handle).tick(time as u64);
     action(&mut env, result)
 }
 
@@ -131,6 +187,7 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Backspace => ("backspace", String::new()),
         Action::Enter => ("enter", String::new()),
         Action::Redraw => ("redraw", String::new()),
+        Action::Nothing => ("nothing", String::new()),
     };
     let array = env
         .new_object_array(2, "java/lang/String", jni::objects::JObject::null())
@@ -150,47 +207,6 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_headroom(
     handle: jlong,
 ) -> jfloat {
     keyboard(handle).headroom()
-}
-
-/// Opens the key's long-press popup; false when the key has none.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_tieo_hexkeys_Core_longPress(
-    _env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-    index: jint,
-) -> jni::sys::jboolean {
-    keyboard(handle).long_press(index as usize) as jni::sys::jboolean
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_tieo_hexkeys_Core_popupMove(
-    _env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-    x: jfloat,
-    y: jfloat,
-) {
-    keyboard(handle).popup_move(Point { x, y });
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_tieo_hexkeys_Core_popupRelease(
-    mut env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-) -> jobjectArray {
-    let result = keyboard(handle).popup_release();
-    action(&mut env, result)
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_tieo_hexkeys_Core_popupCancel(
-    _env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-) {
-    keyboard(handle).popup_cancel();
 }
 
 /// Number of choices in the open popup, 0 when none is open.

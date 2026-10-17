@@ -6,8 +6,11 @@ object Core {
         System.loadLibrary("hexkeys_jni")
     }
 
-    /** A keyboard fitted to [width] pixels; [stretch] makes cells taller than regular hexagons. */
-    external fun create(width: Float, stretch: Float): Long
+    /**
+     * A keyboard fitted to [width] pixels; [stretch] makes cells taller than
+     * regular hexagons, and a finger held still for [longPressMs] is a long press.
+     */
+    external fun create(width: Float, stretch: Float, longPressMs: Long): Long
     external fun destroy(handle: Long)
     external fun height(handle: Long): Float
     external fun keyCount(handle: Long): Int
@@ -22,22 +25,25 @@ object Core {
     external fun labelPosition(handle: Long, index: Int): FloatArray
     external fun label(handle: Long, index: Int): String
 
-    /** The key under a touch, or -1. */
-    external fun keyAt(handle: Long, x: Float, y: Float): Int
+    /** The key the finger went down on, or -1. */
+    external fun pressed(handle: Long): Int
 
-    /** What a press means, as kind (commit, backspace, enter, redraw) and text. */
-    external fun press(handle: Long, index: Int): Array<String>
+    /** Touches with their [android.os.SystemClock.uptimeMillis] time. */
+    external fun touchDown(handle: Long, x: Float, y: Float, time: Long)
+    external fun touchMove(handle: Long, x: Float, y: Float, time: Long)
+
+    /** What lifting means, as kind (commit, backspace, enter, redraw, nothing) and text. */
+    external fun touchUp(handle: Long, x: Float, y: Float, time: Long): Array<String>
+    external fun touchCancel(handle: Long)
+
+    /** When [tick] is next due, or -1. */
+    external fun deadline(handle: Long): Long
+
+    /** What a hold that lasted long enough does, in the same form as [touchUp]. */
+    external fun tick(handle: Long, time: Long): Array<String>
 
     /** Room above the keys a long-press popup can reach into. */
     external fun headroom(handle: Long): Float
-
-    /** Opens the key's long-press popup; false when it has no alternatives. */
-    external fun longPress(handle: Long, index: Int): Boolean
-    external fun popupMove(handle: Long, x: Float, y: Float)
-
-    /** Commits the selected alternative, in the same form as [press]. */
-    external fun popupRelease(handle: Long): Array<String>
-    external fun popupCancel(handle: Long)
 
     /** Choices in the open popup, 0 when none is open. */
     external fun popupCount(handle: Long): Int
