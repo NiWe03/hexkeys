@@ -135,8 +135,8 @@ class SettingsActivity : Activity() {
         if (!Voice.permitted(this)) {
             requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1)
         }
-        // With no model yet, the default one starts downloading right away.
-        if (Voice.chosen(this) == null) startDefault()
+        // With speech input off, it switches on and its model starts downloading right away.
+        if (!Voice.enabled(this)) startDefault()
     }
 
     private fun android.animation.Animator.doOnEnd(action: () -> Unit) = addListener(object : android.animation.AnimatorListenerAdapter() {
@@ -158,7 +158,7 @@ class SettingsActivity : Activity() {
         }
         val chosen = Dictionaries.enabled(this)
         languages.text = Dictionaries.catalog(this).filter { it.file in chosen }.joinToString(", ") { it.name }
-        microphone.visibility = if (Voice.permitted(this) || Voice.chosen(this) == null) View.GONE else View.VISIBLE
+        microphone.visibility = if (Voice.permitted(this) || !Voice.enabled(this)) View.GONE else View.VISIBLE
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -170,49 +170,34 @@ class SettingsActivity : Activity() {
     private lateinit var microphone: Button
     private lateinit var voice: View
 
-    /** Downloads the default speech model, for the microphone button arriving with none. */
+    /** Switches speech input on, for the microphone button arriving with it off. */
     private var startDefault: () -> Unit = {}
     private lateinit var layouts: LayoutTiles
 
     /**
-     * The speech model to download, by size, with the download's progress,
-     * and the button to allow the microphone while it is not allowed.
+     * Speech input off or on, its model's download progress while it
+     * downloads, and the button to allow the microphone while it is not
+     * allowed. Off deletes the model, which takes 670 MB.
      */
     private fun voiceCard(): View {
+        Voice.cleanUp(this)
         val progress = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 1000
             visibility = View.GONE
         }
-        val chosen = Voice.chosen(this)?.id ?: "off"
-        // A model downloaded before it could be timed is timed now.
-        Voice.chosen(this)?.takeIf { Voice.timing(this, it) == null }?.let { model ->
-            downloads.execute {
-                runCatching { Voice.measure(this, model) }
-                if (Voice.timing(this, model) != null) runOnUiThread { recreate() }
+        val model = Voice.SPEECH_MODEL
+        val options = listOf<Pair<String, CharSequence>>("off" to "Off", "on" to "On  ·  ${model.megabytes} MB")
+        fun switchOn() {
+            if (Voice.downloaded(this)) {
+                ui.preferences.edit().putString(Voice.MODEL, model.id).apply()
+                recreate()
+                return
             }
-        }
-        // Each model with its size and, once one has been timed on this phone, how long a sentence takes.
-        val options = listOf<Pair<String, CharSequence>>("off" to "Off") + Voice.MODELS.map { model ->
-            val label = android.text.SpannableStringBuilder("${model.name}\n${model.megabytes} MB")
-            Voice.expectedTiming(this, model)?.let { (ms, measured) ->
-                label.append("\n")
-                val icon = label.length
-                label.append(" ")
-                label.setSpan(IconSpan(getDrawable(R.drawable.icon_timer)!!), icon, icon + 1, 0)
-                label.append(" ${if (measured) "" else "≈"}${"%.1f".format(ms / 1000f)} s")
-            }
-            model.id to label
-        }
-        // Downloaded models stay, so switching between them to compare costs nothing.
-        fun fetch(model: VoiceModel) {
             progress.progress = 0
-            progress.isIndeterminate = false
             progress.visibility = View.VISIBLE
             downloads.execute {
                 val ok = runCatching {
-                    Voice.download(this, model) { done -> runOnUiThread { progress.progress = (done * 1000).toInt() } }
-                    runOnUiThread { progress.isIndeterminate = true }
-                    Voice.measure(this, model)
+                    Voice.download(this) { done -> runOnUiThread { progress.progress = (done * 1000).toInt() } }
                 }.isSuccess
                 runOnUiThread {
                     progress.visibility = View.GONE
@@ -221,15 +206,12 @@ class SettingsActivity : Activity() {
                 }
             }
         }
-        startDefault = { fetch(VoiceModels.DEFAULT) }
-        val choice = ui.segmented(options, chosen, columns = 3) { id ->
-            val model = Voice.MODELS.firstOrNull { it.id == id }
-            if (model == null || Voice.downloaded(this, model)) {
-                ui.preferences.edit().putString(Voice.MODEL, model?.id).apply()
-                if (model != null && Voice.timing(this, model) == null) recreate()
-                return@segmented
+        startDefault = { switchOn() }
+        val choice = ui.segmented(options, if (Voice.enabled(this)) "on" else "off", columns = 2) { id ->
+            if (id == "on") switchOn() else {
+                Voice.delete(this)
+                recreate()
             }
-            fetch(model)
         }
         microphone = ui.primaryButton("Allow the microphone").apply {
             setOnClickListener { requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1) }
@@ -625,19 +607,3 @@ private class LayoutPreview(context: Context, private val space_middle: Boolean)
     }
 }
 
-/** An icon in a line of text, as tall as the text and in its colour, which follows the button's state. */
-private class IconSpan(private val icon: android.graphics.drawable.Drawable) : android.text.style.ReplacementSpan() {
-    override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int, fm: Paint.FontMetricsInt?) =
-        (paint.textSize * 1.05f).toInt()
-
-    override fun draw(
-        canvas: Canvas, text: CharSequence?, start: Int, end: Int,
-        x: Float, top: Int, y: Int, bottom: Int, paint: Paint,
-    ) {
-        val size = (paint.textSize * 1.05f).toInt()
-        val iconTop = y + paint.fontMetricsInt.ascent / 2 - size / 2 + (paint.fontMetricsInt.descent) / 2
-        icon.setTint(paint.color)
-        icon.setBounds(x.toInt(), iconTop, x.toInt() + size, iconTop + size)
-        icon.draw(canvas)
-    }
-}

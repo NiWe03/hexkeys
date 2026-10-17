@@ -145,12 +145,4 @@ object Core {
 
     /** What the capital gesture types on a punctuation key, shown small on it; empty for other keys. */
     external fun keyHint(handle: Long, index: Int): String
-
-    /** Loads a whisper model file; 0 when it cannot be loaded. */
-    external fun voiceLoad(path: String): Long
-
-    external fun voiceFree(model: Long)
-
-    /** The text spoken in 16 kHz mono samples, in the likeliest of the languages (ISO codes, comma separated). */
-    external fun voiceTranscribe(model: Long, audio: FloatArray, languages: String): String
 }

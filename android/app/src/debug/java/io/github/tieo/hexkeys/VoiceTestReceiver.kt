@@ -9,18 +9,16 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Runs a 16 kHz mono 16-bit WAV file through speech recognition with the
- * chosen model, or the one named by `model` (an id of [VoiceModels.ALL]), and logs
+ * Runs a 16 kHz mono 16-bit WAV file through speech recognition and logs
  * the text and the time it took, for testing on an emulator, which has no
  * microphone to speak into:
- * `adb shell am broadcast -n io.github.tieo.hexkeys/.VoiceTestReceiver --es wav /data/local/tmp/test.wav --es languages en,de --es model tiny`
+ * `adb shell am broadcast -n io.github.tieo.hexkeys/.VoiceTestReceiver --es wav /data/local/tmp/test.wav`
  * With `--ez dictate true` the file goes through dictation instead, as if
  * spoken into the microphone, and each stretch it is cut into is logged.
  */
 class VoiceTestReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val wav = File(intent.getStringExtra("wav") ?: return)
-        val languages = intent.getStringExtra("languages") ?: "en"
         val bytes = wav.readBytes()
         val pcm = ByteBuffer.wrap(bytes, 44, bytes.size - 44).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
         if (intent.getBooleanExtra("dictate", false)) {
@@ -29,7 +27,7 @@ class VoiceTestReceiver : BroadcastReceiver() {
             // Kept alive until done: a receiver's process is frozen soon after it returns.
             val pending = goAsync()
             val started = System.currentTimeMillis()
-            voice.dictate(audio, languages, Dictation(
+            voice.dictate(audio, Dictation(
                 level = {},
                 text = { Log.i("hexkeys", "voice test: stretch at ${System.currentTimeMillis() - started} ms: $it") },
                 changed = {
@@ -44,11 +42,10 @@ class VoiceTestReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             val audio = FloatArray(pcm.remaining()) { pcm.get(it) / 32768f }
-            val model = Voice.MODELS.firstOrNull { it.id == intent.getStringExtra("model") } ?: Voice.chosen(context)
             val started = System.currentTimeMillis()
-            val recognizer = model?.let { VoiceModels.load(it, Voice.folder(context, it), Voice.THREADS) }
+            val recognizer = if (Voice.downloaded(context)) VoiceModels.load(Voice.folder(context), Voice.THREADS) else null
             val loaded = System.currentTimeMillis()
-            val text = recognizer?.transcribe(audio, languages.split(',')) ?: "(no model)"
+            val text = recognizer?.transcribe(audio) ?: "(no model)"
             val done = System.currentTimeMillis()
             recognizer?.release()
             Log.i("hexkeys", "voice test: load ${loaded - started} ms, recognise ${done - loaded} ms for ${audio.size / 16} ms of audio: $text")

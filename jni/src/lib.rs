@@ -5,7 +5,6 @@
 //! means. Every decision about keys lives in the core; Kotlin only draws and
 //! talks to the app being typed into.
 
-mod voice;
 
 use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::Lexicon;

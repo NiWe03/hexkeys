@@ -25,9 +25,8 @@ class Dictation(
 )
 
 /**
- * Speech input: the whisper models offered for download, recording from the
- * microphone at 16 kHz, and handing the recording to whisper.cpp in the
- * core. A dictation is cut into stretches at pauses; each is recognised
+ * Speech input: the model downloaded on request, recording from the
+ * microphone at 16 kHz, and handing the recording to the model. A dictation is cut into stretches at pauses; each is recognised
  * while the next is still being spoken and its text put in at once, so a
  * long dictation needs no more than its last stretch recognised after it
  * ends, and nothing said is lost to a length limit. Recording and
@@ -39,7 +38,7 @@ class Voice(private val context: Context) {
 
     /**
      * Recognition runs below the keyboard's own priority, as do the threads
-     * whisper starts from it, which inherit it: at full speed on every fast
+     * the model starts from it, which inherit it: at full speed on every fast
      * core it held up the keyboard's drawing for over a second at a time.
      */
     private val worker = Executors.newSingleThreadExecutor { task ->
@@ -50,7 +49,6 @@ class Voice(private val context: Context) {
     }
 
     private var recognizer: Recognizer? = null
-    private var loaded: VoiceModel? = null
 
     /** Whether it is listening now. */
     @Volatile
@@ -70,7 +68,7 @@ class Voice(private val context: Context) {
      * use the microphone, which settings take care of.
      */
     @SuppressLint("MissingPermission")
-    fun start(languages: String, dictation: Dictation): Boolean {
+    fun start(dictation: Dictation): Boolean {
         if (listening) return false
         if (!ready(context)) return false
         val minimum = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -89,7 +87,7 @@ class Voice(private val context: Context) {
         record.startRecording()
         Thread {
             try {
-                listen({ chunk -> record.read(chunk, 0, chunk.size) }, languages, dictation)
+                listen({ chunk -> record.read(chunk, 0, chunk.size) }, dictation)
             } finally {
                 record.stop()
                 record.release()
@@ -102,7 +100,7 @@ class Voice(private val context: Context) {
      * Dictates from recorded 16 kHz audio instead of the microphone, at the
      * pace it was spoken, for testing where there is no microphone.
      */
-    fun dictate(audio: ShortArray, languages: String, dictation: Dictation) {
+    fun dictate(audio: ShortArray, dictation: Dictation) {
         if (listening) return
         listening = true
         startedAt = android.os.SystemClock.uptimeMillis()
@@ -118,7 +116,7 @@ class Voice(private val context: Context) {
                 audio.copyInto(chunk, 0, position, position + count)
                 position += count
                 count
-            }, languages, dictation)
+            }, dictation)
         }.start()
     }
 
@@ -131,10 +129,10 @@ class Voice(private val context: Context) {
      * Records until stopped or [MAX_MINUTES] are up, cutting a stretch off
      * after a pause once some speech came before it, or at the quietest
      * moment of its last seconds when it grows to [MAX_STRETCH_MS].
-     * Stretches without speech are dropped: whisper makes up words for
-     * silence.
+     * Stretches without speech are dropped: recognising silence costs time
+     * and can make up words.
      */
-    private fun listen(read: (ShortArray) -> Int, languages: String, dictation: Dictation) {
+    private fun listen(read: (ShortArray) -> Int, dictation: Dictation) {
         val chunk = ShortArray(CHUNK)
         val stretch = FloatArray(RATE * MAX_STRETCH_MS / 1000)
         var count = 0
@@ -144,7 +142,7 @@ class Voice(private val context: Context) {
         var floor = 1f
         val until = startedAt + MAX_MINUTES * 60_000L
         fun handOn(end: Int) {
-            if (spoken) recognise(stretch.copyOf(end), languages, dictation)
+            if (spoken) recognise(stretch.copyOf(end), dictation)
             stretch.copyInto(stretch, 0, end, count)
             count -= end
             loudness.subList(0, minOf(loudness.size, end / CHUNK)).clear()
@@ -191,20 +189,15 @@ class Voice(private val context: Context) {
     private fun threshold(floor: Float) = maxOf(SPEECH_LEVEL, floor * 3f)
 
     /** Recognises one stretch after those before it and hands on its text. */
-    private fun recognise(audio: FloatArray, languages: String, dictation: Dictation) {
+    private fun recognise(audio: FloatArray, dictation: Dictation) {
         main.post {
             pending += 1
             dictation.changed()
         }
         worker.execute {
             val text = runCatching {
-                val chosen = load() ?: return@runCatching ""
-                val started = System.currentTimeMillis()
                 // A new line in the text would send the message in some apps.
-                val text = recognizer!!.transcribe(audio, languages.split(','))
-                    .replace(Regex("\\s+"), " ").trim()
-                measured(context, chosen, System.currentTimeMillis() - started, audio.size * 1000L / RATE)
-                text
+                load()?.transcribe(audio)?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
             }.getOrDefault("")
             main.post {
                 pending -= 1
@@ -214,15 +207,10 @@ class Voice(private val context: Context) {
         }
     }
 
-    /** Loads the chosen model unless it is loaded already; null without one. Runs on [worker]. */
-    private fun load(): VoiceModel? {
-        val chosen = chosen(context) ?: return null
-        if (chosen != loaded) {
-            recognizer?.release()
-            recognizer = VoiceModels.load(chosen, folder(context, chosen), THREADS)
-            loaded = chosen
-        }
-        return chosen
+    /** Loads the model unless it is loaded already; null when it is not downloaded. Runs on [worker]. */
+    private fun load(): Recognizer? {
+        if (!enabled(context)) return null
+        return recognizer ?: VoiceModels.load(folder(context), THREADS).also { recognizer = it }
     }
 
     fun release() {
@@ -259,62 +247,52 @@ class Voice(private val context: Context) {
         /** The longest dictation. */
         private const val MAX_MINUTES = 10
 
-        /** Preference naming the chosen model's id. */
+        /** Preference holding the model's id while speech input is on. */
         const val MODEL = "voice_model"
 
         /** Threads recognition runs on: the phone's fast cores. */
         const val THREADS = 4
 
-        /** Preference prefix for a model's time for a sentence, by its id. */
-        private const val TIMING = "voice_timing_"
+        val SPEECH_MODEL = VoiceModels.PARAKEET
 
-        /** The length of sentence times are given for: a sentence of about a dozen words. */
-        const val SENTENCE_MS = 5000L
+        /** Whether speech input is on: switched on and its model downloaded. */
+        fun enabled(context: Context) =
+            Dictionaries.preferences(context).getString(MODEL, null) == SPEECH_MODEL.id && downloaded(context)
 
-        /**
-         * How long the whisper models take compared with each other, from
-         * timing all three on the same recordings with the same build. The
-         * other engines differ too much to be worked out from them.
-         */
-        private val RELATIVE_TIME = mapOf("tiny" to 10L, "base" to 32L, "small" to 133L)
+        /** Where the model's files are. */
+        fun folder(context: Context) = File(File(context.filesDir, "voice"), SPEECH_MODEL.id)
 
-        val MODELS get() = VoiceModels.ALL
-
-        fun chosen(context: Context): VoiceModel? {
-            val id = Dictionaries.preferences(context).getString(MODEL, null)
-            return MODELS.firstOrNull { it.id == id }?.takeIf { downloaded(context, it) }
+        /** Deletes whatever else lies in the voice folder: models offered before, and their timings. */
+        fun cleanUp(context: Context) {
+            File(context.filesDir, "voice").listFiles()?.filter { it.name != SPEECH_MODEL.id }?.forEach { it.deleteRecursively() }
+            val preferences = Dictionaries.preferences(context)
+            val stale = preferences.all.keys.filter { it.startsWith("voice_timing_") }
+            if (stale.isNotEmpty()) preferences.edit().apply { stale.forEach(::remove) }.apply()
         }
 
-        /** Where a model's files are: a folder per model. */
-        fun folder(context: Context, model: VoiceModel): File {
-            val folder = File(File(context.filesDir, "voice"), model.id)
-            // Whisper models used to lie in the voice folder itself.
-            if (model.engine == Engine.WHISPER) {
-                val old = File(folder.parentFile, model.files[0].name)
-                if (old.exists()) {
-                    folder.mkdirs()
-                    old.renameTo(File(folder, old.name))
-                }
-            }
-            return folder
+        /** Switches speech input off and deletes the model. */
+        fun delete(context: Context) {
+            Dictionaries.preferences(context).edit().remove(MODEL).apply()
+            folder(context).deleteRecursively()
         }
 
-        fun downloaded(context: Context, model: VoiceModel) =
-            model.files.all { File(folder(context, model), it.name).length() == it.bytes }
+        fun downloaded(context: Context) =
+            SPEECH_MODEL.files.all { File(folder(context), it.name).length() == it.bytes }
 
         fun permitted(context: Context) =
             context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-        /** Whether speaking can start: a model is downloaded and the microphone allowed. */
-        fun ready(context: Context) = chosen(context) != null && permitted(context)
+        /** Whether speaking can start: speech input is on and the microphone allowed. */
+        fun ready(context: Context) = enabled(context) && permitted(context)
 
         /**
          * Downloads a model's files, reporting progress from 0 to 1, each
          * checked against the SHA-256 it had at the pinned commit; throws
          * when one fails. Files already in place are kept.
          */
-        fun download(context: Context, model: VoiceModel, progress: (Float) -> Unit) {
-            val folder = folder(context, model).apply { mkdirs() }
+        fun download(context: Context, progress: (Float) -> Unit) {
+            val model = SPEECH_MODEL
+            val folder = folder(context).apply { mkdirs() }
             val total = model.files.sumOf { it.bytes }.toFloat()
             var done = 0L
             for (file in model.files) {
@@ -353,51 +331,6 @@ class Voice(private val context: Context) {
                     connection.disconnect()
                     partial.delete()
                 }
-            }
-        }
-
-        /**
-         * How long the model takes on this phone for a sentence of
-         * [SENTENCE_MS], in ms, measured; null before it has been used.
-         */
-        fun timing(context: Context, model: VoiceModel): Long? =
-            Dictionaries.preferences(context).getLong(TIMING + model.id, -1).takeIf { it > 0 }
-
-        /**
-         * How long the model takes for a sentence: measured, or else worked
-         * out from a model measured on this phone by how the models compare
-         * ([RELATIVE_TIME]); the flag tells which. Null when none is measured.
-         */
-        fun expectedTiming(context: Context, model: VoiceModel): Pair<Long, Boolean>? {
-            timing(context, model)?.let { return it to true }
-            val own = RELATIVE_TIME[model.id] ?: return null
-            val other = MODELS.firstOrNull { it.id in RELATIVE_TIME && timing(context, it) != null } ?: return null
-            return timing(context, other)!! * own / RELATIVE_TIME.getValue(other.id) to false
-        }
-
-        /** Counts one recognition of `audioMs` that took `ms`, scaled to a sentence and averaged with the earlier ones. */
-        fun measured(context: Context, model: VoiceModel, ms: Long, audioMs: Long) {
-            if (audioMs <= 0) return
-            val sentence = ms * SENTENCE_MS / audioMs
-            val before = timing(context, model)
-            val average = if (before == null) sentence else (before * 2 + sentence) / 3
-            Dictionaries.preferences(context).edit().putLong(TIMING + model.id, average).apply()
-        }
-
-        /** Times the model on the sentence in the app's assets, so its time shows before it is first spoken to. */
-        fun measure(context: Context, model: VoiceModel) {
-            val bytes = context.assets.open("sentence.wav").use { it.readBytes() }
-            val pcm = java.nio.ByteBuffer.wrap(bytes, 44, bytes.size - 44).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-            val audio = FloatArray(pcm.remaining()) { pcm.get(it) / 32768f }
-            val recognizer = VoiceModels.load(model, folder(context, model), THREADS)
-            try {
-                // Once to load everything it needs, then timed.
-                recognizer.transcribe(audio, listOf("en", "de"))
-                val started = System.currentTimeMillis()
-                recognizer.transcribe(audio, listOf("en", "de"))
-                measured(context, model, System.currentTimeMillis() - started, audio.size * 1000L / RATE)
-            } finally {
-                recognizer.release()
             }
         }
     }

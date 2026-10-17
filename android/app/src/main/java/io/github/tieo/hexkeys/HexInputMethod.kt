@@ -91,6 +91,7 @@ class HexInputMethod : InputMethodService() {
         lexicon = Core.lexiconCreate()
         learned.putAll(Dictionaries.learned(this))
         loadDictionaries()
+        loader.execute { Voice.cleanUp(this) }
         Dictionaries.preferences(this).registerOnSharedPreferenceChangeListener(settingsChanged)
         if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             registerReceiver(dictationTest, android.content.IntentFilter(DICTATION_TEST), RECEIVER_EXPORTED)
@@ -696,7 +697,7 @@ class HexInputMethod : InputMethodService() {
             return
         }
         dictationField = fieldOf(currentInputEditorInfo)
-        val started = voice.start(voiceLanguages(), Dictation(
+        val started = voice.start(Dictation(
             level = { view.voiceLevel(it) },
             text = { text -> dictated(text) },
             changed = {
@@ -747,15 +748,6 @@ class HexInputMethod : InputMethodService() {
         if (send && currentInputConnection != null) put(held)
         held = ""
         keyboard?.heldText = ""
-    }
-
-    /** The languages of the enabled dictionaries as ISO codes, for recognising speech. */
-    private fun voiceLanguages(): String {
-        // The language being written first: models told one language take it.
-        val current = language?.let { lexiconFiles.getOrNull(it) }?.let(::languageCode)
-        val enabled = Dictionaries.enabled(this)
-        val all = Dictionaries.catalog(this).filter { it.file in enabled }.map { languageCode(it.file) }
-        return (listOfNotNull(current) + all).distinct().joinToString(",")
     }
 
     /** Counts a word no dictionary has as kept, when learning is switched on. */
