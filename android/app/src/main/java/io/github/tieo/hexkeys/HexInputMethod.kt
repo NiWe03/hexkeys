@@ -92,6 +92,7 @@ class HexInputMethod : InputMethodService() {
         learned.putAll(Dictionaries.learned(this))
         loadDictionaries()
         loader.execute { Voice.cleanUp(this) }
+        clips.listen()
         Dictionaries.preferences(this).registerOnSharedPreferenceChangeListener(settingsChanged)
         if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             registerReceiver(dictationTest, android.content.IntentFilter(DICTATION_TEST), RECEIVER_EXPORTED)
@@ -121,6 +122,7 @@ class HexInputMethod : InputMethodService() {
         super.onDestroy()
         Dictionaries.preferences(this).unregisterOnSharedPreferenceChangeListener(settingsChanged)
         runCatching { unregisterReceiver(dictationTest) }
+        clips.stop()
         loader.shutdown()
         voice.release()
         Core.words.execute {
@@ -310,6 +312,11 @@ class HexInputMethod : InputMethodService() {
         if (kind != "redraw" && kind != "nothing") connection.finishComposing()
         val undo = lastCorrection
         lastCorrection = null
+        // Typing on past a copied text offered in the strip stops offering it.
+        if (kind != "redraw" && kind != "nothing" && keyboard?.freshClip?.isNotEmpty() == true) {
+            clips.spend()
+            keyboard?.freshClip = ""
+        }
         val justSwiped = swiped
         swiped = null
         when (kind) {
@@ -453,6 +460,7 @@ class HexInputMethod : InputMethodService() {
             // app that sends on the enter key does not; holding it does the field's action.
             "enter" -> if (multiLine) connection.commit("\n") else performAction()
             "enter_action" -> performAction()
+            "emoji" -> frame?.let { it.showEmoji(!it.emojiShown) }
             "language" -> {
                 // Guessing, then each language in turn, then guessing again.
                 val count = lexiconFiles.size
@@ -489,10 +497,11 @@ class HexInputMethod : InputMethodService() {
         onSettings = {
             startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         },
-        onEmoji = { frame?.let { it.showEmoji(!it.emojiShown) } },
+        onClipboard = { frame?.let { it.showClipboard(!it.clipboardShown) } },
         onPasswords = { passwordManager()?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } },
         onVoice = { toggleVoice() },
         onHeld = { send -> releaseHeld(send) },
+        onFreshClip = { clips.fresh()?.let { paste(it.text) } },
     ).let { view ->
         keyboard = view
         view.accents = accents
@@ -505,7 +514,17 @@ class HexInputMethod : InputMethodService() {
             onClose = { frame?.showEmoji(false) },
             onSearch = { openEmojiSearch() },
         )
-        KeyboardFrame(this, view, emoji).also { frame = it }
+        val clipboard = ClipboardPanel(
+            this, clips,
+            onPaste = { text ->
+                paste(text)
+                frame?.showClipboard(false)
+            },
+            onSpace = { editor.finishComposing(); editor.commit(" ") },
+            onBackspace = { deleteCharacter() },
+            onClose = { frame?.showClipboard(false) },
+        )
+        KeyboardFrame(this, view, emoji, clipboard).also { frame = it }
     }
 
     /**
@@ -575,6 +594,7 @@ class HexInputMethod : InputMethodService() {
         keyboard?.listening = voice.listening
         keyboard?.recognising = voice.pending
         keyboard?.heldText = held
+        keyboard?.freshClip = clips.fresh()?.text.orEmpty()
         // The field's own action for enter, such as send or search, and whether it takes new lines.
         // A field may name an action yet ask that enter not do it (Paseo: done, which
         // closes the keyboard); enter's key event then goes to the app instead.
@@ -706,6 +726,22 @@ class HexInputMethod : InputMethodService() {
             },
         ))
         if (started) view.listening = true
+    }
+
+    /** The texts copied, kept for pasting; a new one is offered in the strip while fresh. */
+    private val clips: Clips by lazy { Clips(this) { showFreshClip() } }
+
+    private fun showFreshClip() {
+        keyboard?.freshClip = clips.fresh()?.text.orEmpty()
+    }
+
+    /** Puts in a copied text and stops offering the fresh one. */
+    private fun paste(text: String) {
+        if (currentInputConnection == null) return
+        editor.finishComposing()
+        editor.commit(text)
+        clips.spend()
+        keyboard?.freshClip = ""
     }
 
     /** The field a dictation was started in, as [fieldOf] names it. */

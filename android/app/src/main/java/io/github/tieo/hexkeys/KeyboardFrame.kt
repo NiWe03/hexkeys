@@ -17,7 +17,7 @@ import android.widget.LinearLayout
  * are more than fit. While any are shown they take the place of the words.
  */
 @SuppressLint("ViewConstructor")
-class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: EmojiPanel) : FrameLayout(context) {
+class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: EmojiPanel, val clipboard: ClipboardPanel) : FrameLayout(context) {
 
     private val chips = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
     private val scroller = HorizontalScrollView(context).apply {
@@ -76,6 +76,8 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         addView(pinned)
         addView(emoji)
         emoji.visibility = GONE
+        addView(clipboard)
+        clipboard.visibility = GONE
         search.addView(searchBack, LinearLayout.LayoutParams(keyboard.stripSide, ViewGroup.LayoutParams.MATCH_PARENT))
         search.addView(query, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
             setMargins(0, gap, gap * 2, gap)
@@ -177,6 +179,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         if (on) {
             emoji.apply(keyboard.theme)
             emoji.open()
+            clipboard.visibility = GONE
         }
         emoji.visibility = if (on) VISIBLE else GONE
         requestLayout()
@@ -184,13 +187,27 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
 
     val emojiShown get() = emoji.visibility == VISIBLE
 
+    /** Shows the texts copied in place of the keys, or the keys again. */
+    fun showClipboard(on: Boolean) {
+        if (on) {
+            clipboard.apply(keyboard.theme)
+            emoji.visibility = GONE
+        }
+        clipboard.visibility = if (on) VISIBLE else GONE
+        requestLayout()
+    }
+
+    val clipboardShown get() = clipboard.visibility == VISIBLE
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         keyboard.measure(widthMeasureSpec, heightMeasureSpec)
         val keysTop = keyboard.headroom + keyboard.stripTall
-        emoji.measure(
-            MeasureSpec.makeMeasureSpec(keyboard.measuredWidth, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(keyboard.measuredHeight - keysTop - keyboard.navigationBar, MeasureSpec.EXACTLY),
-        )
+        for (panel in listOf(emoji, clipboard)) {
+            panel.measure(
+                MeasureSpec.makeMeasureSpec(keyboard.measuredWidth, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(keyboard.measuredHeight - keysTop - keyboard.navigationBar, MeasureSpec.EXACTLY),
+            )
+        }
         val width = keyboard.measuredWidth
         val strip = MeasureSpec.makeMeasureSpec(keyboard.stripTall - 2 * gap, MeasureSpec.EXACTLY)
         pinned.measure(MeasureSpec.makeMeasureSpec(width / 3, MeasureSpec.AT_MOST), strip)
@@ -215,6 +232,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         val start = 2 * keyboard.stripSide
         val keysTop = keyboard.headroom + keyboard.stripTall
         emoji.layout(0, keysTop, width, keysTop + emoji.measuredHeight)
+        clipboard.layout(0, keysTop, width, keysTop + clipboard.measuredHeight)
         scroller.layout(start, stripTop, start + scroller.measuredWidth, stripTop + scroller.measuredHeight)
         search.layout(0, keyboard.headroom, width, keyboard.headroom + search.measuredHeight)
         resultScroller.layout(0, keysTop, width, keysTop + resultScroller.measuredHeight)

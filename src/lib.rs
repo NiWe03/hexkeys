@@ -701,6 +701,9 @@ pub enum Action {
     Enter,
     /// Enter held: the field's own action, such as send or search.
     EnterAction,
+    /// Open the emoji, by a flick up on the key to the symbols, which are
+    /// what emoji are typed among.
+    Emoji,
     /// A sideways flick on space: the next language, or the previous one
     /// when `forward` is false.
     Language { forward: bool },
@@ -1263,6 +1266,7 @@ impl Keyboard {
             }
             // A flick up on enter, towards the action drawn above its arrow, does the field's action.
             Gesture::Up if label == "⏎" => Action::EnterAction,
+            Gesture::Up if label == SYMBOLS_KEY => Action::Emoji,
             _ if is_letter(&label) && self.is_capital(gesture) => {
                 self.letter_typed();
                 Action::Commit(upper(&label))
@@ -2110,6 +2114,7 @@ mod tests {
         keyboard.touch_down(enter, 1000);
         assert_eq!(keyboard.touch_up(enter, 1080), Action::Enter);
         assert_eq!(gesture(&mut keyboard, "⏎", &[(0.0, -0.6)]), Action::EnterAction, "a flick up does it too");
+        assert_eq!(gesture(&mut keyboard, SYMBOLS_KEY, &[(0.0, -0.6)]), Action::Emoji, "a flick up on the symbols key opens the emoji");
     }
 
     #[test]

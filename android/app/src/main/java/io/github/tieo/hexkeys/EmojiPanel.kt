@@ -92,7 +92,7 @@ class EmojiPanel(
         })
         // Space is the long key, unnamed as on the keyboard.
         val keys = listOf<Pair<View, Float>>(label("ABC", onClose) to 1f, label("", onSpace) to 3f, backspace to 1f)
-        backspace.setOnClickListener { onBackspace() }
+        repeatWhileHeld(backspace, onBackspace)
         for ((index, entry) in keys.withIndex()) {
             val (view, weight) = entry
             bottom.addView(view, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight).apply {
@@ -266,3 +266,35 @@ class EmojiPanel(
         )
     }
 }
+
+/**
+ * Makes `view` act once when touched and again and again while held, as a
+ * held backspace deletes on: after a long press's wait, every
+ * [HELD_REPEAT_MS].
+ */
+@SuppressLint("ClickableViewAccessibility")
+fun repeatWhileHeld(view: View, action: () -> Unit) {
+    val repeat = object : Runnable {
+        override fun run() {
+            action()
+            view.postDelayed(this, HELD_REPEAT_MS)
+        }
+    }
+    view.setOnTouchListener { touched, event ->
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                touched.isPressed = true
+                action()
+                touched.postDelayed(repeat, android.view.ViewConfiguration.getLongPressTimeout().toLong())
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                touched.isPressed = false
+                touched.removeCallbacks(repeat)
+            }
+        }
+        true
+    }
+}
+
+/** Pause between deletions while a backspace button is held, in ms, as on the keyboard's own. */
+private const val HELD_REPEAT_MS = 60L

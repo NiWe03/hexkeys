@@ -211,6 +211,7 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Backspace => ("backspace", String::new()),
         Action::Enter => ("enter", String::new()),
         Action::EnterAction => ("enter_action", String::new()),
+        Action::Emoji => ("emoji", String::new()),
         Action::Cursor { dx, dy } => ("cursor", format!("{dx} {dy}")),
         Action::Language { forward } => ("language", if forward { "1" } else { "-1" }.to_owned()),
         Action::Redraw => ("redraw", String::new()),

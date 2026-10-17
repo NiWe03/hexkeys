@@ -37,10 +37,11 @@ class KeyboardView(
     private val onAction: (kind: String, text: String) -> Unit,
     private val onPick: (word: String, replaces: Int) -> Unit,
     private val onSettings: () -> Unit,
-    private val onEmoji: () -> Unit,
+    private val onClipboard: () -> Unit,
     private val onPasswords: () -> Unit,
     private val onVoice: () -> Unit,
     private val onHeld: (send: Boolean) -> Unit = {},
+    private val onFreshClip: () -> Unit = {},
 ) : View(context) {
 
     private var handle = 0L
@@ -90,6 +91,13 @@ class KeyboardView(
             invalidate()
         }
     var recognising = 0
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** A text just copied, offered in the strip to paste; empty for none. */
+    var freshClip = ""
         set(value) {
             field = value
             invalidate()
@@ -204,6 +212,7 @@ class KeyboardView(
         strokeWidth = density
     }
     private val deletePaint = Paint()
+    private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         strokeCap = Paint.Cap.ROUND
     }
@@ -406,6 +415,10 @@ class KeyboardView(
                 // What holding enter does, small above the return arrow.
                 drawIcon(canvas, enterIcon, position[0], position[1] + cellWidth * 0.12f, cellWidth * 0.32f, labelPaint.color)
                 drawIcon(canvas, enterSmall, position[0], position[1] - cellWidth * 0.24f, cellWidth * 0.22f, hintPaint.color)
+            } else if (label == SYMBOLS_KEY) {
+                // The emoji a flick up opens, small above the symbols, as flick hints sit.
+                drawLabel(canvas, label, floatArrayOf(position[0], position[1] + cellWidth * 0.14f), cellWidth)
+                drawIcon(canvas, R.drawable.icon_mood, position[0], position[1] - cellWidth * 0.26f, cellWidth * 0.22f, hintPaint.color)
             } else if (hint.isEmpty()) {
                 drawLabel(canvas, Core.label(handle, index), position, cellWidth)
             } else {
@@ -458,7 +471,7 @@ class KeyboardView(
         val middle = headroom + stripHeight / 2f
         val iconSize = stripHeight * 0.55f
         drawIcon(canvas, R.drawable.icon_settings, stripSide / 2f, middle, iconSize, theme.label)
-        drawIcon(canvas, R.drawable.icon_mood, stripSide * 1.5f, middle, iconSize, theme.label)
+        drawIcon(canvas, R.drawable.icon_content_paste, stripSide * 1.5f, middle, iconSize, theme.label)
         if (passwordsAvailable && !chipsShown) {
             drawIcon(canvas, R.drawable.icon_key, width - stripSide / 2f, middle, iconSize, theme.label)
         }
@@ -474,6 +487,10 @@ class KeyboardView(
         }
         if (heldText.isNotEmpty()) {
             drawHeld(canvas, middle, iconSize)
+            return
+        }
+        if (freshClip.isNotEmpty() && !chipsShown) {
+            drawFreshClip(canvas, middle, iconSize)
             return
         }
         if (Core.deleting(handle).isNotEmpty() && deletedText.isNotEmpty()) {
@@ -496,6 +513,29 @@ class KeyboardView(
             val x = 2 * stripSide + slotWidth * index
             canvas.drawLine(x, headroom + stripHeight * 0.3f, x, headroom + stripHeight * 0.7f, dividerPaint)
         }
+    }
+
+    /** In place of the words, a text just copied in a pill with the clipboard's icon, to paste with a tap. */
+    private fun drawFreshClip(canvas: Canvas, middle: Float, iconSize: Float) {
+        val left = 2 * stripSide + 4 * density
+        val right = width - 2 * stripSide - 4 * density
+        stripPaint.isFakeBoldText = false
+        stripPaint.textSize = 15 * resources.displayMetrics.scaledDensity
+        val icon = iconSize * 0.8f
+        val room = right - left - icon - 36 * density
+        var shown = freshClip.replace('\n', ' ')
+        if (stripPaint.measureText(shown) > room) {
+            while (shown.length > 1 && stripPaint.measureText("$shown…") > room) shown = shown.dropLast(1)
+            shown += "…"
+        }
+        val width = icon + 8 * density + stripPaint.measureText(shown) + 28 * density
+        val start = (left + right - width) / 2
+        val half = stripHeight * 0.32f
+        pillPaint.color = theme.other
+        canvas.drawRoundRect(start, middle - half, start + width, middle + half, half, half, pillPaint)
+        drawIcon(canvas, R.drawable.icon_content_paste, start + 14 * density + icon / 2, middle, icon, theme.label)
+        val textX = start + 14 * density + icon + 8 * density + stripPaint.measureText(shown) / 2
+        canvas.drawText(shown, textX, middle - (stripPaint.descent() + stripPaint.ascent()) / 2, stripPaint)
     }
 
     /**
@@ -783,7 +823,7 @@ class KeyboardView(
                         return true
                     }
                     if (slot == -1) {
-                        onEmoji()
+                        onClipboard()
                         return true
                     }
                     if (slot == 3) {
@@ -792,6 +832,10 @@ class KeyboardView(
                     }
                     if (slot == 4) {
                         onVoice()
+                        return true
+                    }
+                    if (freshClip.isNotEmpty() && heldText.isEmpty() && !listening && recognising == 0 && !chipsShown) {
+                        onFreshClip()
                         return true
                     }
                     if (heldText.isNotEmpty() && !listening && recognising == 0) {
@@ -866,6 +910,9 @@ class KeyboardView(
     }
 
     companion object {
+        /** The key to the symbols, which a flick up on opens the emoji. */
+        private const val SYMBOLS_KEY = "@#€"
+
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f
 
