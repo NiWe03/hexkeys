@@ -51,4 +51,18 @@ object Core {
     external fun popupOutline(handle: Long, index: Int): FloatArray
     external fun popupLabelPosition(handle: Long, index: Int): FloatArray
     external fun popupLabel(handle: Long, index: Int): String
+
+    /** Dictionaries for suggestions, independent of any keyboard handle. */
+    external fun lexiconCreate(): Long
+    external fun lexiconDestroy(lexicon: Long)
+
+    /** Adds a `.dict` file's bytes; false when they are not a readable dictionary. */
+    external fun lexiconAdd(lexicon: Long, bytes: ByteArray): Boolean
+    external fun lexiconClear(lexicon: Long)
+
+    /**
+     * The suggestion strip for the text before the cursor: left, middle and
+     * right word (empty when unused), then how many code points a choice replaces.
+     */
+    external fun strip(lexicon: Long, keyboard: Long, before: String): Array<String>
 }

@@ -5,10 +5,11 @@
 //! means. Every decision about keys lives in the core; Kotlin only draws and
 //! talks to the app being typed into.
 
-use hexkeys::{Action, Keyboard, Point};
+use hexkeys::dictionary::Dictionary;
+use hexkeys::{Action, Keyboard, Point, suggest};
 use jni::JNIEnv;
-use jni::objects::JClass;
-use jni::sys::{jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
+use jni::objects::{JByteArray, JClass, JString};
+use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
 
 fn keyboard<'a>(handle: jlong) -> &'a mut Keyboard {
     // SAFETY: the handle comes from `create` and lives until `destroy`; the
@@ -273,4 +274,74 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_cellWidth(
     handle: jlong,
 ) -> jfloat {
     keyboard(handle).layout.cell_width
+}
+
+/// The dictionaries suggestions come from, kept apart from the keyboard,
+/// which is rebuilt whenever its size changes.
+fn lexicon<'a>(handle: jlong) -> &'a mut Vec<Dictionary> {
+    // SAFETY: as for `keyboard`, with the handle from `lexiconCreate`.
+    unsafe { &mut *(handle as *mut Vec<Dictionary>) }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconCreate(_env: JNIEnv, _class: JClass) -> jlong {
+    Box::into_raw(Box::new(Vec::<Dictionary>::new())) as jlong
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconDestroy(_env: JNIEnv, _class: JClass, handle: jlong) {
+    // SAFETY: see `lexicon`; the Kotlin side drops the handle after this.
+    drop(unsafe { Box::from_raw(handle as *mut Vec<Dictionary>) });
+}
+
+/// Adds a `.dict` file's contents; false when they are not a dictionary
+/// this reader understands.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconAdd(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    bytes: JByteArray,
+) -> jboolean {
+    let Ok(bytes) = env.convert_byte_array(&bytes) else { return 0 };
+    match Dictionary::new(bytes) {
+        Ok(dictionary) => {
+            lexicon(handle).push(dictionary);
+            1
+        }
+        Err(_) => 0,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconClear(_env: JNIEnv, _class: JClass, handle: jlong) {
+    lexicon(handle).clear();
+}
+
+/// The suggestion strip for the text before the cursor, as the left,
+/// middle and right slot (empty when unused) and the number of code points
+/// a choice replaces.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_strip(
+    mut env: JNIEnv,
+    _class: JClass,
+    lexicon_handle: jlong,
+    keyboard_handle: jlong,
+    before: JString,
+) -> jobjectArray {
+    let before: String = env.get_string(&before).map(Into::into).unwrap_or_default();
+    let keyboard = keyboard(keyboard_handle);
+    let substitution = |typed: char, meant: char| keyboard.substitution(typed, meant);
+    let strip = suggest::strip(lexicon(lexicon_handle), &before, &substitution)
+        .unwrap_or(suggest::Strip { slots: Default::default(), replaces: 0 });
+    let replaces = strip.replaces.to_string();
+    let values = [strip.slots[0].as_str(), strip.slots[1].as_str(), strip.slots[2].as_str(), replaces.as_str()];
+    let array = env
+        .new_object_array(values.len() as i32, "java/lang/String", jni::objects::JObject::null())
+        .expect("string array");
+    for (i, value) in values.into_iter().enumerate() {
+        let string = env.new_string(value).expect("string");
+        env.set_object_array_element(&array, i as i32, string).expect("fill string array");
+    }
+    array.into_raw()
 }

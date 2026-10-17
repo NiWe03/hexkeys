@@ -598,6 +598,12 @@ impl Keyboard {
         }
     }
 
+    /// What typing `typed` for `meant` costs, judged on the letter layer
+    /// whichever layer is showing.
+    pub fn substitution(&self, typed: char, meant: char) -> f32 {
+        self.layers[0].substitution(typed, meant)
+    }
+
     /// How far above the keyboard a popup can reach: one row's pitch.
     pub fn headroom(&self) -> f32 {
         self.layout.cell_height * 0.75

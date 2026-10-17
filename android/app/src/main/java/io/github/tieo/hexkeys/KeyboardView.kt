@@ -19,28 +19,42 @@ import android.view.WindowInsets
  * stroke in the background colour, which reads as the gap between keys
  * without changing where a touch lands.
  *
- * The view is taller than the keys by the core's headroom, a transparent band
- * on top where a long-press popup over the top row can appear. The input
- * method reports only the keys as its content and touchable area, so the band
- * neither pushes the app up nor takes its touches.
+ * Above the keys runs the suggestion strip: three words, the best in the
+ * middle; tapping one hands it to [onPick] with how many characters before
+ * the cursor it replaces.
+ *
+ * The view is taller than strip and keys by the core's headroom, a
+ * transparent band on top where a long-press popup over the top row can
+ * appear. The input method reports only strip and keys as its content and
+ * touchable area, so the band neither pushes the app up nor takes its touches.
  */
 @SuppressLint("ViewConstructor")
 class KeyboardView(
     context: Context,
     private val onAction: (kind: String, text: String) -> Unit,
+    private val onPick: (word: String, replaces: Int) -> Unit,
 ) : View(context) {
 
     private var handle = 0L
     private var paths: List<Path> = emptyList()
 
-    /** Height of the transparent band above the keys. */
+    /** Height of the transparent band above the strip. */
     var headroom = 0
         private set
+
+    private val density = resources.displayMetrics.density
+    private val stripHeight = (44 * density).toInt()
+    private var slots = arrayOf("", "", "")
+    private var replaces = 0
+    /** The slot a finger went down on, or -1 when the touch is not in the strip. */
+    private var stripTouch = -1
+
+    /** Where the keys start, below headroom and strip. */
+    private val keysTop get() = headroom + stripHeight
 
     /** Room below the keys for the navigation bar, which the window draws under. */
     private var navigationBar = 0
 
-    private val density = resources.displayMetrics.density
     private val background = 0xFF1B1B1F.toInt()
     private val backgroundPaint = Paint().apply { color = background }
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF3A3A42.toInt() }
@@ -56,6 +70,15 @@ class KeyboardView(
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFE8E8EE.toInt()
         textAlign = Paint.Align.CENTER
+    }
+    private val stripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFE8E8EE.toInt()
+        textAlign = Paint.Align.CENTER
+        textSize = 17 * resources.displayMetrics.scaledDensity
+    }
+    private val dividerPaint = Paint().apply {
+        color = 0xFF3A3A42.toInt()
+        strokeWidth = density
     }
 
     /** Calls the core back when a hold it is timing has lasted long enough. */
@@ -85,7 +108,22 @@ class KeyboardView(
         handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong())
         headroom = Core.headroom(handle).toInt()
         loadOutlines()
-        setMeasuredDimension(width, headroom + Core.height(handle).toInt() + navigationBar)
+        setMeasuredDimension(width, keysTop + Core.height(handle).toInt() + navigationBar)
+    }
+
+    /** Shows the strip the core computes for the text before the cursor. */
+    fun suggest(lexicon: Long, before: String) {
+        if (handle == 0L) return
+        val strip = Core.strip(lexicon, handle, before)
+        slots = arrayOf(strip[0], strip[1], strip[2])
+        replaces = strip[3].toInt()
+        invalidate()
+    }
+
+    fun clearSuggestions() {
+        slots = arrayOf("", "", "")
+        replaces = 0
+        invalidate()
     }
 
     /** Every layer tiles the same area, so a layer change only swaps the outlines. */
@@ -103,8 +141,9 @@ class KeyboardView(
     override fun onDraw(canvas: Canvas) {
         if (handle == 0L) return
         canvas.drawRect(0f, headroom.toFloat(), width.toFloat(), height.toFloat(), backgroundPaint)
+        drawStrip(canvas)
         canvas.save()
-        canvas.translate(0f, headroom.toFloat())
+        canvas.translate(0f, keysTop.toFloat())
         val cellWidth = Core.cellWidth(handle)
         val pressed = Core.pressed(handle)
         for ((index, path) in paths.withIndex()) {
@@ -123,6 +162,26 @@ class KeyboardView(
             }
         }
         canvas.restore()
+    }
+
+    /** Three equal slots, the middle one bold; long words shrink to fit their slot. */
+    private fun drawStrip(canvas: Canvas) {
+        val slotWidth = width / 3f
+        val middle = headroom + stripHeight / 2f
+        for ((index, word) in slots.withIndex()) {
+            if (word.isEmpty()) continue
+            stripPaint.isFakeBoldText = index == 1
+            stripPaint.textSize = 17 * resources.displayMetrics.scaledDensity
+            val room = slotWidth - 12 * density
+            val measured = stripPaint.measureText(word)
+            if (measured > room) stripPaint.textSize *= room / measured
+            val baseline = middle - (stripPaint.descent() + stripPaint.ascent()) / 2
+            canvas.drawText(word, slotWidth * (index + 0.5f), baseline, stripPaint)
+        }
+        for (index in 1..2) {
+            val x = slotWidth * index
+            canvas.drawLine(x, headroom + stripHeight * 0.3f, x, headroom + stripHeight * 0.7f, dividerPaint)
+        }
     }
 
     /** Single characters large, words such as "space" smaller so they fit their key. */
@@ -147,8 +206,20 @@ class KeyboardView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (handle == 0L) return false
         val x = event.x
-        val y = event.y - headroom
+        val y = event.y - keysTop
         val time = event.eventTime
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            stripTouch = if (y < 0) (x / (width / 3f)).toInt().coerceIn(0, 2) else -1
+        }
+        if (stripTouch >= 0) {
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                val slot = (x / (width / 3f)).toInt().coerceIn(0, 2)
+                val word = slots[stripTouch]
+                if (slot == stripTouch && y < 0 && word.isNotEmpty()) onPick(word, replaces)
+                stripTouch = -1
+            }
+            return true
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> Core.touchDown(handle, x, y, time)
             MotionEvent.ACTION_MOVE -> Core.touchMove(handle, x, y, time)

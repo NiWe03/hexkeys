@@ -275,6 +275,73 @@ fn next_words(dictionary: &Dictionary, previous: &str) -> Result<Vec<(String, u8
     }
 }
 
+/// What the suggestion strip shows: three slots left to right, empty where
+/// there is nothing, and how many characters before the cursor a choice
+/// replaces.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Strip {
+    pub slots: [String; 3],
+    pub replaces: usize,
+}
+
+/// Letters and the marks inside words; what the word at the cursor is made of.
+fn in_word(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '\'' | '’' | '-')
+}
+
+/// The strip for the text before the cursor. The best candidate takes the
+/// middle as on other keyboards. While a word is being typed that no
+/// dictionary spells that way, the word as typed stays on the left so it
+/// can be kept; otherwise the left and right slots hold the runners-up.
+/// After a word and a space, the slots offer what usually comes next.
+pub fn strip(dictionaries: &[Dictionary], before: &str, substitution: Substitution) -> Result<Strip, Error> {
+    let start = before.char_indices().rev().take_while(|&(_, c)| in_word(c)).last().map_or(before.len(), |(i, _)| i);
+    let (rest, typed) = before.split_at(start);
+    let previous = rest.trim_end().rsplit(|c: char| !in_word(c)).next().filter(|word| !word.is_empty());
+    let mut slots = [String::new(), String::new(), String::new()];
+    if typed.is_empty() {
+        if rest.ends_with(' ')
+            && let Some(previous) = previous
+        {
+            let words = predict(dictionaries, previous, 3)?;
+            for (slot, word) in [1, 0, 2].into_iter().zip(words) {
+                slots[slot] = word;
+            }
+        }
+        return Ok(Strip { slots, replaces: 0 });
+    }
+    let found = suggest(dictionaries, typed, previous, substitution, 3)?;
+    let known = spelled(dictionaries, typed)?;
+    let mut words: Vec<String> = found.into_iter().map(|s| s.word).filter(|word| word != typed).collect();
+    if known {
+        words.insert(0, typed.to_owned());
+        for (slot, word) in [1, 0, 2].into_iter().zip(words) {
+            slots[slot] = word;
+        }
+    } else {
+        slots[0] = typed.to_owned();
+        for (slot, word) in [1, 2].into_iter().zip(words) {
+            slots[slot] = word;
+        }
+    }
+    Ok(Strip { slots, replaces: typed.chars().count() })
+}
+
+/// Whether a dictionary spells `word` exactly so, or with a lower-case first
+/// letter where the word was capitalised to start a sentence.
+fn spelled(dictionaries: &[Dictionary], word: &str) -> Result<bool, Error> {
+    let mut chars = word.chars();
+    let lowered: String = chars.next().into_iter().flat_map(char::to_lowercase).chain(chars).collect();
+    for dictionary in dictionaries {
+        for form in [word, &lowered] {
+            if dictionary.find(form)?.is_some_and(|node| !node.hidden) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// Whether any dictionary has `word`, as typed or with its first letter
 /// lowered or raised.
 pub fn is_word(dictionaries: &[Dictionary], word: &str) -> Result<bool, Error> {
@@ -384,6 +451,25 @@ mod tests {
         let german = german();
         assert_eq!(words(&german, "Uber", None)[0], "Über");
         assert_eq!(words(&german, "HAUS", None)[0], "HAUS");
+    }
+
+    #[test]
+    fn strip_keeps_an_unknown_word_on_the_left() {
+        let german = german();
+        let strip = strip(&german, "Wir gehen nach haus", &plain).unwrap();
+        assert_eq!(strip.slots[1], "Haus");
+        assert_eq!(strip.replaces, 4);
+        let strip = super::strip(&german, "ich sag hallp", &plain).unwrap();
+        assert_eq!(strip.slots[0], "hallp");
+        assert_eq!(strip.slots[1], "hallo");
+    }
+
+    #[test]
+    fn strip_predicts_after_a_space() {
+        let german = german();
+        let strip = strip(&german, "Heute die ", &plain).unwrap();
+        assert_eq!(strip.slots, ["Stadt".to_owned(), "Polizei".to_owned(), String::new()]);
+        assert_eq!(strip.replaces, 0);
     }
 
     #[test]
