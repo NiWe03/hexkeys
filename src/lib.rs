@@ -1021,8 +1021,9 @@ const CURSOR_LINE: f32 = 1.5;
 
 /// How near a side of the keyboard the finger moving the cursor has to rest,
 /// in key widths, for the cursor to step on by itself towards that side,
-/// where the finger can go no further.
-const CURSOR_EDGE: f32 = 0.5;
+/// where the finger can go no further: the outer key column, since on the
+/// phone a thumb at the side rested 70 to 77 px from it.
+const CURSOR_EDGE: f32 = 1.0;
 
 /// How long the finger rests at a side before the first step, the pause
 /// after it, and the shortest pause the steps speed up to, in ms.
