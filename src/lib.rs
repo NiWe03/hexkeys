@@ -757,9 +757,13 @@ const STILL: f32 = 0.25;
 const FAR_SIDE: f32 = 1.0;
 
 /// How long a delete swipe rests on the far side before its first whole
-/// word goes, in ms: long enough that a slide reaching the edge and pausing
-/// there takes only its characters.
+/// word goes, in ms; until then it takes characters one after another.
 const FAR_HOLD_MS: u64 = 1000;
+
+/// How long a delete swipe rests on the far side before it takes its first
+/// character there, and the pause between the ones after, in ms.
+const FAR_LETTER_START_MS: u64 = 150;
+const FAR_LETTER_REPEAT_MS: u64 = 100;
 
 /// Pause between characters while backspace is held, in ms.
 const BACKSPACE_REPEAT_MS: u64 = 60;
@@ -865,13 +869,15 @@ enum Gesture {
 struct Deleting {
     /// Characters deleted by how far the finger moved in.
     characters: u32,
+    /// Characters deleted one after another while resting on the far side.
+    held: u32,
     /// Whole words deleted while holding still.
     words: u32,
 }
 
 impl Deleting {
     fn pieces(&self) -> u32 {
-        self.characters + self.words
+        self.characters + self.held + self.words
     }
 }
 
@@ -1180,7 +1186,7 @@ impl Keyboard {
             && inwards >= FLICK * w
             && (at.x - touch.start.x).abs() >= (at.y - touch.start.y).abs()
         {
-            touch.deleting = Some(Deleting { characters: 0, words: 0 });
+            touch.deleting = Some(Deleting { characters: 0, held: 0, words: 0 });
             started = true;
         }
         if let Some(deleting) = &mut touch.deleting {
@@ -1262,7 +1268,7 @@ impl Keyboard {
         }
         let touch = self.touch.as_ref()?;
         match self.gesture(touch) {
-            Gesture::Delete if self.on_far_side(touch) => Some(touch.repeat_at.unwrap_or(touch.anchor_time + FAR_HOLD_MS)),
+            Gesture::Delete if self.on_far_side(touch) => Some(touch.repeat_at.unwrap_or(touch.anchor_time + FAR_LETTER_START_MS)),
             Gesture::Delete => None,
             Gesture::Tap if self.layout.keys[touch.key].label == "⌫" => {
                 Some(touch.repeat_at.unwrap_or(touch.anchor_time + self.long_press_ms))
@@ -1286,6 +1292,13 @@ impl Keyboard {
             return Action::Nothing;
         }
         match self.gesture(&touch) {
+            Gesture::Delete if time < touch.anchor_time + FAR_HOLD_MS => {
+                let touch = self.touch.as_mut().expect("touch");
+                let deleting = touch.deleting.as_mut().expect("deleting");
+                deleting.held += 1;
+                touch.repeat_at = Some((time + FAR_LETTER_REPEAT_MS).min(touch.anchor_time + FAR_HOLD_MS));
+                Action::Delete { pieces: deleting.pieces(), words: false, started: false }
+            }
             Gesture::Delete => {
                 let touch = self.touch.as_mut().expect("touch");
                 let deleting = touch.deleting.as_mut().expect("deleting");
@@ -1932,7 +1945,7 @@ mod tests {
     }
 
     #[test]
-    fn a_delete_slide_resting_on_the_far_side_deletes_whole_words_ever_faster() {
+    fn a_delete_slide_resting_on_the_far_side_deletes_letters_then_whole_words_ever_faster() {
         let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
         let w = keyboard.layout.cell_width;
         let y = keyboard.layout.numbers_bottom / 2.0;
@@ -1940,7 +1953,14 @@ mod tests {
         keyboard.touch_move(Point { x: 600.0, y }, 300);
         assert_eq!(keyboard.deadline(), None, "resting in the middle only chooses how many characters");
         keyboard.touch_move(Point { x: 0.5 * w, y }, 500);
-        assert_eq!(keyboard.deadline(), Some(500 + FAR_HOLD_MS));
+        assert_eq!(keyboard.deadline(), Some(500 + FAR_LETTER_START_MS));
+        let mut letters = 0;
+        while keyboard.deadline().unwrap() < 500 + FAR_HOLD_MS {
+            let due = keyboard.deadline().unwrap();
+            assert!(matches!(keyboard.tick(due), Action::Delete { words: false, .. }), "letters until the second is up");
+            letters += 1;
+        }
+        assert!(letters >= 5, "{letters} letters");
         let first = keyboard.tick(500 + FAR_HOLD_MS);
         assert!(matches!(first, Action::Delete { words: true, .. }));
         let pauses: Vec<u64> = (0..6)
