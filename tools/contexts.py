@@ -1,12 +1,21 @@
 """Builds the context counts autocorrect uses to tell apart words that differ only in
 apostrophes, accents and capitals ("its" and "it's", "weg" and "Weg").
 
-Usage: python3 -I tools/contexts.py CACHE [LANGUAGE...]   (writes android/app/src/main/assets/contexts/<language>.tsv)
+Usage: python3 -I tools/contexts.py CACHE [LANGUAGE...]
+
+Writes each language's counts to target/contexts/<language>.tsv, then packages every
+language built so far: English, built in like its dictionary, is copied to the app's
+assets as contexts/en.tsv; the others are gzipped to target/contexts/<language>.tsv.gz,
+the files the app downloads along with a dictionary of their language from the GitHub
+release named in Dictionaries.kt, and listed with their SHA-256 in the assets'
+contexts.tsv, which the app checks each download against.
 
 Each language's text is the Leipzig Corpora Collection's largest web, news or mixed
 corpus of it, up to a million sentences, downloaded into CACHE once; Wikipedia only
 where it has nothing else. Languages it has no corpus of in the dictionary's script
-(Kabyle, Serbian in Latin script, Tamazight, Toki Pona, Hinglish) get no counts. A confusion set is a word written plainly, in
+(Kabyle, Serbian in Latin script, Tamazight, Toki Pona, Hinglish) get no counts, and
+neither does Vietnamese, where nearly every word has several tone spellings and its
+neighbours do not tell them apart well enough: "viet nam" came out "viết nam". A confusion set is a word written plainly, in
 lower case without apostrophes or accents, together with the other spellings it folds
 to, each written at least MIN_COUNT times away from a sentence's start (the first word,
 and any after a full stop, question or exclamation mark, or colon). All-capital
@@ -29,6 +38,8 @@ put back is left out. The counts written come from all sentences.
 """
 
 import collections
+import gzip
+import hashlib
 import math
 import pathlib
 import random
@@ -80,10 +91,12 @@ CORPORA = {
     "sv": "swe_news_2023_1M",
     "tl": "tgl_wikipedia_2021_100K",
     "tr": "tur_mixed_2014_1M",
-    "vi": "vie_mixed_2014_1M",
 }
 URL = "https://downloads.wortschatz-leipzig.de/corpora/{}.tar.gz"
-OUT = pathlib.Path(__file__).resolve().parent.parent / "android/app/src/main/assets/contexts"
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+OUT = ROOT / "target/contexts"
+ASSETS = ROOT / "android/app/src/main/assets"
+BUILT_IN = "en"
 
 MIN_COUNT = 20
 MIN_CONTEXT = 2
@@ -251,6 +264,23 @@ def main():
         text, sets, fixed = build(language, sentences(cache, corpus))
         (OUT / f"{language}.tsv").write_text(text, encoding="utf-8")
         print(f"{language}: {sets} sets, {len(text) // 1024} KiB, {fixed} held-back uses put back")
+    package()
+
+
+def package():
+    (ASSETS / "contexts").mkdir(exist_ok=True)
+    lines = ["# language\tsha256 of language.tsv.gz"]
+    for tsv in sorted(OUT.glob("*.tsv")):
+        language = tsv.stem
+        data = tsv.read_bytes()
+        if language == BUILT_IN:
+            (ASSETS / "contexts" / tsv.name).write_bytes(data)
+            continue
+        # No name or time in the header, so the same counts always hash the same.
+        packed = gzip.compress(data, compresslevel=9, mtime=0)
+        (OUT / f"{language}.tsv.gz").write_bytes(packed)
+        lines.append(f"{language}\t{hashlib.sha256(packed).hexdigest()}")
+    (ASSETS / "contexts.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

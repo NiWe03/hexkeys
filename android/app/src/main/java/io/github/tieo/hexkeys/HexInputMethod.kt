@@ -143,8 +143,9 @@ class HexInputMethod : InputMethodService() {
     private fun loadDictionaries() {
         val words = learned.toMap()
         loader.execute {
-            // On the first start the phone's languages are downloaded and switched on.
-            // Offline, the ones missing are tried again on the next start.
+            // On the first start the phone's languages are downloaded and switched on,
+            // and a language without its context counts gets them. Offline, what is
+            // missing is tried again on the next start.
             var files = Dictionaries.enabled(this)
             if (!Dictionaries.chosen(this)) {
                 val languages = Dictionaries.deviceLanguages(this)
@@ -154,14 +155,13 @@ class HexInputMethod : InputMethodService() {
                 }.toSet()
                 if (files == languages) Dictionaries.setEnabled(this, files)
             }
+            for (file in files) Dictionaries.downloadContexts(this, file)
             val fresh = Core.lexiconCreate()
             val added = files.filter { file -> Dictionaries.read(this, file)?.let { Core.lexiconAdd(fresh, it) } == true }
             for ((word, times) in words) Core.lexiconLearn(fresh, word, times)
             // Spellings told apart by context, for the languages that have counts.
-            val counted = assets.list("contexts").orEmpty().toSet()
             for ((index, file) in added.withIndex()) {
-                val name = "${languageCode(file)}.tsv"
-                if (name in counted) Core.lexiconContexts(fresh, index, assets.open("contexts/$name").bufferedReader().readText())
+                Dictionaries.readContexts(this, file)?.let { Core.lexiconContexts(fresh, index, it) }
             }
             val accents = Core.lexiconAccents(fresh, -1)
             Core.lexiconPrepare(fresh)
@@ -890,8 +890,7 @@ class HexInputMethod : InputMethodService() {
     }
 
     /** The ISO code of a dictionary's language. */
-    private fun languageCode(file: String) =
-        (Dictionaries.catalog(this).firstOrNull { it.file == file }?.locale ?: "en").substringBefore('_').lowercase()
+    private fun languageCode(file: String) = Dictionaries.languageCode(this, file)
 
     /** Counts strips asked for, so only the newest one is shown. */
     @Volatile
