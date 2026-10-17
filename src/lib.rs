@@ -1021,13 +1021,20 @@ impl Keyboard {
         )
     }
 
-    /// Whether a touch starts where delete slides do: the number row's half
+    /// Whether a touch starts where delete slides do: the number row's third
     /// on the delete side. Swipe typing never starts there, so a slide
     /// cannot be mistaken for a swiped word; anywhere on the letters a
     /// word's path from the edge column looked like one.
     fn in_delete_zone(&self, at: Point) -> bool {
-        let half = self.layout.width / 2.0;
-        at.y < self.layout.numbers_bottom && if self.gestures.delete_from_left { at.x < half } else { at.x > half }
+        let third = self.layout.width / 3.0;
+        at.y < self.layout.numbers_bottom && if self.gestures.delete_from_left { at.x < third } else { at.x > 2.0 * third }
+    }
+
+    /// Whether a touch starts where a sideways slide moves the cursor: the
+    /// number row's middle third.
+    fn in_cursor_zone(&self, at: Point) -> bool {
+        let third = self.layout.width / 3.0;
+        at.y < self.layout.numbers_bottom && at.x >= third && at.x <= 2.0 * third
     }
 
     /// Whether a delete swipe has reached the far side of the keyboard,
@@ -1118,6 +1125,16 @@ impl Keyboard {
             (cursor.dx, cursor.dy) = (dx, dy);
             self.touch = Some(touch);
             return if changed { moved } else { Action::Nothing };
+        }
+        // A sideways slide from the number row's middle moves the cursor at once.
+        if self.in_cursor_zone(touch.start)
+            && (at.x - touch.start.x).abs() >= FLICK * w
+            && (at.x - touch.start.x).abs() >= (at.y - touch.start.y).abs()
+        {
+            touch.capital_typed = true;
+            touch.cursor = Some(Cursor { origin: touch.start, dx: 0, dy: 0 });
+            self.touch = Some(touch);
+            return self.touch_move(at, time);
         }
         touch.path.push(at);
         let from_start = distance(at, touch.start);
@@ -1944,6 +1961,18 @@ mod tests {
         assert_eq!(gesture(&mut keyboard, "space", &[(0.6, 0.0)]), Action::Language { forward: true });
         assert_eq!(gesture(&mut keyboard, "space", &[(-0.6, 0.05)]), Action::Language { forward: false });
         assert_eq!(gesture(&mut keyboard, "space", &[]), Action::Commit(" ".into()));
+    }
+
+    #[test]
+    fn a_sideways_slide_in_the_middle_of_the_number_row_moves_the_cursor() {
+        let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
+        let w = keyboard.layout.cell_width;
+        let y = keyboard.layout.numbers_bottom / 2.0;
+        keyboard.touch_down(Point { x: 504.0, y }, 0);
+        assert_eq!(keyboard.touch_move(Point { x: 504.0 + 0.65 * w, y }, 100), Action::Cursor { dx: 2, dy: 0 });
+        assert_eq!(keyboard.touch_move(Point { x: 504.0 - 0.35 * w, y }, 200), Action::Cursor { dx: -3, dy: 0 });
+        assert_eq!(keyboard.touch_up(Point { x: 504.0 - 0.35 * w, y }, 300), Action::Redraw, "no digit typed");
+        assert!(matches!(gesture(&mut keyboard, "5", &[]), Action::Commit(_)), "a tap still types its digit");
     }
 
     #[test]
