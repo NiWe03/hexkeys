@@ -1518,6 +1518,12 @@ impl Keyboard {
         }
     }
 
+    /// Back to the letters with shift off and no finger down, for a new field.
+    pub fn reset(&mut self) {
+        self.show(0);
+        self.touch = None;
+    }
+
     fn show(&mut self, layer: usize) -> Action {
         self.layout = self.layers[layer].clone();
         self.layer = layer;

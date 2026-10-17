@@ -279,28 +279,42 @@ class KeyboardView(
         }
     }
 
+    /** A new field: the letters with shift off, as the keyboard opens on them. */
+    fun startInput() {
+        if (handle != 0L) Core.reset(handle)
+        invalidate()
+    }
+
+    /** The width and layout settings the keys were last laid out for. */
+    private var builtFor = ""
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
-        if (handle != 0L) Core.destroy(handle)
         val preferences = Dictionaries.preferences(context)
         val space_middle = preferences.getString(LAYOUT, null) == SPACE_MIDDLE
-        handle = Core.create(
-            width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), space_middle,
-            preferences.getBoolean(EDIT_KEYS, false),
-        )
-        // Freed on the words thread after whatever it is still doing with it.
-        val old = letters
-        letters = Core.letters(handle)
-        if (old != 0L) Core.words.execute { Core.lettersFree(old) }
-        Core.setAccents(handle, accents)
+        val editKeys = preferences.getBoolean(EDIT_KEYS, false)
+        // The keys are laid out again only when what they depend on changed: every
+        // panel shown over them measures the keyboard too, and building it anew
+        // each time held up opening the emoji and their search.
+        val shape = "$width/$space_middle/$editKeys"
+        if (handle == 0L || shape != builtFor) {
+            if (handle != 0L) Core.destroy(handle)
+            handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), space_middle, editKeys)
+            builtFor = shape
+            // Freed on the words thread after whatever it is still doing with it.
+            val old = letters
+            letters = Core.letters(handle)
+            if (old != 0L) Core.words.execute { Core.lettersFree(old) }
+            Core.setAccents(handle, accents)
+            headroom = Core.headroom(handle).toInt()
+            Core.setStrip(handle, stripHeight.toFloat())
+            loadOutlines()
+        }
         Core.configure(
             handle,
             preferences.getBoolean(DELETE_FROM_LEFT, false),
             CAPITALS.indexOf(preferences.getString(CAPITAL, null)).coerceAtLeast(0),
         )
-        headroom = Core.headroom(handle).toInt()
-        Core.setStrip(handle, stripHeight.toFloat())
-        loadOutlines()
         setMeasuredDimension(width, keysTop + Core.height(handle).toInt() + navigationBar)
     }
 

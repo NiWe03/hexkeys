@@ -72,7 +72,10 @@ class HexInputMethod : InputMethodService() {
     /** Reloads the dictionaries when the languages change in settings. */
     private val settingsChanged = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
-            Dictionaries.ENABLED -> loadDictionaries()
+            Dictionaries.ENABLED -> {
+                loadDictionaries()
+                emojiSearch = null
+            }
             Theme.KEY -> keyboard?.theme = Theme.current(this)
             KeyboardView.LAYOUT, KeyboardView.DELETE_FROM_LEFT, KeyboardView.CAPITAL, KeyboardView.EDIT_KEYS ->
                 keyboard?.requestLayout()
@@ -240,15 +243,37 @@ class HexInputMethod : InputMethodService() {
 
     /** The emoji search's query, which the keys type while it is open. */
     private val query = StringBuilder()
-    private val emojiSearch by lazy { EmojiSearch(this) }
+
+    /**
+     * The emoji names to search, read in the background when the search
+     * opens: reading every language's names took long enough to hold up the
+     * first letter typed. Read again when the languages change.
+     */
+    @Volatile
+    private var emojiSearch: EmojiSearch? = null
+    private var emojiSearchReading = false
+
+    private fun readEmojiSearch() {
+        if (emojiSearch != null || emojiSearchReading) return
+        emojiSearchReading = true
+        loader.execute {
+            val search = EmojiSearch(this)
+            mainExecutor.execute {
+                emojiSearch = search
+                emojiSearchReading = false
+                if (frame?.searching == true) showEmojiResults()
+            }
+        }
+    }
 
     /** Opens the search over the strip, the letters below it typing the query. */
     private fun openEmojiSearch() {
         query.clear()
-        frame?.showSearch(true) {
+        readEmojiSearch()
+        frame?.showSearch(true, back = {
             frame?.showSearch(false)
             frame?.showEmoji(true)
-        }
+        }, backspace = { searchKey("backspace", "") })
         showEmojiResults()
     }
 
@@ -269,7 +294,8 @@ class HexInputMethod : InputMethodService() {
 
     private fun showEmojiResults() {
         // Until something is typed, the recently used are at hand.
-        val found = if (query.isBlank()) frame?.emoji?.recent().orEmpty() else emojiSearch.find(query.toString())
+        val search = emojiSearch
+        val found = if (query.isBlank() || search == null) frame?.emoji?.recent().orEmpty() else search.find(query.toString())
         frame?.showResults(query.toString(), found) { emoji ->
             editor.finishComposing()
             editor.commit(emoji)
@@ -460,7 +486,10 @@ class HexInputMethod : InputMethodService() {
             // app that sends on the enter key does not; holding it does the field's action.
             "enter" -> if (multiLine) connection.commit("\n") else performAction()
             "enter_action" -> performAction()
-            "emoji" -> frame?.let { it.showEmoji(!it.emojiShown) }
+            "emoji" -> frame?.let {
+                it.showEmoji(!it.emojiShown)
+                readEmojiSearch()
+            }
             "language" -> {
                 // Guessing, then each language in turn, then guessing again.
                 val count = lexiconFiles.size
@@ -589,6 +618,7 @@ class HexInputMethod : InputMethodService() {
         suggesting = !password && !noSuggestions
         swiped = null
         // Device colours follow the wallpaper and dark mode, which may have changed.
+        keyboard?.startInput()
         keyboard?.theme = Theme.current(this)
         keyboard?.passwordsAvailable = passwordManager() != null
         keyboard?.listening = voice.listening

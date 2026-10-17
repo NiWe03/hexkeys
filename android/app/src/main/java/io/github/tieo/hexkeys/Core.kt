@@ -83,6 +83,9 @@ object Core {
     /** Room above the keys a long-press popup can reach into. */
     external fun headroom(handle: Long): Float
 
+    /** Back to the letters with shift off, for a new field. */
+    external fun reset(handle: Long)
+
     /** How tall the strip between the keys and the headroom is, which popups reach over too. */
     external fun setStrip(handle: Long, height: Float)
 

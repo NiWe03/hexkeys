@@ -241,6 +241,12 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_headroom(
     keyboard(handle).headroom()
 }
 
+/// Back to the letters with shift off, for a new field.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_reset(_env: JNIEnv, _class: JClass, handle: jlong) {
+    keyboard(handle).reset();
+}
+
 /// Sets how tall the strip between the keys and the headroom is.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_setStrip(

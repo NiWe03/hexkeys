@@ -42,6 +42,11 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         setImageResource(R.drawable.icon_arrow_back)
         scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
     }
+    private val searchBackspace = android.widget.ImageView(context).apply {
+        setImageResource(R.drawable.icon_backspace)
+        scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+    }
+    private var onSearchBackspace: () -> Unit = {}
     private val query = android.widget.TextView(context).apply {
         textSize = 17f
         maxLines = 1
@@ -80,8 +85,11 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         clipboard.visibility = GONE
         search.addView(searchBack, LinearLayout.LayoutParams(keyboard.stripSide, ViewGroup.LayoutParams.MATCH_PARENT))
         search.addView(query, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-            setMargins(0, gap, gap * 2, gap)
+            setMargins(0, gap, 0, gap)
         })
+        // The results cover the number row, where deleting is; the query has its own backspace.
+        search.addView(searchBackspace, LinearLayout.LayoutParams(keyboard.stripSide, ViewGroup.LayoutParams.MATCH_PARENT))
+        repeatWhileHeld(searchBackspace) { onSearchBackspace() }
         addView(search)
         addView(resultScroller)
         search.visibility = GONE
@@ -91,8 +99,9 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
 
     val searching get() = search.visibility == VISIBLE
 
-    /** Shows or hides the emoji search; `back` returns to the emoji. */
-    fun showSearch(on: Boolean, back: () -> Unit = {}) {
+    /** Shows or hides the emoji search; `back` returns to the emoji, `backspace` takes the query's last letter. */
+    fun showSearch(on: Boolean, back: () -> Unit = {}, backspace: () -> Unit = {}) {
+        onSearchBackspace = backspace
         search.visibility = if (on) VISIBLE else GONE
         resultScroller.visibility = search.visibility
         removeCallbacks(blink)
@@ -101,6 +110,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
             search.setBackgroundColor(theme.background)
             resultScroller.setBackgroundColor(theme.background)
             searchBack.setColorFilter(theme.label)
+            searchBackspace.setColorFilter(theme.label)
             searchBack.setOnClickListener { back() }
             query.setTextColor(theme.label)
             query.background = android.graphics.drawable.GradientDrawable().apply {
