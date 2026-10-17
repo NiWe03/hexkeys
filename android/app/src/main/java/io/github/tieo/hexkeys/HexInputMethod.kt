@@ -390,7 +390,6 @@ class HexInputMethod : InputMethodService() {
         val search = emojiSearch
         val found = if (query.isBlank() || search == null) frame?.emoji?.recent().orEmpty() else search.find(query.toString())
         frame?.showResults(query.toString(), found) { emoji ->
-            editor.finishComposing()
             editor.commit(emoji)
             frame?.emoji?.remember(emoji)
         }
@@ -401,7 +400,6 @@ class HexInputMethod : InputMethodService() {
         decoding = false
         val view = keyboard
         if (view != null && words.isNotEmpty() && currentInputConnection != null) {
-            editor.finishComposing()
             // Swiped words are put in with a space between them, as on other keyboards.
             val last = editor.textBefore().lastOrNull()
             val space = last != null && !last.isWhitespace() && last !in OPENING
@@ -427,8 +425,6 @@ class HexInputMethod : InputMethodService() {
         }
         val connection = editor
         val started = SystemClock.uptimeMillis()
-        // Text put in while a word is marked would replace it.
-        if (kind != "redraw" && kind != "nothing") connection.finishComposing()
         val undo = lastCorrection
         lastCorrection = null
         // Typing on past a copied text offered in the strip stops offering it.
@@ -539,7 +535,6 @@ class HexInputMethod : InputMethodService() {
         onPick = { word, replaces ->
             if (currentInputConnection == null) return@KeyboardView
             val connection = editor
-            connection.finishComposing()
             lastCorrection = null
             swiped = null
             // Choosing the word as typed over the suggestions keeps it on purpose.
@@ -564,8 +559,8 @@ class HexInputMethod : InputMethodService() {
         view.logContext = { if (suggesting && currentInputConnection != null) editor.textBefore() else null }
         val emoji = EmojiPanel(
             this,
-            onEmoji = { editor.finishComposing(); editor.commit(it) },
-            onSpace = { editor.finishComposing(); editor.commit(" ") },
+            onEmoji = { editor.commit(it) },
+            onSpace = { editor.commit(" ") },
             onBackspace = { deleteCharacter() },
             onClose = { frame?.showEmoji(false) },
             onSearch = { openEmojiSearch() },
@@ -576,7 +571,7 @@ class HexInputMethod : InputMethodService() {
                 paste(text)
                 frame?.showClipboard(false)
             },
-            onSpace = { editor.finishComposing(); editor.commit(" ") },
+            onSpace = { editor.commit(" ") },
             onBackspace = { deleteCharacter() },
             onClose = { frame?.showClipboard(false) },
         )
@@ -717,26 +712,7 @@ class HexInputMethod : InputMethodService() {
         val started = SystemClock.uptimeMillis()
         editor.selectionChanged(newSelStart, newSelEnd)
         refreshStrip()
-        markWord(newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         keyboard?.slow("selection", SystemClock.uptimeMillis() - started)
-    }
-
-    /**
-     * Marks the word before the cursor as the one being written, which the
-     * app underlines, as other keyboards do; nothing is marked inside a
-     * selection, after a space, or where suggestions are off. Called with
-     * the selection and the marked range the app reports, so a mark already
-     * in place is left alone.
-     */
-    private fun markWord(start: Int, end: Int, markedStart: Int, markedEnd: Int) {
-        if (currentInputConnection == null) return
-        val before = if (suggesting && start == end) editor.textBefore() else null
-        val length = before?.reversed()?.takeWhile { it.isLetterOrDigit() || it == '\'' || it == '’' || it == '-' }?.length ?: 0
-        if (length == 0) {
-            if (markedStart != -1) editor.finishComposing()
-        } else if (markedStart != start - length || markedEnd != start) {
-            editor.markComposing(start - length, start)
-        }
     }
 
     /** The last character of `text` as the reader sees it, an emoji or a letter with its marks. */
@@ -752,7 +728,6 @@ class HexInputMethod : InputMethodService() {
      */
     private fun deleteCharacter(target: TextTarget = editor) {
         if (currentInputConnection == null) return
-        if (target === editor) editor.finishComposing()
         if (target.hasSelection) {
             target.commit("")
             return
@@ -819,7 +794,6 @@ class HexInputMethod : InputMethodService() {
     /** Puts in a copied text and stops offering the fresh one. */
     private fun paste(text: String) {
         if (currentInputConnection == null) return
-        editor.finishComposing()
         editor.commit(text)
         clips.spend()
         keyboard?.freshClip = ""
@@ -857,7 +831,6 @@ class HexInputMethod : InputMethodService() {
 
     /** Puts in dictated text, with a space before it where it follows a word. */
     private fun put(text: String) {
-        editor.finishComposing()
         val last = editor.textBefore().lastOrNull()
         val space = last != null && !last.isWhitespace() && last !in OPENING
         editor.commit((if (space) " " else "") + text)

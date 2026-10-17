@@ -118,14 +118,6 @@ class Editor(private val service: InputMethodService) : TextTarget {
         deleteBefore(text.length - start)
     }
 
-    fun finishComposing() {
-        connection?.finishComposingText()
-    }
-
-    fun markComposing(start: Int, end: Int) {
-        connection?.setComposingRegion(start, end)
-    }
-
     override fun beginBatch() {
         connection?.beginBatchEdit()
     }
