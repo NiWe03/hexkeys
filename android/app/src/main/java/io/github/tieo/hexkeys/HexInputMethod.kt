@@ -194,10 +194,12 @@ class HexInputMethod : InputMethodService() {
                     view.showSwipe(words)
                 }
                 "commit" -> {
-                    val correction = keyboard?.correction
-                    if (text in SEPARATORS && correction != null &&
-                        Dictionaries.preferences(this).getBoolean(Dictionaries.AUTOCORRECT, false)
-                    ) {
+                    val correction = when (Dictionaries.autocorrectMode(this)) {
+                        "all" -> keyboard?.correction ?: keyboard?.fix
+                        "obvious" -> keyboard?.fix
+                        else -> null
+                    }
+                    if (text in SEPARATORS && correction != null) {
                         val (word, replaces) = correction
                         val typed = connection.textBefore()
                             .let { it.substring(it.offsetByCodePoints(it.length, -replaces)) }

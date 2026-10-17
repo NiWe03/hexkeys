@@ -56,6 +56,9 @@ class KeyboardView(
 
     /** What autocorrect would put in place of the word being typed, with how many code points it replaces. */
     var correction: Pair<String, Int>? = null
+
+    /** The obvious fix of the typed word, such as its capital, with what it replaces. */
+    var fix: Pair<String, Int>? = null
         private set
 
     /** The word being typed when no dictionary has it, which learning counts. */
@@ -273,6 +276,7 @@ class KeyboardView(
         replaces = strip[3].toInt()
         correction = strip[4].takeIf { it.isNotEmpty() }?.let { it to replaces }
         unknown = strip[5].takeIf { it.isNotEmpty() }
+        fix = strip[6].takeIf { it.isNotEmpty() }?.let { it to replaces }
         invalidate()
     }
 
@@ -285,6 +289,7 @@ class KeyboardView(
         slots = arrayOf(words.getOrElse(1) { "" }, words[0], words.getOrElse(2) { "" })
         replaces = words[0].codePointCount(0, words[0].length)
         correction = null
+        fix = null
         unknown = null
         invalidate()
     }
@@ -293,6 +298,7 @@ class KeyboardView(
         slots = arrayOf("", "", "")
         replaces = 0
         correction = null
+        fix = null
         unknown = null
         invalidate()
     }

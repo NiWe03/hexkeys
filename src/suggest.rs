@@ -463,6 +463,10 @@ pub struct Strip {
     pub correction: Option<String>,
     /// The word being typed, when it is not a word yet; what learning counts.
     pub unknown: Option<String>,
+    /// The obvious fix of a typed word that is no word: the word it is
+    /// apart from capitals, apostrophes and accents, such as "Haus" for
+    /// "haus", "I'm" for "im" or "für" for "fur", where nothing else is.
+    pub fix: Option<String>,
 }
 
 /// Letters and the marks inside words; what the word at the cursor is made of.
@@ -489,11 +493,12 @@ pub fn strip(lexicon: &Lexicon, before: &str, substitution: Substitution) -> Res
                 slots[slot] = word;
             }
         }
-        return Ok(Strip { slots, replaces: 0, correction: None, unknown: None });
+        return Ok(Strip { slots, replaces: 0, correction: None, unknown: None, fix: None });
     }
     let found = suggest(lexicon, typed, previous, substitution, 3)?;
     let known = spelled(lexicon, typed)?;
     let correction = found.first().filter(|best| !known && !best.completion).map(|best| best.word.clone());
+    let fix = if known { None } else { obvious_fix(lexicon, typed, found.iter().map(|s| s.word.as_str()))? };
     let mut words: Vec<String> = found.into_iter().map(|s| s.word).filter(|word| word != typed).collect();
     if known {
         words.insert(0, typed.to_owned());
@@ -507,7 +512,39 @@ pub fn strip(lexicon: &Lexicon, before: &str, substitution: Substitution) -> Res
         }
     }
     let unknown = (!known).then(|| typed.to_owned());
-    Ok(Strip { slots, replaces: typed.chars().count(), correction, unknown })
+    Ok(Strip { slots, replaces: typed.chars().count(), correction, unknown, fix })
+}
+
+/// A word reduced to what an obvious slip leaves alone: lower case, no
+/// apostrophes, letters without their accents and ß as ss.
+fn folded(word: &str) -> String {
+    word.chars()
+        .flat_map(char::to_lowercase)
+        .filter(|c| !matches!(c, '\'' | '’'))
+        .flat_map(|c| match c {
+            'ß' => vec!['s', 's'],
+            c => vec![plain(c).unwrap_or(c)],
+        })
+        .collect()
+}
+
+/// The word `typed` stands for when it differs only in capitals,
+/// apostrophes and accents: the first such candidate, or else the typed
+/// word capitalised or in capitals when a dictionary has that. A capital
+/// the typed word starts with is kept.
+fn obvious_fix<'a>(lexicon: &Lexicon, typed: &str, candidates: impl Iterator<Item = &'a str>) -> Result<Option<String>, Error> {
+    let target = folded(typed);
+    let mut found = candidates.filter(|word| *word != typed).find(|word| folded(word) == target).map(str::to_owned);
+    if found.is_none() {
+        for form in [capitalise(&typed.to_lowercase()), typed.to_uppercase()] {
+            if form != typed && lexicon.dictionaries.iter().any(|d| d.find(&form).ok().flatten().is_some_and(|node| !node.hidden)) {
+                found = Some(form);
+                break;
+            }
+        }
+    }
+    let starts_upper = typed.chars().next().is_some_and(char::is_uppercase);
+    Ok(found.map(|word| if starts_upper { capitalise(&word) } else { word }))
 }
 
 /// The last word in `before`, which the next word follows.
@@ -616,6 +653,23 @@ mod tests {
         assert_eq!(words(&german, "ueber", None)[0], "über");
         assert_eq!(words(&german, "strasse", None)[0], "Straße");
         assert_eq!(words(&german, "strase", None)[0], "Straße");
+    }
+
+    #[test]
+    fn obvious_slips_are_fixed_and_words_left_alone() {
+        let german = german();
+        let fix = |text: &str| strip(&german, text, &plain).unwrap().fix;
+        assert_eq!(fix("das haus").as_deref(), Some("Haus"));
+        assert_eq!(fix("uber").as_deref(), Some("über"));
+        assert_eq!(fix("strasse").as_deref(), Some("Straße"));
+        assert_eq!(fix("das Haus"), None, "a word as it is");
+        assert_eq!(fix("die"), None);
+        assert_eq!(fix("hallp"), None, "a slip of the finger is no obvious fix");
+        let english = Lexicon::new(vec![Dictionary::new(encode(&[("I'm", 200), ("I", 250), ("don't", 200)], &[])).unwrap()]);
+        let fix = |text: &str| strip(&english, text, &plain).unwrap().fix;
+        assert_eq!(fix("im").as_deref(), Some("I'm"));
+        assert_eq!(fix("i").as_deref(), Some("I"));
+        assert_eq!(fix("Dont").as_deref(), Some("Don't"));
     }
 
     #[test]

@@ -78,8 +78,8 @@ object Core {
     /**
      * The suggestion strip for the text before the cursor: left, middle and
      * right word (empty when unused), how many code points a choice replaces,
-     * the autocorrection, and the typed word when it is not a word yet
-     * (both empty when none).
+     * the autocorrection, the typed word when it is not a word yet, and its
+     * obvious fix (each empty when none).
      */
     external fun strip(lexicon: Long, keyboard: Long, before: String): Array<String>
 

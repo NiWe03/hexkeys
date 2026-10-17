@@ -61,7 +61,11 @@ class SettingsActivity : Activity() {
 
         column.addView(ui.heading("Typing"))
         column.addView(ui.card(
-            ui.toggle("Autocorrect", Dictionaries.AUTOCORRECT),
+            ui.label("Autocorrect"),
+            ui.segmented(
+                Dictionaries.AUTOCORRECT_MODES.zip(listOf("Off", "Obvious", "All")),
+                Dictionaries.autocorrectMode(this),
+            ) { id -> ui.preferences.edit().putString(Dictionaries.AUTOCORRECT_MODE, id).apply() },
             learningRow(),
         ))
 
