@@ -51,6 +51,9 @@ pub struct RowSpec {
     /// right end, instead of the row's outer keys running on into it.
     pub left_edge: Option<String>,
     pub right_edge: Option<String>,
+    /// How far the row is shifted right, in cells, in place of the half
+    /// every other row is: a row of whole cells centred in a wider one.
+    pub offset: Option<f32>,
 }
 
 /// A layout before it is fitted to a screen.
@@ -80,6 +83,9 @@ impl LayoutSpec {
 
     /// How far a row is shifted right, in cells: every other row by half.
     fn shift(&self, row: usize) -> f32 {
+        if let Some(offset) = self.rows.get(row).and_then(|spec| spec.offset) {
+            return offset;
+        }
         if (row % 2 == 1) != self.first_row_shifted { 0.5 } else { 0.0 }
     }
 }
@@ -133,6 +139,10 @@ pub struct Layout {
     pub height: f32,
     /// Where the number row ends and the honeycomb starts; 0 without one.
     pub numbers_bottom: f32,
+    /// A bottom row of whole cells straight under the row above, which keeps
+    /// its hexagons' lower points: the bottom row's keys take what is left
+    /// below them, notched where the points reach down.
+    flat_row: Option<usize>,
 }
 
 /// The row index of number row keys, which stand outside the honeycomb.
@@ -278,8 +288,17 @@ impl Layout {
             }
         }
 
+        // A bottom row of whole cells straight under the row above: the row above
+        // keeps its points, and the bottom row's labels sit in the middle of what
+        // is left of it below them.
+        let flat_row = (last > 0 && spec.shift(last) == spec.shift(last - 1)).then_some(last);
+        if flat_row.is_some() {
+            for key in keys.iter_mut().filter(|key| key.row == last) {
+                key.label_at.y += cell_height / 16.0;
+            }
+        }
         let height = top + cell_height - cut + last as f32 * row_pitch;
-        Self { keys, cell_width, cell_height, width, height, numbers_bottom }
+        Self { keys, cell_width, cell_height, width, height, numbers_bottom, flat_row }
     }
 
     /// Grows the layout to `height` by moving its keys down, so layers with
@@ -311,6 +330,34 @@ impl Layout {
     }
 
     /// The key under a touch: the one owning the nearest cell centre.
+    /// Where the row above a flat bottom row ends at `x`, over the bottom
+    /// row's `cell`: its hexagon's lower edges, from the shoulders at the
+    /// cell's sides down to the point over its middle.
+    fn points_above(&self, cell: Point, x: f32) -> f32 {
+        let above = cell.y - self.cell_height * 0.75;
+        let side = ((x - cell.x).abs() / (self.cell_width / 2.0)).min(1.0);
+        above + self.cell_height / 4.0 + self.cell_height / 4.0 * (1.0 - side)
+    }
+
+    /// A flat bottom row key's outline, clockwise on screen: along the lower
+    /// edges of the hexagons above it, then down its sides to the bottom.
+    fn flat_outline(&self, key: &Key) -> Vec<Point> {
+        let mut cells = key.cells.clone();
+        cells.sort_by(|a, b| a.x.total_cmp(&b.x));
+        let half = self.cell_width / 2.0;
+        let mut outline = Vec::new();
+        for cell in &cells {
+            outline.push(Point { x: cell.x - half, y: self.points_above(*cell, cell.x - half) });
+            outline.push(Point { x: cell.x, y: self.points_above(*cell, cell.x) });
+        }
+        let last = cells.last().expect("a key has at least one cell");
+        let first = cells[0];
+        outline.push(Point { x: last.x + half, y: self.points_above(*last, last.x + half) });
+        outline.push(Point { x: last.x + half, y: self.height });
+        outline.push(Point { x: first.x - half, y: self.height });
+        outline
+    }
+
     /// A free-standing cell outline around `center`, clockwise on screen, for
     /// things drawn over the keys such as a long-press popup.
     pub fn hexagon(&self, center: Point) -> Vec<Point> {
@@ -364,9 +411,20 @@ impl Layout {
                 distance(cell)
             }
         };
+        // Below the points of the row above, a flat bottom row's keys go by column.
+        if let Some(flat) = self.flat_row.filter(|_| !in_band) {
+            let cells = self.keys.iter().filter(|key| key.row == flat).flat_map(|key| key.cells.iter().map(move |cell| (key, *cell)));
+            if let Some((key, cell)) = cells.min_by(|a, b| (a.1.x - touch.x).abs().total_cmp(&(b.1.x - touch.x).abs())) {
+                if touch.y > self.points_above(cell, touch.x) {
+                    return Some(key);
+                }
+            }
+        }
+        let flat = self.flat_row;
         let (key, cell) = self
             .keys
             .iter()
+            .filter(|key| Some(key.row) != flat || in_band)
             .filter(|key| (key.row == NUMBER_ROW) == in_band)
             .flat_map(|key| key.regions.iter().map(move |cell| (key, *cell)))
             .min_by(|a, b| distance(&a.1).total_cmp(&distance(&b.1)))?;
@@ -408,16 +466,29 @@ impl Layout {
             }
             return drop_collinear(polygon).into_iter().map(|p| Point { x: p.x, y: p.y * squash }).collect();
         }
+        if Some(key.row) == self.flat_row {
+            return self.flat_outline(key);
+        }
         let stretch = self.cell_height / (self.cell_width * 2.0 / 3f32.sqrt());
         // Work in coordinates where the hexagons are regular, so that
         // perpendicular bisectors are the true cell borders.
         let to_regular = |p: &Point| Point { x: p.x, y: p.y / stretch };
-        let centres: Vec<Point> =
+        let mut centres: Vec<Point> =
             self.keys
                 .iter()
-                .filter(|other| other.row != NUMBER_ROW)
+                .filter(|other| other.row != NUMBER_ROW && Some(other.row) != self.flat_row)
                 .flat_map(|other| other.regions.iter().map(to_regular))
                 .collect();
+        // Above a flat bottom row, the cells border it as if it were a row of
+        // hexagons interlocking with theirs, which gives them their points.
+        if let Some(flat) = self.flat_row {
+            let pitch = self.cell_height * 0.75;
+            for cell in self.keys.iter().filter(|other| other.row == flat - 1).flat_map(|other| other.regions.iter()) {
+                for dx in [-0.5, 0.5] {
+                    centres.push(to_regular(&Point { x: cell.x + dx * self.cell_width, y: cell.y + pitch }));
+                }
+            }
+        }
 
         let mut outline: Option<Vec<Point>> = None;
         for cell in key.regions.iter().map(to_regular) {
@@ -524,7 +595,7 @@ fn letters(s: &str) -> impl Iterator<Item = KeySpec> + '_ {
 }
 
 fn row(start_column: usize, keys: impl IntoIterator<Item = KeySpec>) -> RowSpec {
-    RowSpec { start_column, keys: keys.into_iter().collect(), left_edge: None, right_edge: None }
+    RowSpec { start_column, keys: keys.into_iter().collect(), left_edge: None, right_edge: None, offset: None }
 }
 
 fn keys(labels: &[(&str, usize)]) -> Vec<KeySpec> {
@@ -563,8 +634,8 @@ pub fn honeycomb() -> LayoutSpec {
 /// s d f h j k and bottom row y x c v b n m, which fill the next two rows
 /// in QWERTZ order, f h and y in the cells the reference layout has them in. Keeping
 /// the reference layout's y s d n m j k instead leaves no room for b left of n. The
-/// bottom row reads . space ? as the reference layout's middle row does, and the symbols key and
-/// enter stay in their cells.
+/// bottom row is seven whole cells, space three of them in the middle between
+/// . and ?, with the symbols key and enter at the ends.
 pub fn space_bottom() -> LayoutSpec {
     LayoutSpec {
         rows: vec![
@@ -572,7 +643,11 @@ pub fn space_bottom() -> LayoutSpec {
             row(0, letters("qargulp")),
             row(0, letters("sdfhjk")),
             row(0, letters("yxcvbnm")),
-            row(0, keys(&[(".", 1), ("space", 2), ("?", 1), (SYMBOLS_KEY, 1), ("⏎", 1)])),
+            // Seven whole cells across, unshifted: space three wide in the middle.
+            RowSpec {
+                offset: Some(0.0),
+                ..row(0, keys(&[(SYMBOLS_KEY, 1), (".", 1), ("space", 3), ("?", 1), ("⏎", 1)]))
+            },
         ],
         first_row_shifted: true,
         numbers: Some("1234567890".into()),

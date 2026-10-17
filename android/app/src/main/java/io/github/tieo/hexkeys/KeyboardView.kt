@@ -572,12 +572,11 @@ class KeyboardView(
             // Above the thumb, where it is not hidden under it.
             drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerDrawnY - cellWidth * 0.9f, cellWidth * (if (far) 0.6f else 0.45f), theme.label)
         }
-        // Moving the cursor tints the keys in the accent colour, the cursor's mark above the thumb.
-        if (Core.movingCursor(handle)) {
+        // Moving the cursor fades the labels; the bar, which has none, takes the accent colour instead.
+        if (Core.movingCursor(handle) && barProgress > 0f) {
             cursorPaint.color = theme.accent
-            cursorPaint.alpha = 0x50
-            canvas.drawRect(0f, 0f, width.toFloat(), Core.height(handle), cursorPaint)
-            drawIcon(canvas, R.drawable.icon_arrow_range, fingerX, fingerDrawnY - cellWidth * 0.9f, cellWidth * 0.5f, theme.label)
+            cursorPaint.alpha = 0x60
+            canvas.drawRect(0f, barTop.toFloat(), width.toFloat(), (barTop + gestureBarHeight).toFloat(), cursorPaint)
         }
         val trail = Core.trail(handle)
         if (trail.size >= 4) {
