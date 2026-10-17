@@ -734,6 +734,11 @@ const EDGE: f32 = 0.8;
 /// a delete slide runs straight, level or slanted.
 const DELETE_STRAY: f32 = 0.5;
 
+/// How long after it starts a delete slide can still turn into swipe
+/// typing, in ms. A swipe starting at the edge bends at once; a delete held
+/// for seconds and moved back and forth drifts too, which must not count.
+const DELETE_DECIDE_MS: u64 = 400;
+
 /// How long a delete swipe holds still before it deletes whole words, in
 /// ms: longer than a pause to look at the text.
 const WORD_HOLD_MS: u64 = 1200;
@@ -1095,8 +1100,9 @@ impl Keyboard {
             touch.deleting = Some(Deleting { characters: 0, words: 0 });
             started = true;
         }
-        // Bent: swipe typing after all, with everything put back.
-        if touch.deleting.is_some() && bend(&touch.path) > DELETE_STRAY * w {
+        // Bent early on: swipe typing after all, with everything put back. Later
+        // the slide stays a delete however the finger wanders back and forth.
+        if touch.deleting.is_some() && time - touch.start_time < DELETE_DECIDE_MS && bend(&touch.path) > DELETE_STRAY * w {
             touch.deleting = None;
             touch.at_edge = false;
             self.touch = Some(touch);
@@ -1915,11 +1921,26 @@ mod tests {
         let p = keyboard.layout.find("p").cells[0];
         let at = |dx: f32, dy: f32| Point { x: 1000.0 + dx * w, y: p.y + dy * w };
         keyboard.touch_down(at(0.0, 0.0), 0);
-        assert!(matches!(keyboard.touch_move(at(-0.5, 0.0), 200), Action::Delete { pieces: 0, .. }));
-        assert!(matches!(keyboard.touch_move(at(-1.0, 0.0), 400), Action::Delete { pieces: 1, .. }));
-        assert_eq!(keyboard.touch_move(at(-1.2, 0.7), 450), Action::Delete { pieces: 0, words: false, started: false });
-        assert_eq!(keyboard.touch_move(at(-2.0, 1.4), 500), Action::Nothing);
-        assert_eq!(keyboard.touch_up(at(-2.0, 1.4), 550), Action::Swipe);
+        assert!(matches!(keyboard.touch_move(at(-0.5, 0.0), 100), Action::Delete { pieces: 0, .. }));
+        keyboard.touch_move(at(-1.5, 0.0), 250);
+        assert_eq!(keyboard.touch_move(at(-1.7, 0.7), 300), Action::Delete { pieces: 0, words: false, started: false });
+        assert_eq!(keyboard.touch_move(at(-2.5, 1.4), 350), Action::Nothing);
+        assert_eq!(keyboard.touch_up(at(-2.5, 1.4), 380), Action::Swipe);
+    }
+
+    #[test]
+    fn a_delete_slide_moved_about_for_a_while_stays_a_delete() {
+        let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
+        let w = keyboard.layout.cell_width;
+        let p = keyboard.layout.find("p").cells[0];
+        let at = |dx: f32, dy: f32| Point { x: 1000.0 + dx * w, y: p.y + dy * w };
+        keyboard.touch_down(at(0.0, 0.0), 0);
+        keyboard.touch_move(at(-2.0, 0.0), 300);
+        // Back towards the start and drifting down, as a finger does while choosing how much to delete.
+        keyboard.touch_move(at(-0.6, 0.7), 900);
+        keyboard.touch_move(at(-0.2, 0.75), 1100);
+        assert!(keyboard.deleting().is_some());
+        assert!(!matches!(keyboard.touch_up(at(-0.2, 0.75), 1200), Action::Swipe));
     }
 
     #[test]
