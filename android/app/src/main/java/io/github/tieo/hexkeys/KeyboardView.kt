@@ -575,9 +575,14 @@ class KeyboardView(
     /** Single characters large, words such as "space" smaller so they fit their key. */
     private fun drawLabel(canvas: Canvas, label: String, position: FloatArray, cellWidth: Float) {
         // Space carries the languages in their order, the one being written first and
-        // brightest, faint while it is a guess; two space keys carry one each.
+        // brightest, faint while it is a guess; of two space keys the first carries
+        // that one and the second the rest.
         if (label == "space") {
-            val shown = if (spaceKeys > 1) listOfNotNull(spaceLanguages.getOrNull(spacesDrawn)) else spaceLanguages
+            val shown = when {
+                spaceKeys == 1 -> spaceLanguages
+                spacesDrawn == 0 -> spaceLanguages.take(1)
+                else -> spaceLanguages.drop(1)
+            }
             val first = spacesDrawn == 0
             spacesDrawn++
             if (shown.isEmpty()) return

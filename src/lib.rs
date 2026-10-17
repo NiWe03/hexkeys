@@ -139,7 +139,7 @@ pub struct Layout {
 const NUMBER_ROW: usize = usize::MAX;
 
 /// Height of the number row in cell heights.
-const NUMBER_BAND: f32 = 1.0;
+const NUMBER_BAND: f32 = 1.25;
 
 /// The share of the number row's height over which its two rows interlock.
 const NUMBER_INTERLOCK: f32 = 0.4;

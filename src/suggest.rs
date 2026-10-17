@@ -343,6 +343,17 @@ impl Lexicon {
         self.pinned.or(self.guess)
     }
 
+    /// The dictionaries from the language the text is most likely in to the
+    /// least, the one in use first; ties keep their order.
+    pub fn ranking(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.dictionaries.len()).collect();
+        order.sort_by(|&a, &b| {
+            let first = |d: usize| Some(d) == self.language();
+            first(b).cmp(&first(a)).then(self.boost(b).total_cmp(&self.boost(a)))
+        });
+        order
+    }
+
     /// What the context gives a word of dictionary `index`.
     pub(crate) fn boost(&self, index: usize) -> f32 {
         self.boosts.get(index).copied().unwrap_or(0.0)
@@ -630,13 +641,33 @@ fn folded(word: &str) -> String {
         .collect()
 }
 
+/// How common a word has to be (of 255) for an obvious fix that adds both a
+/// capital and an apostrophe or accent: "I'm" for "im" (116) and "John's"
+/// for "johns" (108) are, the possessives of rarer names such as "Lang's"
+/// for "langs" (69) are not.
+const COMMON: u8 = 100;
+
 /// The word `typed` stands for when it differs only in capitals,
 /// apostrophes and accents: the first such candidate, or else the typed
 /// word capitalised or in capitals when a dictionary has that. A capital
 /// the typed word starts with is kept.
 fn obvious_fix<'a>(lexicon: &Lexicon, typed: &str, candidates: impl Iterator<Item = &'a str>) -> Result<Option<String>, Error> {
     let target = folded(typed);
-    let mut found = candidates.filter(|word| *word != typed).find(|word| folded(word) == target).map(str::to_owned);
+    let lower = typed.to_lowercase();
+    let typed_lower = lower == typed;
+    let likely = |word: &str| {
+        let capital = typed_lower && word.to_lowercase() != word;
+        let marked = word.to_lowercase() != lower;
+        let frequency = lexicon
+            .dictionaries
+            .iter()
+            .filter_map(|d| d.find(word).ok().flatten().and_then(|node| node.frequency))
+            .max()
+            .unwrap_or(0);
+        !(capital && marked) || frequency >= COMMON
+    };
+    let mut found =
+        candidates.filter(|word| *word != typed).find(|word| folded(word) == target && likely(word)).map(str::to_owned);
     if found.is_none() {
         for form in [capitalise(&typed.to_lowercase()), typed.to_uppercase()] {
             if form != typed && lexicon.dictionaries.iter().any(|d| d.find(&form).ok().flatten().is_some_and(|node| !node.hidden)) {
@@ -772,6 +803,10 @@ mod tests {
         assert_eq!(fix("im").as_deref(), Some("I'm"));
         assert_eq!(fix("i").as_deref(), Some("I"));
         assert_eq!(fix("Dont").as_deref(), Some("Don't"));
+        let names = Lexicon::new(vec![Dictionary::new(encode(&[("Lang's", 69), ("John's", 108)], &[])).unwrap()]);
+        let fix = |text: &str| strip(&names, text, &plain).unwrap().fix;
+        assert_eq!(fix("langs"), None, "a rare name's possessive is no obvious fix");
+        assert_eq!(fix("johns").as_deref(), Some("John's"));
     }
 
     #[test]

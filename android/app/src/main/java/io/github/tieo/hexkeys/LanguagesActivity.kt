@@ -45,7 +45,8 @@ class LanguagesActivity : Activity() {
         val usedRows = used.map { it to languageRow(it) }
         val otherRows = others.map { it to languageRow(it) }
         column.addView(inUse)
-        column.addView(ui.card(*usedRows.map { it.second }.toTypedArray()))
+        val usedCard = ui.card(*usedRows.map { it.second }.toTypedArray())
+        column.addView(usedCard)
         column.addView(more)
         val otherCard = ui.card(*otherRows.map { it.second }.toTypedArray())
         column.addView(otherCard)
@@ -58,6 +59,9 @@ class LanguagesActivity : Activity() {
                 for ((language, row) in usedRows + otherRows) {
                     row.visibility = if (language.name.contains(query, ignoreCase = true)) View.VISIBLE else View.GONE
                 }
+                val anyUsed = usedRows.any { it.second.visibility == View.VISIBLE }
+                inUse.visibility = if (anyUsed) View.VISIBLE else View.GONE
+                usedCard.visibility = inUse.visibility
                 val anyOther = otherRows.any { it.second.visibility == View.VISIBLE }
                 more.visibility = if (anyOther) View.VISIBLE else View.GONE
                 otherCard.visibility = more.visibility

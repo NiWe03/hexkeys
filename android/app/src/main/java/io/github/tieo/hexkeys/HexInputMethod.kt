@@ -181,6 +181,19 @@ class HexInputMethod : InputMethodService() {
         lastCorrection = Correction(typed.substring(same), after.substring(same), unknown)
     }
 
+    /** The correction the delete slide under way started right after, and whether it has undone it. */
+    private var slideUndo: Correction? = null
+    private var slideUndone = false
+
+    /** Puts back what was typed in place of a correction; the first word put back stays as typed. */
+    private fun undoCorrection(undo: Correction) {
+        editor.deleteBefore(undo.inserted.length)
+        val start = editor.selectionStart
+        editor.commit(undo.typed)
+        keptEnd = start + (WORD_AT_START.find(undo.typed)?.value?.length ?: 0)
+        undo.unknown?.let { learn(it, 1) }
+    }
+
     /** A swipe being decoded; actions arriving meanwhile wait in [waiting]. */
     private var decoding = false
     private val waiting = ArrayDeque<Pair<String, String>>()
@@ -272,14 +285,26 @@ class HexInputMethod : InputMethodService() {
         swiped = null
         when (kind) {
             "delete" -> {
-                val (pieces, words, started) = text.split(" ").map { it.toInt() }
+                val (slid, words, started) = text.split(" ").map { it.toInt() }
                 var before = connection.textBefore()
                 if (started == 1) {
                     deleted.clear()
                     swipedBeforeDelete = justSwiped?.takeIf { before.endsWith(it) }
+                    slideUndo = undo?.takeIf { before.endsWith(it.inserted) }
+                    slideUndone = false
                 }
                 val word = swipedBeforeDelete
                 connection.beginBatch()
+                // Right after a correction the first piece is the correction itself:
+                // what was typed comes back, as backspace brings it back, and sliding
+                // back to the start puts the correction in again.
+                val undoing = slideUndo
+                val pieces = if (undoing == null) slid else slid - 1
+                if (undoing != null && pieces >= 0 && !slideUndone) {
+                    undoCorrection(undoing)
+                    slideUndone = true
+                    before = connection.textBefore()
+                }
                 // A selection goes first, as one piece, as backspace takes it; so
                 // does a word just swiped.
                 val selected = if (deleted.isEmpty() && pieces > 0) connection.selectedText() else ""
@@ -304,9 +329,16 @@ class HexInputMethod : InputMethodService() {
                     if (before.isEmpty()) before = connection.textBefore()
                     deleted.addLast(piece)
                 }
-                while (deleted.size > pieces) connection.commit(deleted.removeLast())
+                while (deleted.size > maxOf(pieces, 0)) connection.commit(deleted.removeLast())
+                if (undoing != null && pieces < 0 && slideUndone) {
+                    connection.deleteBefore(undoing.typed.length)
+                    connection.commit(undoing.inserted)
+                    keptEnd = -1
+                    slideUndone = false
+                }
                 connection.endBatch()
-                keyboard?.deletedText = deleted.reversed().joinToString("")
+                val undone = if (slideUndone) undoing?.inserted?.trimEnd().orEmpty() else ""
+                keyboard?.deletedText = undone + deleted.reversed().joinToString("")
             }
             "swipe" -> {
                 val view = keyboard ?: return
@@ -361,13 +393,8 @@ class HexInputMethod : InputMethodService() {
                     // Right after a correction, backspace puts back what was typed.
                     undo != null && before.endsWith(undo.inserted) -> {
                         connection.beginBatch()
-                        connection.deleteBefore(undo.inserted.length)
-                        val start = connection.selectionStart
-                        connection.commit(undo.typed)
+                        undoCorrection(undo)
                         connection.endBatch()
-                        // The first word put back stays as typed.
-                        keptEnd = start + (WORD_AT_START.find(undo.typed)?.value?.length ?: 0)
-                        undo.unknown?.let { learn(it, 1) }
                     }
                     else -> deleteCharacter()
                 }
@@ -667,6 +694,9 @@ class HexInputMethod : InputMethodService() {
     /** The dictionaries in the lexicon, in its order. */
     private var lexiconFiles = emptyList<String>()
 
+    /** The dictionaries from the likeliest language of the text to the least, as the last strip had them. */
+    private var ranking = emptyList<Int>()
+
     /** The dictionary the language is taken from, as the last strip had it, and whether the user picked it. */
     private var language: Int? = null
     private var pinned: Int? = null
@@ -697,9 +727,10 @@ class HexInputMethod : InputMethodService() {
         }
         language = index
         val codes = lexiconFiles.map { languageCode(it).uppercase() }
+        val ranked = ranking.mapNotNull { codes.getOrNull(it) }
         val current = index?.let { codes.getOrNull(it) }
         keyboard?.spaceInUse = current != null
-        keyboard?.spaceLanguages = (listOfNotNull(current) + codes).distinct()
+        keyboard?.spaceLanguages = (listOfNotNull(current) + ranked + codes).distinct()
         keyboard?.spacePinned = pinned != null
     }
 
@@ -752,6 +783,7 @@ class HexInputMethod : InputMethodService() {
                 view.slow("suggest (words thread)", took)
                 if (request == stripRequest) {
                     view.showStrip(before, strip)
+                    ranking = strip.getOrNull(8)?.split(',')?.mapNotNull { it.toIntOrNull() }.orEmpty()
                     showLanguage(strip.getOrNull(7)?.toIntOrNull()?.takeIf { it >= 0 })
                 }
             }
