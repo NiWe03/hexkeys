@@ -138,6 +138,11 @@ pub struct Layout {
 /// The row index of number row keys, which stand outside the honeycomb.
 const NUMBER_ROW: usize = usize::MAX;
 
+/// How much of the top letter row's height, in cell heights, lies under
+/// the number row; the bottom row is cut as much, so the two stay as tall
+/// as each other. None: thumbs aiming at the top row landed on the digits.
+const TOP_CUT: f32 = 0.0;
+
 /// Height of the number row in cell heights.
 const NUMBER_BAND: f32 = 1.25;
 
@@ -152,10 +157,9 @@ impl Layout {
         let cell_height = cell_width * 2.0 / 3f32.sqrt() * stretch;
         let row_pitch = cell_height * 0.75;
         let numbers_bottom = if spec.numbers.is_some() { cell_height * NUMBER_BAND } else { 0.0 };
-        // Under a number row the honeycomb starts halfway between the top
-        // row's points and its shoulders, so those keys are barely taller
-        // than the rest.
-        let top = if spec.numbers.is_some() { numbers_bottom - cell_height / 8.0 } else { 0.0 };
+        // Under a number row the honeycomb starts at the top row's points, so
+        // those keys reach up to the digits with all of their height.
+        let top = if spec.numbers.is_some() { numbers_bottom - TOP_CUT * cell_height } else { 0.0 };
 
         let mut keys = Vec::new();
         for (row, row_spec) in spec.rows.iter().enumerate() {
@@ -264,7 +268,7 @@ impl Layout {
         // A top row cut at its shoulders shows only its lower part, and the
         // bottom row is cut as far from its lower point, so the two are as
         // tall as each other.
-        let cut = if spec.numbers.is_some() { cell_height / 8.0 } else { 0.0 };
+        let cut = if spec.numbers.is_some() { TOP_CUT * cell_height } else { 0.0 };
         let last = spec.rows.len().saturating_sub(1);
         for key in &mut keys {
             if key.row == 0 {
