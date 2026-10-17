@@ -127,8 +127,6 @@ class KeyboardView(
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
     }
-    /** Whether flicking down rather than up types a key's alternative, which then shows below its sign. */
-
     /** The small sign on a punctuation key for what flicking it types. */
     private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
@@ -291,7 +289,7 @@ class KeyboardView(
         val pressed = Core.pressed(handle)
         for ((index, path) in paths.withIndex()) {
             val color = keyColor(index)
-            keyPaint.color = if (index == pressed) theme.pressed(color) else color
+            keyPaint.color = if (index == pressed || index == flashKey) theme.pressed(color) else color
             canvas.drawPath(path, keyPaint)
             canvas.drawPath(path, gapPaint)
             val position = Core.labelPosition(handle, index)
@@ -433,6 +431,16 @@ class KeyboardView(
     private var recordDown = 0L
     private val logging = GestureLog.enabled(context)
 
+    /**
+     * Writes down a step that held up the main thread for [SLOW_MS] or
+     * more, so lag on the phone shows in the log with what caused it.
+     */
+    fun slow(step: String, ms: Long) {
+        if (logging && ms >= SLOW_MS) {
+            GestureLog.write(context, JSONObject().put("time", System.currentTimeMillis()).put("slow", step).put("ms", ms))
+        }
+    }
+
     /** Adds what came of the touch being recorded, such as the words a swipe spelled. */
     fun note(kind: String, text: String) {
         if (record != null) recordActions.put(JSONObject().put("kind", kind).put("text", text))
@@ -501,6 +509,7 @@ class KeyboardView(
                     return true
                 }
                 finger = event.getPointerId(index)
+                downTime = time
                 fingerX = x
                 fingerY = y
                 Core.touchDown(handle, x, y, time)
@@ -563,9 +572,26 @@ class KeyboardView(
         return true
     }
 
+    /** When the followed finger went down. */
+    private var downTime = 0L
+
+    /** The key lit after its tap has ended, until [FLASH_MS] after it went down, or -1. */
+    private var flashKey = -1
+    private val unflash = Runnable {
+        flashKey = -1
+        invalidate()
+    }
+
     /** Ends the followed finger's touch at a point and acts on it. */
     private fun lift(x: Float, y: Float, time: Long, how: String) {
         finger = -1
+        // A tap quicker than a frame or two would never be seen lit.
+        val pressed = Core.pressed(handle)
+        if (pressed >= 0) {
+            flashKey = pressed
+            removeCallbacks(unflash)
+            postDelayed(unflash, (downTime + FLASH_MS - time).coerceIn(FLASH_MS / 2, FLASH_MS))
+        }
         addPoint(x, y, time)
         act(Core.touchUp(handle, x, y, time))
         finishRecord(how)
@@ -590,7 +616,6 @@ class KeyboardView(
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f
 
-        /** Keys drawn as icons rather than their label. */
         /** Keys drawn as an icon instead of their label. */
         val KEY_ICONS = mapOf(
             "⌫" to R.drawable.icon_backspace,
@@ -600,6 +625,12 @@ class KeyboardView(
 
         /** Marks that sit high or low on the line and look misplaced unless centred on their ink. */
         private val INK_CENTRED = setOf(".", ",", ";", ":", "'", "\"", "…", "!", "?", "¡", "¿")
+
+        /** Main thread time from which a step counts as slow in the gesture log, in ms. */
+        private const val SLOW_MS = 8L
+
+        /** How long a tapped key stays lit at least, so a quick tap shows, in ms. */
+        private const val FLASH_MS = 90L
 
         /** Height of the suggestion strip in dp. */
         const val STRIP_DP = 44

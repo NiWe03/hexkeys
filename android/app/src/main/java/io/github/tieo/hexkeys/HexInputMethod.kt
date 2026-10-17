@@ -4,6 +4,7 @@ import android.content.Intent
 import java.util.concurrent.Executors
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Size
 import android.view.ViewGroup
 import android.view.inputmethod.InlineSuggestionsRequest
@@ -40,6 +41,14 @@ class HexInputMethod : InputMethodService() {
 
     /** What the delete swipe under way has deleted, last piece last, to put back when it slides back. */
     private val deleted = ArrayDeque<String>()
+
+    /** The field typed in, with the text before the cursor kept here. */
+    private val editor = Editor(this)
+
+    override fun onStartInput(attribute: EditorInfo, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        editor.reset(attribute.initialSelStart, attribute.initialSelEnd)
+    }
 
     /** The word swiped right before the delete swipe under way, which it takes first, whole. */
     private var swipedBeforeDelete: String? = null
@@ -124,9 +133,11 @@ class HexInputMethod : InputMethodService() {
     override fun onCreateInputView(): View = KeyboardView(
         this,
         onAction = { kind, text ->
-            val connection = currentInputConnection ?: return@KeyboardView
+            if (currentInputConnection == null) return@KeyboardView
+            val connection = editor
+            val started = SystemClock.uptimeMillis()
             // Text put in while a word is marked would replace it.
-            if (kind != "redraw" && kind != "nothing") connection.finishComposingText()
+            if (kind != "redraw" && kind != "nothing") connection.finishComposing()
             val undo = lastCorrection
             lastCorrection = null
             val justSwiped = swiped
@@ -134,21 +145,21 @@ class HexInputMethod : InputMethodService() {
             when (kind) {
                 "delete" -> {
                     val (pieces, words, started) = text.split(" ").map { it.toInt() }
-                    var before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                    var before = connection.textBefore()
                     if (started == 1) {
                         deleted.clear()
                         swipedBeforeDelete = justSwiped?.takeIf { before.endsWith(it) }
                     }
                     val word = swipedBeforeDelete
-                    connection.beginBatchEdit()
+                    connection.beginBatch()
                     // A selection goes first, as one piece, as backspace takes it; so
                     // does a word just swiped.
-                    val selected = connection.getSelectedText(0)?.toString().orEmpty()
-                    if (deleted.isEmpty() && pieces > 0 && selected.isNotEmpty()) {
-                        connection.commitText("", 1)
+                    val selected = if (deleted.isEmpty() && pieces > 0) connection.selectedText() else ""
+                    if (selected.isNotEmpty()) {
+                        connection.commit("")
                         deleted.addLast(selected)
                     } else if (deleted.isEmpty() && pieces > 0 && word != null && before.endsWith(word)) {
-                        connection.deleteSurroundingText(word.length, 0)
+                        connection.deleteBefore(word.length)
                         before = before.dropLast(word.length)
                         deleted.addLast(word)
                     }
@@ -159,17 +170,19 @@ class HexInputMethod : InputMethodService() {
                         } else {
                             lastCharacter(before)
                         }
-                        connection.deleteSurroundingText(piece.length, 0)
+                        connection.deleteBefore(piece.length)
                         before = before.dropLast(piece.length)
+                        // The copy ran short of the field's text: read on.
+                        if (before.isEmpty()) before = connection.textBefore()
                         deleted.addLast(piece)
                     }
-                    while (deleted.size > pieces) connection.commitText(deleted.removeLast(), 1)
-                    connection.endBatchEdit()
+                    while (deleted.size > pieces) connection.commit(deleted.removeLast())
+                    connection.endBatch()
                 }
                 "swipe" -> {
                     val view = keyboard ?: return@KeyboardView
                     if (!suggesting) return@KeyboardView
-                    val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                    val before = connection.textBefore()
                     val words = view.swipe(lexicon, before)
                     if (words.isEmpty()) return@KeyboardView
                     // Swiped words are put in with a space between them, as on other keyboards.
@@ -177,7 +190,7 @@ class HexInputMethod : InputMethodService() {
                     val space = last != null && !last.isWhitespace() && last !in OPENING
                     swiped = words[0]
                     view.note("words", words.joinToString(", "))
-                    connection.commitText((if (space) " " else "") + words[0], 1)
+                    connection.commit((if (space) " " else "") + words[0])
                     view.showSwipe(words)
                 }
                 "commit" -> {
@@ -186,37 +199,36 @@ class HexInputMethod : InputMethodService() {
                         Dictionaries.preferences(this).getBoolean(Dictionaries.AUTOCORRECT, false)
                     ) {
                         val (word, replaces) = correction
-                        val typed = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0).toString()
+                        val typed = connection.textBefore()
                             .let { it.substring(it.offsetByCodePoints(it.length, -replaces)) }
-                        connection.beginBatchEdit()
-                        connection.deleteSurroundingTextInCodePoints(replaces, 0)
-                        connection.commitText(word + text, 1)
-                        connection.endBatchEdit()
+                        connection.beginBatch()
+                        connection.deleteCodePointsBefore(replaces)
+                        connection.commit(word + text)
+                        connection.endBatch()
                         lastCorrection = Correction(typed, word + text)
                         keyboard?.note("corrected", "$typed -> $word")
                     } else {
                         if (text in SEPARATORS) keyboard?.unknown?.let { learn(it, 1) }
                         // A letter right after a swiped word starts the next word, as on
                         // other keyboards; punctuation stays attached to the word.
-                        val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                        val before = connection.textBefore()
                         val space = justSwiped != null && before.endsWith(justSwiped) && text.firstOrNull()?.isLetterOrDigit() == true
-                        connection.commitText(if (space) " $text" else text, 1)
+                        connection.commit(if (space) " $text" else text)
                     }
                 }
                 "backspace" -> {
-                    val selected = connection.getSelectedText(0)
-                    val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
+                    val before = connection.textBefore()
                     when {
-                        !selected.isNullOrEmpty() -> connection.commitText("", 1)
+                        connection.hasSelection -> connection.commit("")
                         // Right after a swipe, backspace takes the whole word back.
                         justSwiped != null && before.endsWith(justSwiped) ->
-                            connection.deleteSurroundingText(justSwiped.length, 0)
+                            connection.deleteBefore(justSwiped.length)
                         // Right after a correction, backspace puts back what was typed.
                         undo != null && before.endsWith(undo.inserted) -> {
-                            connection.beginBatchEdit()
-                            connection.deleteSurroundingText(undo.inserted.length, 0)
-                            connection.commitText(undo.typed + undo.inserted.substring(undo.inserted.length - 1), 1)
-                            connection.endBatchEdit()
+                            connection.beginBatch()
+                            connection.deleteBefore(undo.inserted.length)
+                            connection.commit(undo.typed + undo.inserted.substring(undo.inserted.length - 1))
+                            connection.endBatch()
                             learn(undo.typed, 1)
                         }
                         else -> deleteCharacter()
@@ -225,26 +237,28 @@ class HexInputMethod : InputMethodService() {
                 "replace" -> {
                     // A held letter's capital, typed already, swapped for an accent.
                     val (old, new) = text.split("\t")
-                    val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
-                    connection.beginBatchEdit()
-                    if (before.endsWith(old)) connection.deleteSurroundingText(old.length, 0)
-                    connection.commitText(new, 1)
-                    connection.endBatchEdit()
+                    val before = connection.textBefore()
+                    connection.beginBatch()
+                    if (before.endsWith(old)) connection.deleteBefore(old.length)
+                    connection.commit(new)
+                    connection.endBatch()
                 }
-                "enter" -> sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER)
+                "enter" -> connection.sendKey(KeyEvent.KEYCODE_ENTER)
             }
+            keyboard?.slow(kind, SystemClock.uptimeMillis() - started)
         },
         onPick = { word, replaces ->
-            val connection = currentInputConnection ?: return@KeyboardView
-            connection.finishComposingText()
+            if (currentInputConnection == null) return@KeyboardView
+            val connection = editor
+            connection.finishComposing()
             lastCorrection = null
             swiped = null
             // Choosing the word as typed over the suggestions keeps it on purpose.
             if (word == keyboard?.unknown) learn(word, LEARNED)
-            connection.beginBatchEdit()
-            connection.deleteSurroundingTextInCodePoints(replaces, 0)
-            connection.commitText("$word ", 1)
-            connection.endBatchEdit()
+            connection.beginBatch()
+            connection.deleteCodePointsBefore(replaces)
+            connection.commit("$word ")
+            connection.endBatch()
         },
         onSettings = {
             startActivity(Intent(this, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -255,13 +269,11 @@ class HexInputMethod : InputMethodService() {
     ).let { view ->
         keyboard = view
         view.accents = accents
-        view.logContext = {
-            if (suggesting) currentInputConnection?.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString() else null
-        }
+        view.logContext = { if (suggesting && currentInputConnection != null) editor.textBefore() else null }
         val emoji = EmojiPanel(
             this,
-            onEmoji = { currentInputConnection?.run { finishComposingText(); commitText(it, 1) } },
-            onSpace = { currentInputConnection?.run { finishComposingText(); commitText(" ", 1) } },
+            onEmoji = { editor.finishComposing(); editor.commit(it) },
+            onSpace = { editor.finishComposing(); editor.commit(" ") },
             onBackspace = { deleteCharacter() },
             onClose = { frame?.showEmoji(false) },
         )
@@ -336,8 +348,11 @@ class HexInputMethod : InputMethodService() {
         candidatesStart: Int, candidatesEnd: Int,
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        val started = SystemClock.uptimeMillis()
+        editor.selectionChanged(newSelStart, newSelEnd)
         refreshStrip()
         markWord(newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        keyboard?.slow("selection", SystemClock.uptimeMillis() - started)
     }
 
     /**
@@ -348,13 +363,13 @@ class HexInputMethod : InputMethodService() {
      * in place is left alone.
      */
     private fun markWord(start: Int, end: Int, markedStart: Int, markedEnd: Int) {
-        val connection = currentInputConnection ?: return
-        val before = if (suggesting && start == end) connection.getTextBeforeCursor(CONTEXT_LENGTH, 0) else null
+        if (currentInputConnection == null) return
+        val before = if (suggesting && start == end) editor.textBefore() else null
         val length = before?.reversed()?.takeWhile { it.isLetterOrDigit() || it == '\'' || it == '’' || it == '-' }?.length ?: 0
         if (length == 0) {
-            if (markedStart != -1) connection.finishComposingText()
+            if (markedStart != -1) editor.finishComposing()
         } else if (markedStart != start - length || markedEnd != start) {
-            connection.setComposingRegion(start - length, start)
+            editor.markComposing(start - length, start)
         }
     }
 
@@ -370,15 +385,14 @@ class HexInputMethod : InputMethodService() {
      * emoji, flag or letter with its marks, however many code points it is.
      */
     private fun deleteCharacter() {
-        val connection = currentInputConnection ?: return
-        connection.finishComposingText()
-        val selected = connection.getSelectedText(0)
-        if (!selected.isNullOrEmpty()) {
-            connection.commitText("", 1)
+        if (currentInputConnection == null) return
+        editor.finishComposing()
+        if (editor.hasSelection) {
+            editor.commit("")
             return
         }
-        val before = connection.getTextBeforeCursor(CONTEXT_LENGTH, 0)?.toString().orEmpty()
-        if (before.isNotEmpty()) connection.deleteSurroundingText(lastCharacter(before).length, 0)
+        val before = editor.textBefore()
+        if (before.isNotEmpty()) editor.deleteBefore(lastCharacter(before).length)
     }
 
     /**
@@ -407,12 +421,11 @@ class HexInputMethod : InputMethodService() {
             view.recognising = true
             voice.stop(voiceLanguages()) { text ->
                 view.recognising = false
-                val connection = currentInputConnection ?: return@stop
-                if (text.isEmpty()) return@stop
-                connection.finishComposingText()
-                val last = connection.getTextBeforeCursor(1, 0)?.lastOrNull()
+                if (currentInputConnection == null || text.isEmpty()) return@stop
+                editor.finishComposing()
+                val last = editor.textBefore().lastOrNull()
                 val space = last != null && !last.isWhitespace() && last !in OPENING
-                connection.commitText((if (space) " " else "") + text, 1)
+                editor.commit((if (space) " " else "") + text)
             }
             return
         }
@@ -441,11 +454,15 @@ class HexInputMethod : InputMethodService() {
 
     private fun refreshStrip() {
         val view = keyboard ?: return
-        val before = currentInputConnection?.getTextBeforeCursor(CONTEXT_LENGTH, 0)
+        val reading = SystemClock.uptimeMillis()
+        val before = if (currentInputConnection == null) null else editor.textBefore()
+        view.slow("text before", SystemClock.uptimeMillis() - reading)
         // A swipe's alternatives stay until the word is changed or left.
         val word = swiped
         if (word != null && before?.endsWith(word) == true) return
-        if (!suggesting || before == null) view.clearSuggestions() else view.suggest(lexicon, before.toString())
+        val suggesting = SystemClock.uptimeMillis()
+        if (!this.suggesting || before == null) view.clearSuggestions() else view.suggest(lexicon, before)
+        view.slow("suggest", SystemClock.uptimeMillis() - suggesting)
     }
 
     /**
@@ -466,9 +483,6 @@ class HexInputMethod : InputMethodService() {
     }
 
     private companion object {
-        /** Enough text before the cursor for the word being typed and the one before it. */
-        const val CONTEXT_LENGTH = 64
-
         /** How often a word has to be kept to count as learned, as the core counts. */
         const val LEARNED = 2
 

@@ -15,14 +15,22 @@ import java.io.File
 object GestureLog {
     private const val LIMIT = 4L shl 20
 
+    /** Writes happen here, off the main thread, so the log never holds up a touch. */
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor()
+
     fun enabled(context: Context) = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
 
     fun write(context: Context, record: JSONObject) {
+        val line = record.toString()
         val file = File(context.filesDir, "gestures.jsonl")
+        writer.execute { append(file, line) }
+    }
+
+    private fun append(file: File, line: String) {
         if (file.length() > LIMIT) {
             val lines = file.readLines()
             file.writeText(lines.drop(lines.size / 2).joinToString("\n", postfix = "\n"))
         }
-        file.appendText(record.toString() + "\n")
+        file.appendText(line + "\n")
     }
 }
