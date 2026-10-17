@@ -19,6 +19,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".LanguagesActivity"
+            android:label="Languages"
+            android:theme="@android:style/Theme.DeviceDefault"
+            android:exported="false" />
+
         <service
             android:name=".HexInputMethod"
             android:label="Hexkeys"

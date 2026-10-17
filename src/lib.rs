@@ -151,9 +151,10 @@ impl Layout {
         let cell_height = cell_width * 2.0 / 3f32.sqrt() * stretch;
         let row_pitch = cell_height * 0.75;
         let numbers_bottom = if spec.numbers.is_some() { cell_height * NUMBER_BAND } else { 0.0 };
-        // Under a number row the honeycomb starts at the top row's shoulders,
-        // so those keys are no taller than the rest.
-        let top = if spec.numbers.is_some() { numbers_bottom - cell_height / 4.0 } else { 0.0 };
+        // Under a number row the honeycomb starts halfway between the top
+        // row's points and its shoulders, so those keys are barely taller
+        // than the rest.
+        let top = if spec.numbers.is_some() { numbers_bottom - cell_height / 8.0 } else { 0.0 };
 
         let mut keys = Vec::new();
         for (row, row_spec) in spec.rows.iter().enumerate() {
@@ -265,7 +266,7 @@ impl Layout {
         // A top row cut at its shoulders shows only its lower part.
         if spec.numbers.is_some() {
             for key in keys.iter_mut().filter(|key| key.row == 0) {
-                key.label_at.y += cell_height / 8.0;
+                key.label_at.y += cell_height / 16.0;
             }
         }
 
@@ -641,8 +642,13 @@ const FLICK: f32 = 0.35;
 const STILL: f32 = 0.25;
 
 /// How near the delete edge a touch has to start to be a delete swipe, in
-/// key widths: a finger sliding in from the edge lands right at it.
-const EDGE: f32 = 0.2;
+/// key widths: a finger sliding in from the edge lands close to it.
+const EDGE: f32 = 0.4;
+
+/// How far a delete swipe may stray up or down before it counts as swipe
+/// typing after all, in key widths: a word starting at an edge key goes
+/// up or down soon, a delete slide stays level.
+const DELETE_STRAY: f32 = 0.6;
 
 /// How far a delete swipe moves inwards per character deleted, and back
 /// outwards per piece put back, in key widths. Putting back takes more
@@ -880,6 +886,13 @@ impl Keyboard {
         {
             touch.deleting = Some(Deleting { pieces: 0, mark: 0.0 });
             started = true;
+        }
+        // Strayed up or down: swipe typing after all, with everything put back.
+        if touch.deleting.is_some() && (at.y - touch.start.y).abs() > DELETE_STRAY * w {
+            touch.deleting = None;
+            touch.at_edge = false;
+            self.touch = Some(touch);
+            return Action::Delete { pieces: 0, words: false, started: false };
         }
         if let Some(deleting) = &mut touch.deleting {
             let before = deleting.pieces;
@@ -1139,8 +1152,8 @@ fn alternates(label: &str) -> &'static [&'static str] {
         "u" => &["ú", "ù", "û"],
         "c" => &["ç"],
         "n" => &["ñ"],
-        "." => &[",", "…", "!", "?"],
-        "?" => &["!", "¿", "¡"],
+        "." => &[",", ";", ":", "…", "-"],
+        "?" => &["!", "'", "\"", "¿", "¡"],
         "," => &[";", ":", "'", "\"", "-"],
         _ => &[],
     }
@@ -1526,7 +1539,8 @@ mod tests {
         assert_eq!(layout.key_at(Point { x: cell.x - w / 4.0, y: cell.y }).unwrap().label, ",");
         assert_eq!(layout.key_at(Point { x: cell.x + w / 4.0, y: cell.y }).unwrap().half, Some(Half::Right));
         let dot = layout.keys.iter().find(|key| key.half == Some(Half::Right)).unwrap();
-        assert!((polygon_area(&layout.outline(comma)) - polygon_area(&layout.outline(dot))).abs() < 1.0);
+        let (left, right) = (polygon_area(&layout.outline(comma)), polygon_area(&layout.outline(dot)));
+        assert!((left - right).abs() / left < 1e-3, "{left} {right}");
         let area: f32 = layout.keys.iter().map(|key| polygon_area(&layout.outline(key))).sum();
         assert!((area - layout.width * layout.height).abs() / (layout.width * layout.height) < 1e-4);
         let (one, two) = (layout.find("1").cells[0], layout.find("2").cells[0]);
@@ -1535,5 +1549,18 @@ mod tests {
             let key = layout.find(digit);
             assert_eq!(layout.key_at(key.cells[0]).unwrap().label, digit);
         }
+    }
+
+    #[test]
+    fn a_delete_slide_that_turns_up_or_down_becomes_swipe_typing() {
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        let w = keyboard.layout.cell_width;
+        let p = keyboard.layout.find("p").cells[0];
+        let at = |dx: f32, dy: f32| Point { x: 1000.0 + dx * w, y: p.y + dy * w };
+        keyboard.touch_down(at(0.0, 0.0), 0);
+        assert!(matches!(keyboard.touch_move(at(-0.8, 0.0), 10), Action::Delete { .. }));
+        assert_eq!(keyboard.touch_move(at(-1.2, 0.7), 20), Action::Delete { pieces: 0, words: false, started: false });
+        assert_eq!(keyboard.touch_move(at(-2.0, 1.4), 30), Action::Nothing);
+        assert_eq!(keyboard.touch_up(at(-2.0, 1.4), 40), Action::Swipe);
     }
 }

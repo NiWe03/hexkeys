@@ -6,148 +6,92 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
-import android.text.Editable
-import android.text.TextWatcher
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
-import java.util.concurrent.Executors
 
 /**
  * The keyboard's settings, which the launcher and the system's keyboard
  * settings both open: setting the keyboard up while it is not the active
- * one, autocorrect and learning, and the languages to suggest in.
+ * one, a field to try it in, typing, gestures, looks, and the languages,
+ * which have a page of their own.
  */
 class SettingsActivity : Activity() {
 
-    private val downloads = Executors.newSingleThreadExecutor()
-    private val main = Handler(Looper.getMainLooper())
-    private lateinit var setup: LinearLayout
-    private lateinit var enable: Button
-    private lateinit var switch: Button
-
-    private val density get() = resources.displayMetrics.density
-    private fun dp(value: Int) = (value * density).toInt()
+    private lateinit var setup: View
+    private lateinit var setupButton: Button
+    private lateinit var languages: TextView
+    private val ui by lazy { Ui(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val column = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(8), dp(16), dp(16))
-        }
+        val column = ui.column()
 
-        enable = Button(this).apply {
-            text = "Enable Hexkeys"
-            setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-        }
-        switch = Button(this).apply {
-            text = "Switch to Hexkeys"
-            setOnClickListener { getSystemService(InputMethodManager::class.java).showInputMethodPicker() }
-        }
-        setup = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(enable)
-            addView(switch)
-        }
+        setupButton = ui.primaryButton("")
+        setup = ui.card(setupButton)
         column.addView(setup)
 
-        column.addView(heading("Typing"))
-        column.addView(toggle("Autocorrect", Dictionaries.AUTOCORRECT))
-        column.addView(toggle("Learn new words", Dictionaries.LEARNING))
-        column.addView(Button(this).apply {
-            text = "Delete learned words"
-            setOnClickListener {
-                Dictionaries.deleteLearned(context)
-                isEnabled = false
-            }
-            isEnabled = Dictionaries.learned(context).isNotEmpty()
-        })
+        column.addView(ui.card(EditText(this).apply {
+            hint = "Try the keyboard"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            minHeight = ui.dp(48)
+        }))
 
-        column.addView(heading("Layout"))
-        column.addView(choice(KeyboardView.LAYOUT, listOf("hexkeys" to "Hexkeys", KeyboardView.SPACE_MIDDLE to "the reference layout (test)")))
+        column.addView(ui.heading("Typing"))
+        column.addView(ui.card(
+            ui.toggle("Autocorrect", Dictionaries.AUTOCORRECT),
+            learningRow(),
+        ))
 
-        column.addView(heading("Delete by sliding in from"))
-        column.addView(choice(KeyboardView.DELETE_FROM_LEFT + "_choice", listOf("right" to "Right edge", "left" to "Left edge")) { id ->
-            Dictionaries.preferences(this).edit().putBoolean(KeyboardView.DELETE_FROM_LEFT, id == "left").apply()
-        })
+        column.addView(ui.heading("Gestures"))
+        column.addView(ui.card(
+            ui.label("Delete by sliding in from"),
+            ui.segmented(
+                listOf("right" to "Right edge", "left" to "Left edge"),
+                if (ui.preferences.getBoolean(KeyboardView.DELETE_FROM_LEFT, false)) "left" else "right",
+            ) { id -> ui.preferences.edit().putBoolean(KeyboardView.DELETE_FROM_LEFT, id == "left").apply() },
+            ui.label("Capital letter"),
+            ui.segmented(
+                KeyboardView.CAPITALS.zip(listOf("Flick up", "Up and back", "Flick down", "Hold")),
+                ui.preferences.getString(KeyboardView.CAPITAL, null) ?: KeyboardView.CAPITALS.first(),
+                columns = 2,
+            ) { id -> ui.preferences.edit().putString(KeyboardView.CAPITAL, id).apply() },
+        ))
 
-        column.addView(heading("Capital letters"))
-        val capitalNames = listOf("Flick up", "Flick up and back", "Flick down", "Hold")
-        column.addView(choice(KeyboardView.CAPITAL, KeyboardView.CAPITALS.zip(capitalNames)))
+        column.addView(ui.heading("Look"))
+        column.addView(ui.card(
+            ui.label("Layout"),
+            ui.segmented(
+                listOf("hexkeys" to "Hexkeys", KeyboardView.SPACE_MIDDLE to "the reference layout test"),
+                ui.preferences.getString(KeyboardView.LAYOUT, null) ?: "hexkeys",
+            ) { id -> ui.preferences.edit().putString(KeyboardView.LAYOUT, id).apply() },
+            ui.label("Theme"),
+            themePicker(),
+        ))
 
-        column.addView(heading("Theme"))
-        val themeButtons = mutableListOf<RadioButton>()
-        val chosen = Theme.current(this).id
-        for (theme in Theme.all(this)) {
-            val button = RadioButton(this).apply {
-                text = theme.name
-                textSize = 17f
-                isChecked = theme.id == chosen
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            }
-            themeButtons += button
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = dp(56)
-                addView(button)
-                addView(ThemePreview(this@SettingsActivity, theme), LinearLayout.LayoutParams(dp(132), dp(40)))
-            }
-            val choose = View.OnClickListener {
-                themeButtons.forEach { it.isChecked = it === button }
-                Dictionaries.preferences(this@SettingsActivity).edit().putString(Theme.KEY, theme.id).apply()
-            }
-            row.setOnClickListener(choose)
-            button.setOnClickListener(choose)
-            column.addView(row)
+        languages = TextView(this).apply {
+            textSize = 15f
+            alpha = 0.7f
         }
+        column.addView(ui.card(ui.navigationRow("Languages", languages) {
+            startActivity(Intent(this, LanguagesActivity::class.java))
+        }).apply { (layoutParams as LinearLayout.LayoutParams).topMargin = ui.dp(24) })
 
-        column.addView(heading("Languages"))
-        val filter = EditText(this).apply {
-            hint = "Search"
-            setSingleLine()
-        }
-        column.addView(filter)
-        // The languages in use first, then the rest alphabetically.
-        val enabled = Dictionaries.enabled(this)
-        val rows = Dictionaries.catalog(this)
-            .sortedBy { it.file !in enabled }
-            .map { language -> language to languageRow(language) }
-        rows.forEach { column.addView(it.second) }
-        filter.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                val query = s.toString().trim()
-                for ((language, row) in rows) {
-                    row.visibility = if (language.name.contains(query, ignoreCase = true)) View.VISIBLE else View.GONE
-                }
-            }
-        })
-
-        val scroll = ScrollView(this).apply { addView(column) }
-        // Edge to edge: keep the content out from under the system bars.
-        scroll.setOnApplyWindowInsetsListener { view, insets ->
-            val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            insets
-        }
-        setContentView(scroll)
+        setContentView(ui.page(column))
         title = "Hexkeys"
     }
 
@@ -158,9 +102,14 @@ class SettingsActivity : Activity() {
         val enabled = manager.enabledInputMethodList.any { it.packageName == packageName }
         val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
             ?.startsWith("$packageName/") == true
-        enable.visibility = if (enabled) View.GONE else View.VISIBLE
-        switch.visibility = if (enabled && !current) View.VISIBLE else View.GONE
         setup.visibility = if (enabled && current) View.GONE else View.VISIBLE
+        setupButton.text = if (enabled) "Switch to Hexkeys" else "Enable Hexkeys"
+        setupButton.setOnClickListener {
+            if (enabled) manager.showInputMethodPicker()
+            else startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+        }
+        val chosen = Dictionaries.enabled(this)
+        languages.text = Dictionaries.catalog(this).filter { it.file in chosen }.joinToString(", ") { it.name }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -169,107 +118,224 @@ class SettingsActivity : Activity() {
         if (hasFocus) onResume()
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        downloads.shutdownNow()
+    /** The learning switch, with deleting what was learned beside it once there is something. */
+    private fun learningRow(): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val toggle = ui.toggle("Learn new words", Dictionaries.LEARNING)
+        row.addView(toggle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (Dictionaries.learned(this).isNotEmpty()) {
+            val clear = ui.textButton("Forget")
+            clear.setOnClickListener {
+                Dictionaries.deleteLearned(this)
+                clear.visibility = View.GONE
+            }
+            row.addView(clear)
+        }
+        return row
     }
 
-    private fun heading(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 14f
-        setTextColor(0xFF8AB4F8.toInt())
-        setPadding(0, dp(24), 0, dp(8))
-    }
-
-    /**
-     * Radio buttons for a preference holding one of `options` (id to name),
-     * the first chosen by default; `chosen` runs on top of storing the id.
-     */
-    private fun choice(key: String, options: List<Pair<String, String>>, chosen: (String) -> Unit = {}) =
-        RadioGroup(this).apply {
-            val preferences = Dictionaries.preferences(context)
-            val current = preferences.getString(key, options.first().first)
-            for ((id, name) in options) {
-                addView(RadioButton(context).apply {
-                    text = name
-                    textSize = 17f
-                    minimumHeight = dp(48)
-                    isChecked = id == current
-                    setOnClickListener {
-                        preferences.edit().putString(key, id).apply()
-                        chosen(id)
-                    }
+    /** Every theme as a tile with its preview and name, the chosen one outlined. */
+    private fun themePicker(): View {
+        val tiles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val chosen = Theme.current(this).id
+        val all = Theme.all(this)
+        val views = mutableListOf<View>()
+        for (theme in all) {
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
+                addView(ThemePreview(this@SettingsActivity, theme), LinearLayout.LayoutParams(ui.dp(104), ui.dp(44)))
+                addView(TextView(this@SettingsActivity).apply {
+                    text = theme.name
+                    textSize = 13f
+                    gravity = Gravity.CENTER
+                    setPadding(0, ui.dp(6), 0, 0)
                 })
             }
+            views += tile
+            tile.setOnClickListener {
+                views.forEach { ui.outline(it, it === tile) }
+                ui.preferences.edit().putString(Theme.KEY, theme.id).apply()
+            }
+            ui.outline(tile, theme.id == chosen)
+            tiles.addView(tile, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = ui.dp(8)
+            })
         }
+        return HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(tiles)
+        }
+    }
+}
 
-    private fun toggle(label: String, key: String) = Switch(this).apply {
+/**
+ * The look the settings pages share: sections of rounded cards on the
+ * window background, segmented buttons for short choices, the system's
+ * accent colour where Android has one.
+ */
+class Ui(private val activity: Activity) {
+    private val density = activity.resources.displayMetrics.density
+    fun dp(value: Int) = (value * density).toInt()
+
+    val preferences get() = Dictionaries.preferences(activity)
+
+    val accent: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        activity.getColor(android.R.color.system_accent1_200)
+    } else {
+        0xFF8AB4F8.toInt()
+    }
+    private val onAccent = 0xFF101318.toInt()
+    private val cardColor = 0x14FFFFFF
+    private val idleColor = 0x1FFFFFFF
+
+    fun column() = LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(16), dp(8), dp(16), dp(24))
+    }
+
+    /** A scrolling page around `content`, kept out from under the system bars. */
+    fun page(content: View) = ScrollView(activity).apply {
+        addView(content)
+        setOnApplyWindowInsetsListener { view, insets ->
+            val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
+    }
+
+    fun rounded(color: Int, radius: Int = 16) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
+    }
+
+    fun heading(text: String) = TextView(activity).apply {
+        this.text = text
+        textSize = 14f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(accent)
+        setPadding(dp(4), dp(20), 0, dp(8))
+    }
+
+    fun label(text: String) = TextView(activity).apply {
+        this.text = text
+        textSize = 15f
+        alpha = 0.8f
+        setPadding(0, dp(12), 0, dp(8))
+    }
+
+    fun card(vararg children: View) = LinearLayout(activity).apply {
+        orientation = LinearLayout.VERTICAL
+        background = rounded(cardColor, 20)
+        setPadding(dp(16), dp(8), dp(16), dp(12))
+        for (child in children) addView(child)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8)
+        }
+    }
+
+    fun toggle(label: String, key: String) = Switch(activity).apply {
         text = label
         textSize = 17f
-        minHeight = dp(48)
-        val preferences = Dictionaries.preferences(context)
+        minHeight = dp(52)
         isChecked = preferences.getBoolean(key, false)
         setOnCheckedChangeListener { _, checked -> preferences.edit().putBoolean(key, checked).apply() }
     }
 
+    fun primaryButton(text: String) = Button(activity).apply {
+        this.text = text
+        isAllCaps = false
+        textSize = 16f
+        setTextColor(onAccent)
+        background = rounded(accent, 24)
+        minHeight = dp(52)
+    }
+
+    fun textButton(text: String) = TextView(activity).apply {
+        this.text = text
+        textSize = 15f
+        setTextColor(accent)
+        gravity = Gravity.CENTER
+        minHeight = dp(48)
+        setPadding(dp(16), 0, dp(4), 0)
+    }
+
+    /** A row with a title and a summary below it that opens another page. */
+    fun navigationRow(title: String, summary: TextView, open: () -> Unit) = LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        minimumHeight = dp(64)
+        val texts = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(activity).apply {
+                text = title
+                textSize = 17f
+            })
+            addView(summary)
+        }
+        addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(TextView(activity).apply {
+            text = "›"
+            textSize = 24f
+            alpha = 0.6f
+        })
+        setOnClickListener { open() }
+    }
+
     /**
-     * A language with a check box: checking downloads its dictionary, with
-     * the progress in the row, unchecking removes it. The last language
-     * cannot be unchecked, so there is always one to suggest in.
+     * Buttons side by side, `columns` to a row, of which one is chosen:
+     * `options` are id to name, `chosen` the id chosen now; `choose` runs
+     * when another is tapped.
      */
-    private fun languageRow(language: Language): View {
-        val context: Context = this
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(48)
-        }
-        val box = CheckBox(this).apply {
-            text = language.name
-            textSize = 17f
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            isChecked = language.file in Dictionaries.enabled(context) && Dictionaries.isAvailable(context, language.file)
-        }
-        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(96), ViewGroup.LayoutParams.WRAP_CONTENT)
-            max = 1000
-            visibility = View.GONE
-        }
-        row.addView(box)
-        row.addView(progress)
-        box.setOnCheckedChangeListener { view, checked ->
-            val enabled = Dictionaries.enabled(context)
-            if (!checked) {
-                if (enabled.size <= 1) {
-                    view.isChecked = true
-                    return@setOnCheckedChangeListener
-                }
-                Dictionaries.setEnabled(context, enabled - language.file)
-                Dictionaries.delete(context, language.file)
-                return@setOnCheckedChangeListener
+    fun segmented(
+        options: List<Pair<String, String>>,
+        chosen: String,
+        columns: Int = options.size,
+        choose: (String) -> Unit,
+    ): View {
+        val grid = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val buttons = mutableListOf<Pair<String, TextView>>()
+        fun paint(current: String) {
+            for ((id, button) in buttons) {
+                val on = id == current
+                button.background = rounded(if (on) accent else idleColor, 12)
+                button.setTextColor(if (on) onAccent else 0xFFE8E8EC.toInt())
             }
-            if (Dictionaries.isAvailable(context, language.file)) {
-                Dictionaries.setEnabled(context, enabled + language.file)
-                return@setOnCheckedChangeListener
-            }
-            box.isEnabled = false
-            progress.progress = 0
-            progress.visibility = View.VISIBLE
-            downloads.execute {
-                val ok = runCatching {
-                    Dictionaries.download(context, language.file) { done ->
-                        main.post { progress.progress = (done * 1000).toInt() }
+        }
+        for (start in options.indices step columns) {
+            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+            for ((id, name) in options.subList(start, minOf(start + columns, options.size))) {
+                val button = TextView(activity).apply {
+                    text = name
+                    textSize = 15f
+                    gravity = Gravity.CENTER
+                    minHeight = dp(44)
+                    setOnClickListener {
+                        paint(id)
+                        choose(id)
                     }
-                }.isSuccess
-                main.post {
-                    progress.visibility = View.GONE
-                    box.isEnabled = true
-                    if (ok) Dictionaries.setEnabled(context, Dictionaries.enabled(context) + language.file)
-                    else box.isChecked = false
                 }
+                buttons += id to button
+                row.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    setMargins(dp(3), dp(3), dp(3), dp(3))
+                })
             }
+            grid.addView(row)
         }
-        return row
+        paint(chosen)
+        return grid
+    }
+
+    /** Marks a tile as chosen with an accent outline. */
+    fun outline(view: View, on: Boolean) {
+        view.background = GradientDrawable().apply {
+            cornerRadius = dp(14).toFloat()
+            setStroke(dp(2), if (on) accent else 0x00000000)
+        }
     }
 }
 
@@ -279,11 +345,13 @@ class SettingsActivity : Activity() {
  */
 private class ThemePreview(context: Context, private val theme: Theme) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val corner = resources.displayMetrics.density * 10
 
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(theme.background)
+        paint.color = theme.background
+        canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), corner, corner, paint)
         val colors = theme.rows + theme.other
-        val gap = resources.displayMetrics.density * 3
+        val gap = resources.displayMetrics.density * 4
         val cell = (width - gap) / colors.size
         val radius = minOf(cell - gap, height - 2 * gap) / 2f
         for ((index, color) in colors.withIndex()) {
