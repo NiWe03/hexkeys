@@ -100,6 +100,18 @@ class KeyboardView(
         invalidate()
     }
 
+    /** Enter's icon, and the small one for what holding it does, from the field's action. */
+    var enterIcon = R.drawable.icon_keyboard_return
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var enterHint: Int? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     /** Whether a password manager is set up, which the key button at the strip's right end opens. */
     var passwordsAvailable = false
         set(value) {
@@ -312,7 +324,13 @@ class KeyboardView(
             canvas.drawPath(path, gapPaint)
             val position = Core.labelPosition(handle, index)
             val hint = Core.keyHint(handle, index)
-            if (hint.isEmpty()) {
+            val label = Core.label(handle, index)
+            val enterSmall = enterHint
+            if (label == "⏎" && enterSmall != null) {
+                // What holding enter does, small above the return arrow.
+                drawIcon(canvas, enterIcon, position[0], position[1] + cellWidth * 0.12f, cellWidth * 0.32f, labelPaint.color)
+                drawIcon(canvas, enterSmall, position[0], position[1] - cellWidth * 0.24f, cellWidth * 0.22f, hintPaint.color)
+            } else if (hint.isEmpty()) {
                 drawLabel(canvas, Core.label(handle, index), position, cellWidth)
             } else {
                 // The alternative sits on the side the flick goes to, the key's own sign moved off it.
@@ -447,7 +465,7 @@ class KeyboardView(
 
     /** Single characters large, words such as "space" smaller so they fit their key. */
     private fun drawLabel(canvas: Canvas, label: String, position: FloatArray, cellWidth: Float) {
-        KEY_ICONS[label]?.let { id ->
+        (if (label == "⏎") enterIcon else KEY_ICONS[label])?.let { id ->
             drawIcon(canvas, id, position[0], position[1], cellWidth * 0.36f, labelPaint.color)
             return
         }

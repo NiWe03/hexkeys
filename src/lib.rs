@@ -660,6 +660,8 @@ pub enum Action {
     Replace { old: String, new: String },
     Backspace,
     Enter,
+    /// Enter held: the field's own action, such as send or search.
+    EnterAction,
     /// Nothing for the app; the keyboard itself changed (shift, layer).
     Redraw,
     /// Nothing changed.
@@ -856,7 +858,8 @@ struct Touch {
     /// Went down at the delete edge, so sliding inwards deletes.
     at_edge: bool,
     deleting: Option<Deleting>,
-    /// Held long enough to have typed its letter's capital already.
+    /// Held long enough to have acted already: typed its letter's capital,
+    /// or enter's action; lifting then adds nothing.
     capital_typed: bool,
 }
 
@@ -1133,6 +1136,7 @@ impl Keyboard {
             Gesture::Delete => Some(touch.repeat_at.unwrap_or(touch.anchor_time + WORD_HOLD_MS)),
             _ if touch.capital_typed => None,
             Gesture::Tap if self.holds_for_capital(touch.key) => Some(touch.anchor_time + CAPITAL_HOLD_MS),
+            Gesture::Tap if self.layout.keys[touch.key].label == "⏎" => Some(touch.anchor_time + self.long_press_ms),
             Gesture::Tap if !self.choices(touch.key).is_empty() => Some(touch.anchor_time + self.long_press_ms),
             _ => None,
         }
@@ -1162,6 +1166,10 @@ impl Keyboard {
                 }
                 self.shift = Shift::Off;
                 Action::Commit(capital)
+            }
+            Gesture::Tap if self.layout.keys[touch.key].label == "⏎" => {
+                self.touch.as_mut().expect("touch").capital_typed = true;
+                Action::EnterAction
             }
             Gesture::Tap if self.long_press(touch.key) => Action::Redraw,
             _ => Action::Nothing,
@@ -1716,6 +1724,19 @@ mod tests {
         // Punctuation keeps the long press.
         keyboard.touch_down(near(&keyboard, ".", 0.0, 0.0), 3000);
         assert_eq!(keyboard.deadline(), Some(3400));
+    }
+
+    #[test]
+    fn holding_enter_asks_for_the_fields_action_once() {
+        let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
+        let enter = near(&keyboard, "⏎", 0.0, 0.0);
+        keyboard.touch_down(enter, 0);
+        assert_eq!(keyboard.deadline(), Some(400));
+        assert_eq!(keyboard.tick(400), Action::EnterAction);
+        assert_eq!(keyboard.deadline(), None);
+        assert_eq!(keyboard.touch_up(enter, 700), Action::Redraw);
+        keyboard.touch_down(enter, 1000);
+        assert_eq!(keyboard.touch_up(enter, 1080), Action::Enter);
     }
 
     #[test]

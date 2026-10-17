@@ -243,7 +243,10 @@ class HexInputMethod : InputMethodService() {
                     connection.commit(new)
                     connection.endBatch()
                 }
-                "enter" -> connection.sendKey(KeyEvent.KEYCODE_ENTER)
+                // In a field of several lines enter starts a new one, written as text so an
+                // app that sends on the enter key does not; holding it does the field's action.
+                "enter" -> if (multiLine) connection.commit("\n") else performAction()
+                "enter_action" -> performAction()
             }
             keyboard?.slow(kind, SystemClock.uptimeMillis() - started)
         },
@@ -340,7 +343,27 @@ class HexInputMethod : InputMethodService() {
         // Device colours follow the wallpaper and dark mode, which may have changed.
         keyboard?.theme = Theme.current(this)
         keyboard?.passwordsAvailable = passwordManager() != null
+        // The field's own action for enter, such as send or search, and whether it takes new lines.
+        action = when {
+            info.actionLabel != null -> info.actionId
+            else -> (info.imeOptions and EditorInfo.IME_MASK_ACTION).takeIf { it in ACTION_ICONS }
+        }
+        multiLine = info.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE != 0
+        keyboard?.enterIcon = if (multiLine) R.drawable.icon_keyboard_return else actionIcon()
+        keyboard?.enterHint = if (multiLine) action?.let { actionIcon() } else null
         refreshStrip()
+    }
+
+    /** The field's action for enter, if it has one, and whether enter starts a new line in it. */
+    private var action: Int? = null
+    private var multiLine = false
+
+    private fun actionIcon() = action?.let { ACTION_ICONS[it] } ?: R.drawable.icon_send
+
+    /** Performs the field's action, or where it has none sends the enter key, which apps take as their own. */
+    private fun performAction() {
+        val id = action
+        if (id != null) currentInputConnection?.performEditorAction(id) else editor.sendKey(KeyEvent.KEYCODE_ENTER)
     }
 
     override fun onUpdateSelection(
@@ -492,6 +515,16 @@ class HexInputMethod : InputMethodService() {
     }
 
     private companion object {
+        /** Icons for the actions a field can give enter. */
+        val ACTION_ICONS = mapOf(
+            EditorInfo.IME_ACTION_GO to R.drawable.icon_arrow_forward,
+            EditorInfo.IME_ACTION_SEARCH to R.drawable.icon_search,
+            EditorInfo.IME_ACTION_SEND to R.drawable.icon_send,
+            EditorInfo.IME_ACTION_NEXT to R.drawable.icon_keyboard_tab,
+            EditorInfo.IME_ACTION_PREVIOUS to R.drawable.icon_arrow_back,
+            EditorInfo.IME_ACTION_DONE to R.drawable.icon_check,
+        )
+
         /** How often a word has to be kept to count as learned, as the core counts. */
         const val LEARNED = 2
 

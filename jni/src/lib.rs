@@ -211,6 +211,7 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Replace { old, new } => ("replace", format!("{old}\t{new}")),
         Action::Backspace => ("backspace", String::new()),
         Action::Enter => ("enter", String::new()),
+        Action::EnterAction => ("enter_action", String::new()),
         Action::Redraw => ("redraw", String::new()),
         Action::Nothing => ("nothing", String::new()),
         Action::Swipe => ("swipe", String::new()),
