@@ -632,12 +632,12 @@ pub fn honeycomb() -> LayoutSpec {
     }
 }
 
-/// [`space_middle`] with space and the marks at the bottom. Its top two letter
-/// rows are the reference layout's; the 13 letters left are exactly QWERTZ's home row
-/// s d f h j k and bottom row y x c v b n m, which fill the next two rows
-/// in QWERTZ order, f h and y in the cells the reference layout has them in. Keeping
-/// the reference layout's y s d n m j k instead leaves no room for b left of n. The
-/// bottom row is seven whole cells, space three of them in the middle between
+/// [`space_middle`] with space and the marks at the bottom. Its top two
+/// letter rows are the same; the 13 letters left are exactly QWERTZ's home
+/// row s d f h j k and bottom row y x c v b n m, which fill the next two
+/// rows in QWERTZ order, f h and y in the cells they have in the other
+/// layout. Keeping its y s d n m j k instead leaves no room for b left of
+/// n. The bottom row is seven whole cells, space three of them in the middle between
 /// . and ?, with the symbols key and enter at the ends.
 pub fn space_bottom() -> LayoutSpec {
     LayoutSpec {
@@ -668,9 +668,9 @@ pub fn with_shift_and_backspace(mut spec: LayoutSpec) -> LayoutSpec {
     spec
 }
 
-/// the reference layout's arrangement, with its two spaces between the letters, plus
-/// a number row along the top. A gesture types capitals and a slide in from
-/// the edge deletes. It is a registered design and stays out of any release.
+/// The letters with two spaces and the marks between them, plus a number
+/// row along the top. A gesture types capitals and a slide in from the edge
+/// deletes.
 pub fn space_middle() -> LayoutSpec {
     LayoutSpec {
         rows: vec![
@@ -2286,7 +2286,7 @@ mod tests {
     #[test]
     fn space_at_the_bottom_keeps_qwertz_order_below_the_shared_rows() {
         let (middle, bottom) = (space_middle(), space_bottom());
-        assert_eq!(middle.rows[..2], bottom.rows[..2], "the top letter rows are the reference layout's");
+        assert_eq!(middle.rows[..2], bottom.rows[..2], "the top letter rows are the same");
         let labels = |row: &RowSpec| row.keys.iter().map(|key| key.label.clone()).collect::<Vec<_>>().concat();
         assert_eq!(labels(&bottom.rows[2]), "sdfhjk");
         assert_eq!(labels(&bottom.rows[3]), "yxcvbnm");

@@ -61,7 +61,7 @@ fn main() {
     let usage = "usage: swipe FILE[,FILE...] honeycomb|space_middle SCATTER WORD...";
     let paths = args.next().expect(usage);
     let letters = match args.next().expect(usage).as_str() {
-        "space_middle" => space_middle(),
+        "middle" => space_middle(),
         _ => honeycomb(),
     };
     let scatter: f32 = args.next().expect(usage).parse().expect("scatter");

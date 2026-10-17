@@ -371,15 +371,15 @@ class KeyboardView(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val preferences = Dictionaries.preferences(context)
-        val space_middle = preferences.getString(LAYOUT, null) == SPACE_MIDDLE
+        val spaceMiddle = preferences.getString(LAYOUT, null) == SPACE_MIDDLE
         val editKeys = preferences.getBoolean(EDIT_KEYS, false)
         // The keys are laid out again only when what they depend on changed: every
         // panel shown over them measures the keyboard too, and building it anew
         // each time held up opening the emoji and their search.
-        val shape = "$width/$space_middle/$editKeys"
+        val shape = "$width/$spaceMiddle/$editKeys"
         if (handle == 0L || shape != builtFor) {
             if (handle != 0L) Core.destroy(handle)
-            handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), space_middle, editKeys)
+            handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), spaceMiddle, editKeys)
             builtFor = shape
             // Freed on the words thread after whatever it is still doing with it.
             val old = letters
@@ -1145,7 +1145,7 @@ class KeyboardView(
         /** Width of the delete edge kept from the back gesture, in dp. */
         private const val EXCLUSION_WIDTH = 32
 
-        /** Preference naming the letter layout; [SPACE_MIDDLE] or anything else for the hexkeys one. */
+        /** Preference naming the letter layout; [SPACE_MIDDLE] or anything else for space at the bottom. */
         const val LAYOUT = "layout"
         const val SPACE_MIDDLE = "space_middle"
 

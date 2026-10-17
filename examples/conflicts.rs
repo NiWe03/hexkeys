@@ -40,7 +40,7 @@ fn main() {
     words.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
     words.dedup_by(|a, b| a.0 == b.0);
     words.sort_by(|a, b| b.1.cmp(&a.1));
-    for (name, spec) in [("hexkeys", honeycomb()), ("space_middle", space_middle())] {
+    for (name, spec) in [("hexkeys", honeycomb()), ("middle", space_middle())] {
         let keys = Keyboard::new(spec, 1080.0, 1.0, 400).swipe_keys();
         let centre = |c: char| keys.letters.iter().find(|(l, _)| *l == c).map(|(_, p)| *p);
         // Direction from a to b when b is a neighbouring key: "up", "down", or other.

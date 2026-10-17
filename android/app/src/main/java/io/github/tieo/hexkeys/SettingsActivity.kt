@@ -99,6 +99,14 @@ class SettingsActivity : Activity() {
             startActivity(Intent(this, LanguagesActivity::class.java))
         }).apply { (layoutParams as LinearLayout.LayoutParams).topMargin = ui.dp(24) })
 
+        column.addView(ui.card(ui.navigationRow("Credits", TextView(this).apply {
+            text = "Dictionaries, data and libraries"
+            textSize = 15f
+            setTextColor(ui.secondaryText)
+        }) {
+            startActivity(Intent(this, CreditsActivity::class.java))
+        }))
+
         val page = ui.page(column)
         setContentView(page)
         title = "Hexkeys"
@@ -538,7 +546,7 @@ private class LayoutTiles(context: Context) : LinearLayout(context) {
  * A layout's keys as the keyboard draws them, in the chosen theme, shrunk
  * to the width it is given; with shift and backspace when they are set up.
  */
-private class LayoutPreview(context: Context, private val space_middle: Boolean) : View(context) {
+private class LayoutPreview(context: Context, private val spaceMiddle: Boolean) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val labels = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val gap = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -549,7 +557,7 @@ private class LayoutPreview(context: Context, private val space_middle: Boolean)
         val width = MeasureSpec.getSize(widthMeasureSpec)
         if (handle != 0L) Core.destroy(handle)
         val editKeys = Dictionaries.preferences(context).getBoolean(KeyboardView.EDIT_KEYS, false)
-        handle = Core.create(width.toFloat(), 1f, 400, space_middle, editKeys)
+        handle = Core.create(width.toFloat(), 1f, 400, spaceMiddle, editKeys)
         theme = Theme.current(context)
         setMeasuredDimension(width, Core.height(handle).toInt())
     }
