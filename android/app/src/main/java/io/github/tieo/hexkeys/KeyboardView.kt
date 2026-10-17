@@ -219,6 +219,7 @@ class KeyboardView(
         strokeWidth = density
     }
     private val deletePaint = Paint()
+    private val cursorPaint = Paint()
     private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         strokeCap = Paint.Cap.ROUND
@@ -485,6 +486,8 @@ class KeyboardView(
         // Holding space turns the keys into a touchpad for the cursor: their labels fade.
         labelPaint.alpha = ((if (Core.movingCursor(handle)) 0x40 else 0xFF) * pageFade).toInt()
         val shiftState = Core.shiftState(handle)
+        // While the keys are a touchpad for the cursor, no key is pressed.
+        val moving = Core.movingCursor(handle)
         spaceKeys = paths.indices.count { Core.label(handle, it) == "space" }
         spacesDrawn = 0
         for ((index, path) in paths.withIndex()) {
@@ -498,7 +501,9 @@ class KeyboardView(
                 canvas.scale(1f, barScale)
             }
             val color = keyColor(index)
-            keyPaint.color = if (index == pressed || index == flashKey) theme.pressed(color) else color
+            // The bar is one strip to slide on: its cells do not light up one by one.
+            val lit = (index == pressed || index == flashKey) && !(digits && gestureBar) && !moving
+            keyPaint.color = if (lit) theme.pressed(color) else color
             // Shift shows its state: lit for the next letter, in the accent colour while locked.
             val label = Core.label(handle, index)
             if (label == "⇧") when (shiftState) {
@@ -561,7 +566,14 @@ class KeyboardView(
             val reach = if (far) width - edge else deleting[1]
             deletePaint.color = if (far) DELETE_FAR_COLOR else DELETE_COLOR
             canvas.drawRect(minOf(edge, reach), 0f, maxOf(edge, reach), Core.height(handle), deletePaint)
-            drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerY, cellWidth * (if (far) 0.6f else 0.45f), theme.label)
+            drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerDrawnY, cellWidth * (if (far) 0.6f else 0.45f), theme.label)
+        }
+        // Moving the cursor washes the keys in the accent colour, with the cursor's mark at the finger.
+        if (Core.movingCursor(handle)) {
+            cursorPaint.color = theme.accent
+            cursorPaint.alpha = 0x50
+            canvas.drawRect(0f, 0f, width.toFloat(), Core.height(handle), cursorPaint)
+            drawIcon(canvas, R.drawable.icon_arrow_range, fingerX, fingerDrawnY, cellWidth * 0.5f, theme.label)
         }
         val trail = Core.trail(handle)
         if (trail.size >= 4) {
@@ -886,6 +898,9 @@ class KeyboardView(
     private var fingerX = 0f
     private var fingerY = 0f
 
+    /** Where the finger is on screen below the strip, for what is drawn at it: under the bar it differs from [fingerY]. */
+    private var fingerDrawnY = 0f
+
     /**
      * Touches go to the core, which tells taps, flicks and holds apart; the
      * view only redraws, passes on what they mean, and wakes the core when
@@ -918,6 +933,7 @@ class KeyboardView(
                 downTime = time
                 fingerX = x
                 fingerY = y
+                fingerDrawnY = event.getY(index) - keysTop
                 Core.touchDown(handle, x, y, time)
                 startRecord(x, y, time)
             }
@@ -926,6 +942,7 @@ class KeyboardView(
                 if (at < 0) return true
                 fingerX = event.getX(at)
                 fingerY = keysY(event.getY(at))
+                fingerDrawnY = event.getY(at) - keysTop
                 addPoint(fingerX, fingerY, time)
                 val action = Core.touchMove(handle, fingerX, fingerY, time)
                 if (action[0] != "nothing") act(action)
