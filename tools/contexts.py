@@ -1,10 +1,12 @@
 """Builds the context counts autocorrect uses to tell apart words that differ only in
 apostrophes, accents and capitals ("its" and "it's", "weg" and "Weg").
 
-Usage: python3 -I tools/contexts.py CACHE   (writes android/app/src/main/assets/contexts/<language>.tsv)
+Usage: python3 -I tools/contexts.py CACHE [LANGUAGE...]   (writes android/app/src/main/assets/contexts/<language>.tsv)
 
-Each language's text is a million sentences from the web from the Leipzig Corpora
-Collection, downloaded into CACHE once. A confusion set is a word written plainly, in
+Each language's text is the Leipzig Corpora Collection's largest web, news or mixed
+corpus of it, up to a million sentences, downloaded into CACHE once; Wikipedia only
+where it has nothing else. Languages it has no corpus of in the dictionary's script
+(Kabyle, Serbian in Latin script, Tamazight, Toki Pona, Hinglish) get no counts. A confusion set is a word written plainly, in
 lower case without apostrophes or accents, together with the other spellings it folds
 to, each written at least MIN_COUNT times away from a sentence's start (the first word,
 and any after a full stop, question or exclamation mark, or colon). All-capital
@@ -37,8 +39,48 @@ import unicodedata
 import urllib.request
 
 CORPORA = {
-    "en": "eng-com_web-public_2018_1M",
+    "af": "afr_mixed_2019_1M",
+    "az": "aze_newscrawl_2013_1M",
+    "bs": "bos_news_2020_300K",
+    "ca": "cat_newscrawl_2016_1M",
+    "ceb": "ceb_wikipedia_2021_1M",
+    "cs": "ces_news_2024_1M",
+    "da": "dan_mixed_2014_1M",
     "de": "deu-de_web-public_2019_1M",
+    "en": "eng-com_web-public_2018_1M",
+    "eo": "epo_mixed_2012_1M",
+    "es": "spa_news_2024_1M",
+    "et": "est_newscrawl_2017_1M",
+    "eu": "eus_newscrawl_2012_300K",
+    "fi": "fin_news_2022_1M",
+    "fr": "fra_news_2024_1M",
+    "ga": "gle_newscrawl_2014_300K",
+    "gl": "glg_wikipedia_2021_300K",
+    "hr": "hrv_news_2020_1M",
+    "hu": "hun_mixed_2012_1M",
+    "id": "ind_mixed_2013_1M",
+    "is": "isl_newscrawl_2011_1M",
+    "it": "ita_news_2024_1M",
+    "la": "lat_wikipedia_2021_100K",
+    "lb": "ltz_newscrawl_2016_300K",
+    "lt": "lit_news_2020_1M",
+    "lv": "lav_newscrawl_2016_1M",
+    "mg": "mlg_web_2012_30K",
+    "mwl": "mwl_wikipedia_2021_30K",
+    "nb": "nob_news_2013_1M",
+    "nl": "nld_mixed_2012_1M",
+    "nn": "nno_wikipedia_2021_300K",
+    "pl": "pol_news_2024_1M",
+    "pms": "pms_wikipedia_2021_30K",
+    "pt": "por_news_2024_1M",
+    "ro": "ron_news_2024_1M",
+    "sc": "srd_wikipedia_2021_10K",
+    "sk": "slk_newscrawl_2016_1M",
+    "sl": "slv_news_2020_1M",
+    "sv": "swe_news_2023_1M",
+    "tl": "tgl_wikipedia_2021_100K",
+    "tr": "tur_mixed_2014_1M",
+    "vi": "vie_mixed_2014_1M",
 }
 URL = "https://downloads.wortschatz-leipzig.de/corpora/{}.tar.gz"
 OUT = pathlib.Path(__file__).resolve().parent.parent / "android/app/src/main/assets/contexts"
@@ -73,7 +115,8 @@ def sentences(cache: pathlib.Path, corpus: str) -> list[str]:
     if not archive.exists():
         urllib.request.urlretrieve(URL.format(corpus), archive)
     with tarfile.open(archive) as tar:
-        member = tar.getmember(f"{corpus}/{corpus}-sentences.txt")
+        # Older archives name their folder and files differently from the corpus.
+        member = next(m for m in tar.getmembers() if m.name.endswith("-sentences.txt"))
         return tar.extractfile(member).read().decode("utf-8").splitlines()
 
 
@@ -202,7 +245,9 @@ def build(language: str, lines: list[str]) -> tuple[str, int, int]:
 def main():
     cache = pathlib.Path(sys.argv[1])
     OUT.mkdir(parents=True, exist_ok=True)
-    for language, corpus in CORPORA.items():
+    chosen = sys.argv[2:] or list(CORPORA)
+    for language in chosen:
+        corpus = CORPORA[language]
         text, sets, fixed = build(language, sentences(cache, corpus))
         (OUT / f"{language}.tsv").write_text(text, encoding="utf-8")
         print(f"{language}: {sets} sets, {len(text) // 1024} KiB, {fixed} held-back uses put back")
