@@ -84,6 +84,8 @@ class Voice(private val context: Context) {
         }
         listening = true
         startedAt = android.os.SystemClock.uptimeMillis()
+        // Loaded while the first words are spoken rather than after them.
+        worker.execute { runCatching { load() } }
         record.startRecording()
         Thread {
             try {
@@ -196,12 +198,7 @@ class Voice(private val context: Context) {
         }
         worker.execute {
             val text = runCatching {
-                val chosen = chosen(context) ?: return@runCatching ""
-                if (chosen != loaded) {
-                    recognizer?.release()
-                    recognizer = VoiceModels.load(chosen, folder(context, chosen), THREADS)
-                    loaded = chosen
-                }
+                val chosen = load() ?: return@runCatching ""
                 val started = System.currentTimeMillis()
                 // A new line in the text would send the message in some apps.
                 val text = recognizer!!.transcribe(audio, languages.split(','))
@@ -217,6 +214,17 @@ class Voice(private val context: Context) {
         }
     }
 
+    /** Loads the chosen model unless it is loaded already; null without one. Runs on [worker]. */
+    private fun load(): VoiceModel? {
+        val chosen = chosen(context) ?: return null
+        if (chosen != loaded) {
+            recognizer?.release()
+            recognizer = VoiceModels.load(chosen, folder(context, chosen), THREADS)
+            loaded = chosen
+        }
+        return chosen
+    }
+
     fun release() {
         listening = false
         worker.execute { recognizer?.release() }
@@ -230,14 +238,17 @@ class Voice(private val context: Context) {
         private const val CHUNK_MS = 100
         private const val CHUNK = RATE * CHUNK_MS / 1000
 
-        /** A pause this long after speech ends a stretch. */
-        private const val PAUSE_MS = 1000
+        /** A pause this long after speech ends a stretch: the breath between sentences. */
+        private const val PAUSE_MS = 500
 
         /** A stretch is at least this long, so a short breath does not split a sentence. */
         private const val MIN_STRETCH_MS = 4000
 
-        /** A stretch is at most this long; whisper hears 30 seconds at a time. */
-        private const val MAX_STRETCH_MS = 28_000
+        /**
+         * A stretch is at most this long, so speech without pauses still turns
+         * into text every few seconds rather than once at the end.
+         */
+        private const val MAX_STRETCH_MS = 12_000
 
         /** Where a stretch too long for a pause is cut: its quietest tenth of a second within the last four seconds. */
         private const val CUT_SEARCH_CHUNKS = 40
