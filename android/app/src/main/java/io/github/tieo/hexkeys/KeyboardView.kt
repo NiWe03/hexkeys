@@ -40,6 +40,7 @@ class KeyboardView(
     private val onEmoji: () -> Unit,
     private val onPasswords: () -> Unit,
     private val onVoice: () -> Unit,
+    private val onHeld: (send: Boolean) -> Unit = {},
 ) : View(context) {
 
     private var handle = 0L
@@ -89,6 +90,13 @@ class KeyboardView(
             invalidate()
         }
     var recognising = 0
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** Dictated text no field took, shown with a button to put it in and one to drop it. */
+    var heldText = ""
         set(value) {
             field = value
             invalidate()
@@ -464,6 +472,10 @@ class KeyboardView(
             drawDictation(canvas, middle)
             return
         }
+        if (heldText.isNotEmpty()) {
+            drawHeld(canvas, middle, iconSize)
+            return
+        }
         if (Core.deleting(handle).isNotEmpty() && deletedText.isNotEmpty()) {
             drawDeleted(canvas, middle)
             return
@@ -487,11 +499,42 @@ class KeyboardView(
     }
 
     /**
+     * In place of the words, dictated text no field took: a button to drop
+     * it at the left, the text's end, and a button to put it in at the right.
+     */
+    private fun drawHeld(canvas: Canvas, middle: Float, iconSize: Float) {
+        val left = 2 * stripSide
+        val right = width - 2 * stripSide
+        drawIcon(canvas, R.drawable.icon_close, left + stripSide / 2f, middle, iconSize, theme.label)
+        drawIcon(canvas, R.drawable.icon_send, right - stripSide / 2f, middle, iconSize, theme.accent)
+        stripPaint.isFakeBoldText = false
+        stripPaint.textSize = 15 * resources.displayMetrics.scaledDensity
+        val room = right - left - 2 * stripSide - 8 * density
+        // The end of a long text, which is what was said last.
+        var shown = heldText
+        while (shown.length > 1 && stripPaint.measureText("…$shown") > room) shown = shown.drop(1)
+        if (shown != heldText) shown = "…$shown"
+        canvas.drawText(shown, (left + right) / 2f, middle - (stripPaint.descent() + stripPaint.ascent()) / 2, stripPaint)
+    }
+
+    /**
      * In place of the words while dictating: the voice as bars, newest at
-     * the right, and how long it has been listening; the bars dim once
-     * listening stops and only the recognising is left.
+     * the right, and how long it has been listening. Once listening stops
+     * while text is still being recognised, three dots pulse in their place.
      */
     private fun drawDictation(canvas: Canvas, middle: Float) {
+        if (!listening) {
+            val gap = 14 * density
+            val phase = (SystemClock.uptimeMillis() % 1200) / 400f
+            wavePaint.color = theme.accent
+            for (i in 0..2) {
+                val lit = 1f - minOf(kotlin.math.abs(phase - i), 3f - kotlin.math.abs(phase - i)).coerceAtMost(1f)
+                wavePaint.alpha = (0x50 + 0xAF * lit).toInt()
+                canvas.drawCircle(width / 2f + (i - 1) * gap, middle, 3.5f * density, wavePaint)
+            }
+            postInvalidateOnAnimation()
+            return
+        }
         val left = 2 * stripSide + 8 * density
         stripPaint.isFakeBoldText = false
         stripPaint.textSize = 15 * resources.displayMetrics.scaledDensity
@@ -499,13 +542,11 @@ class KeyboardView(
         val clock = "%d:%02d".format(seconds / 60, seconds % 60)
         val clockWidth = stripPaint.measureText("00:00")
         val right = width - 2 * stripSide - clockWidth - 12 * density
-        if (listening) {
-            canvas.drawText(clock, right + 6 * density + clockWidth / 2, middle - (stripPaint.descent() + stripPaint.ascent()) / 2, stripPaint)
-            postInvalidateDelayed(250)
-        }
+        canvas.drawText(clock, right + 6 * density + clockWidth / 2, middle - (stripPaint.descent() + stripPaint.ascent()) / 2, stripPaint)
+        postInvalidateDelayed(250)
         val step = (right - left) / LEVELS
         wavePaint.color = theme.accent
-        wavePaint.alpha = if (listening) 0xFF else 0x60
+        wavePaint.alpha = 0xFF
         wavePaint.strokeWidth = step * 0.6f
         val tallest = stripHeight * 0.32f
         for ((index, level) in levels.withIndex()) {
@@ -751,6 +792,13 @@ class KeyboardView(
                     }
                     if (slot == 4) {
                         onVoice()
+                        return true
+                    }
+                    if (heldText.isNotEmpty() && !listening && recognising == 0) {
+                        when {
+                            x < 3 * stripSide -> onHeld(false)
+                            x >= width - 3 * stripSide -> onHeld(true)
+                        }
                         return true
                     }
                     val word = slots.getOrElse(slot) { "" }

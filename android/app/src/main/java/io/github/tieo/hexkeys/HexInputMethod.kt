@@ -92,11 +92,34 @@ class HexInputMethod : InputMethodService() {
         learned.putAll(Dictionaries.learned(this))
         loadDictionaries()
         Dictionaries.preferences(this).registerOnSharedPreferenceChangeListener(settingsChanged)
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            registerReceiver(dictationTest, android.content.IntentFilter(DICTATION_TEST), RECEIVER_EXPORTED)
+        }
+    }
+
+    /**
+     * In debug builds, plays the part of a dictation on an emulator, which
+     * has no microphone: `--ez start true` takes the field open now as the
+     * one dictated into, `--ei pending N` shows N stretches still being
+     * recognised after listening stopped, and `--es text T` lands T as
+     * recognised text:
+     * `adb shell am broadcast -a io.github.tieo.hexkeys.DICTATION_TEST --es text hello`
+     */
+    private val dictationTest = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            if (intent.getBooleanExtra("start", false)) dictationField = fieldOf(currentInputEditorInfo)
+            if (intent.hasExtra("pending")) {
+                keyboard?.listening = false
+                keyboard?.recognising = intent.getIntExtra("pending", 0)
+            }
+            intent.getStringExtra("text")?.let { dictated(it) }
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Dictionaries.preferences(this).unregisterOnSharedPreferenceChangeListener(settingsChanged)
+        runCatching { unregisterReceiver(dictationTest) }
         loader.shutdown()
         voice.release()
         Core.words.execute {
@@ -467,6 +490,7 @@ class HexInputMethod : InputMethodService() {
         onEmoji = { frame?.let { it.showEmoji(!it.emojiShown) } },
         onPasswords = { passwordManager()?.let { startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } },
         onVoice = { toggleVoice() },
+        onHeld = { send -> releaseHeld(send) },
     ).let { view ->
         keyboard = view
         view.accents = accents
@@ -548,6 +572,7 @@ class HexInputMethod : InputMethodService() {
         keyboard?.passwordsAvailable = passwordManager() != null
         keyboard?.listening = voice.listening
         keyboard?.recognising = voice.pending
+        keyboard?.heldText = held
         // The field's own action for enter, such as send or search, and whether it takes new lines.
         // A field may name an action yet ask that enter not do it (Paseo: done, which
         // closes the keyboard); enter's key event then goes to the app instead.
@@ -669,21 +694,58 @@ class HexInputMethod : InputMethodService() {
             )
             return
         }
+        dictationField = fieldOf(currentInputEditorInfo)
         val started = voice.start(voiceLanguages(), Dictation(
             level = { view.voiceLevel(it) },
-            text = { text ->
-                if (currentInputConnection == null) return@Dictation
-                editor.finishComposing()
-                val last = editor.textBefore().lastOrNull()
-                val space = last != null && !last.isWhitespace() && last !in OPENING
-                editor.commit((if (space) " " else "") + text)
-            },
+            text = { text -> dictated(text) },
             changed = {
                 view.listening = voice.listening
                 view.recognising = voice.pending
             },
         ))
         if (started) view.listening = true
+    }
+
+    /** The field a dictation was started in, as [fieldOf] names it. */
+    private var dictationField: String? = null
+
+    /**
+     * Dictated text no field took: what landed after the keyboard closed or
+     * another field took its place, kept for the user to put in by hand.
+     */
+    private var held = ""
+
+    /** A field by its app, its id and its kind, to tell whether it is still the same one. */
+    private fun fieldOf(info: EditorInfo?) = info?.let { "${it.packageName}/${it.fieldId}/${it.inputType}" }
+
+    /**
+     * Puts in text a dictation recognised, while the field it was started
+     * in is still open with the keyboard shown; anywhere else it could land
+     * in another app, so it is held instead.
+     */
+    private fun dictated(text: String) {
+        val same = isInputViewShown && currentInputConnection != null && fieldOf(currentInputEditorInfo) == dictationField
+        if (same && held.isEmpty()) {
+            put(text)
+        } else {
+            held = if (held.isEmpty()) text else "$held $text"
+            keyboard?.heldText = held
+        }
+    }
+
+    /** Puts in dictated text, with a space before it where it follows a word. */
+    private fun put(text: String) {
+        editor.finishComposing()
+        val last = editor.textBefore().lastOrNull()
+        val space = last != null && !last.isWhitespace() && last !in OPENING
+        editor.commit((if (space) " " else "") + text)
+    }
+
+    /** The held text goes into the field open now, or away. */
+    private fun releaseHeld(send: Boolean) {
+        if (send && currentInputConnection != null) put(held)
+        held = ""
+        keyboard?.heldText = ""
     }
 
     /** The languages of the enabled dictionaries as ISO codes, for recognising speech. */
@@ -845,6 +907,8 @@ class HexInputMethod : InputMethodService() {
 
         /** The last word before the cursor with the spaces after it. */
         val WORD_AT_END = Regex("\\S*\\s*$")
+
+        const val DICTATION_TEST = "io.github.tieo.hexkeys.DICTATION_TEST"
 
         /** The word, or the rest of one, a text starts with. */
         val WORD_AT_START = Regex("^[\\p{L}\\p{N}'’-]*")

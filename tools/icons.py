@@ -11,7 +11,7 @@ import urllib.request
 COMMIT = "49d4db35df873165d6bd6ba09b063c7dafbac2f4"
 ICONS = [
     "settings", "mood", "mic", "key", "backspace", "keyboard_return", "shift", "schedule",
-    "stop_circle", "timer", "error", "send", "search", "arrow_forward", "arrow_back", "check", "keyboard_tab",
+    "stop_circle", "timer", "error", "send", "search", "arrow_forward", "arrow_back", "check", "keyboard_tab", "close",
 ]
 OUT = pathlib.Path(__file__).resolve().parent.parent / "android/app/src/main/res/drawable"
 
