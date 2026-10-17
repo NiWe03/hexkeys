@@ -104,6 +104,13 @@ class KeyboardView(
         invalidate()
     }
 
+    /** What the delete slide under way has taken, shown in the strip while it lasts. */
+    var deletedText = ""
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     /** Enter's icon, and the small one for what holding it does, from the field's action. */
     var enterIcon = R.drawable.icon_keyboard_return
         set(value) {
@@ -163,6 +170,7 @@ class KeyboardView(
     private val dividerPaint = Paint().apply {
         strokeWidth = density
     }
+    private val deletePaint = Paint()
     private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         strokeCap = Paint.Cap.ROUND
     }
@@ -345,6 +353,8 @@ class KeyboardView(
         canvas.translate(0f, keysTop.toFloat())
         val cellWidth = Core.cellWidth(handle)
         val pressed = Core.pressed(handle)
+        // Holding space turns the keys into a touchpad for the cursor: their labels fade.
+        labelPaint.alpha = if (Core.movingCursor(handle)) 0x40 else 0xFF
         for ((index, path) in paths.withIndex()) {
             val color = keyColor(index)
             keyPaint.color = if (index == pressed || index == flashKey) theme.pressed(color) else color
@@ -378,6 +388,15 @@ class KeyboardView(
                 canvas.drawPath(path, gapPaint)
                 drawLabel(canvas, Core.popupLabel(handle, index), Core.popupLabelPosition(handle, index), cellWidth)
             }
+        }
+        // A delete slide washes the keys it has crossed, from the edge to the finger.
+        val deleting = Core.deleting(handle)
+        if (deleting.size == 2) {
+            val fromLeft = deleting[1] > deleting[0]
+            val edge = if (fromLeft) 0f else width.toFloat()
+            deletePaint.color = DELETE_COLOR
+            canvas.drawRect(minOf(edge, deleting[1]), 0f, maxOf(edge, deleting[1]), Core.height(handle), deletePaint)
+            drawIcon(canvas, R.drawable.icon_backspace, deleting[1], fingerY, cellWidth * 0.45f, theme.label)
         }
         val trail = Core.trail(handle)
         if (trail.size >= 4) {
@@ -417,6 +436,10 @@ class KeyboardView(
         }
         if (listening || recognising > 0) {
             drawDictation(canvas, middle)
+            return
+        }
+        if (Core.deleting(handle).isNotEmpty() && deletedText.isNotEmpty()) {
+            drawDeleted(canvas, middle)
             return
         }
         if (chipsShown) return
@@ -465,6 +488,25 @@ class KeyboardView(
             val half = maxOf(1.5f * density, tallest * kotlin.math.sqrt((level * 8f).coerceAtMost(1f)))
             canvas.drawLine(x, middle - half, x, middle + half, wavePaint)
         }
+    }
+
+    /** In place of the words during a delete slide: what it has taken so far, struck through, its end at the right. */
+    private fun drawDeleted(canvas: Canvas, middle: Float) {
+        val left = 2 * stripSide + 8 * density
+        val right = width - 2 * stripSide - 8 * density
+        stripPaint.isFakeBoldText = false
+        stripPaint.textSize = 17 * resources.displayMetrics.scaledDensity
+        var shown = deletedText
+        while (shown.length > 1 && stripPaint.measureText("…$shown") > right - left) shown = shown.drop(1)
+        if (shown != deletedText) shown = "…$shown"
+        val textWidth = stripPaint.measureText(shown)
+        val x = right - textWidth / 2
+        val baseline = middle - (stripPaint.descent() + stripPaint.ascent()) / 2
+        stripPaint.color = DELETE_TEXT
+        stripPaint.isStrikeThruText = true
+        canvas.drawText(shown, x, baseline, stripPaint)
+        stripPaint.isStrikeThruText = false
+        stripPaint.color = theme.label
     }
 
     private val icons = mutableMapOf<Int, android.graphics.drawable.Drawable>()
@@ -730,6 +772,10 @@ class KeyboardView(
 
         /** Marks that sit high or low on the line and look misplaced unless centred on their ink. */
         private val INK_CENTRED = setOf(".", ",", ";", ":", "'", "\"", "…", "!", "?", "¡", "¿")
+
+        /** The wash over keys a delete slide has crossed, and the colour of the text it took. */
+        private const val DELETE_COLOR = 0x40E5484D
+        private const val DELETE_TEXT = 0xFFFF6B6B.toInt()
 
         /** How round the keys' corners are drawn, in key widths. */
         const val CORNER = 0.12f

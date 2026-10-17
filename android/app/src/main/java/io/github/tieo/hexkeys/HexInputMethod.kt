@@ -257,6 +257,7 @@ class HexInputMethod : InputMethodService() {
                 }
                 while (deleted.size > pieces) connection.commit(deleted.removeLast())
                 connection.endBatch()
+                keyboard?.deletedText = deleted.reversed().joinToString("")
             }
             "swipe" -> {
                 val view = keyboard ?: return
@@ -330,6 +331,10 @@ class HexInputMethod : InputMethodService() {
             // app that sends on the enter key does not; holding it does the field's action.
             "enter" -> if (multiLine) connection.commit("\n") else performAction()
             "enter_action" -> performAction()
+            "cursor" -> {
+                val (dx, dy) = text.split(" ").map { it.toInt() }
+                connection.moveCursor(dx, dy)
+            }
         }
         keyboard?.slow(kind, SystemClock.uptimeMillis() - started)
     }

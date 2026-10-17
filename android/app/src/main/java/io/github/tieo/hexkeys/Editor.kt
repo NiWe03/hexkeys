@@ -104,6 +104,14 @@ class Editor(private val service: InputMethodService) {
         connection?.endBatchEdit()
     }
 
+    /** Moves the cursor `dx` characters right and `dy` lines down, as the arrow keys do. */
+    fun moveCursor(dx: Int, dy: Int) {
+        val horizontal = if (dx > 0) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
+        val vertical = if (dy > 0) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP
+        repeat(kotlin.math.abs(dx)) { sendKey(horizontal) }
+        repeat(kotlin.math.abs(dy)) { sendKey(vertical) }
+    }
+
     /** Sends a key to the app, which changes the text in its own way. */
     fun sendKey(code: Int) {
         before = null

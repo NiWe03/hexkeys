@@ -662,6 +662,9 @@ pub enum Action {
     Enter,
     /// Enter held: the field's own action, such as send or search.
     EnterAction,
+    /// Space held and the finger moved: the cursor moves `dx` characters
+    /// right (left when negative) and `dy` lines down.
+    Cursor { dx: i32, dy: i32 },
     /// Nothing for the app; the keyboard itself changed (shift, layer).
     Redraw,
     /// Nothing changed.
@@ -861,7 +864,22 @@ struct Touch {
     /// Held long enough to have acted already: typed its letter's capital,
     /// or enter's action; lifting then adds nothing.
     capital_typed: bool,
+    /// Space held: the keyboard is a touchpad for the cursor.
+    cursor: Option<Cursor>,
 }
+
+/// The cursor being moved by a finger after holding space: where the finger
+/// was when it started, and how far the cursor has moved since.
+#[derive(Clone, Copy, Debug)]
+struct Cursor {
+    origin: Point,
+    dx: i32,
+    dy: i32,
+}
+
+/// How far the finger moves for the cursor to move one character, in key
+/// widths, and one line, in rows.
+const CURSOR_STEP: f32 = 0.3;
 
 /// A finished swipe across the letters.
 #[derive(Clone, Debug, PartialEq)]
@@ -989,6 +1007,17 @@ impl Keyboard {
         )
     }
 
+    /// Whether space is held and the keyboard moves the cursor.
+    pub fn moving_cursor(&self) -> bool {
+        self.touch.as_ref().is_some_and(|touch| touch.cursor.is_some())
+    }
+
+    /// While a delete slide is under way, where it started and where the
+    /// finger is now, along the keyboard's width.
+    pub fn deleting(&self) -> Option<(f32, f32)> {
+        self.touch.as_ref().filter(|touch| touch.deleting.is_some()).map(|touch| (touch.start.x, touch.at.x))
+    }
+
     /// The key the finger went down on, which every gesture belongs to;
     /// none while swiping or deleting, which do not belong to a key.
     pub fn pressed(&self) -> Option<usize> {
@@ -1017,6 +1046,7 @@ impl Keyboard {
             at_edge,
             deleting: None,
             capital_typed: false,
+            cursor: None,
         });
     }
 
@@ -1031,6 +1061,15 @@ impl Keyboard {
         let Some(mut touch) = self.touch.clone() else { return Action::Nothing };
         touch.at = at;
         touch.last_time = time;
+        if let Some(cursor) = &mut touch.cursor {
+            let dx = ((at.x - cursor.origin.x) / (CURSOR_STEP * w)).trunc() as i32;
+            let dy = ((at.y - cursor.origin.y) / (self.layout.cell_height * 0.75)).trunc() as i32;
+            let moved = Action::Cursor { dx: dx - cursor.dx, dy: dy - cursor.dy };
+            let changed = dx != cursor.dx || dy != cursor.dy;
+            (cursor.dx, cursor.dy) = (dx, dy);
+            self.touch = Some(touch);
+            return if changed { moved } else { Action::Nothing };
+        }
         touch.path.push(at);
         let from_start = distance(at, touch.start);
         if from_start > touch.extent {
@@ -1138,7 +1177,9 @@ impl Keyboard {
             Gesture::Delete => Some(touch.repeat_at.unwrap_or(touch.anchor_time + WORD_HOLD_MS)),
             _ if touch.capital_typed => None,
             Gesture::Tap if self.holds_for_capital(touch.key) => Some(touch.anchor_time + CAPITAL_HOLD_MS),
-            Gesture::Tap if self.layout.keys[touch.key].label == "⏎" => Some(touch.anchor_time + self.long_press_ms),
+            Gesture::Tap if matches!(self.layout.keys[touch.key].label.as_str(), "⏎" | "space") => {
+                Some(touch.anchor_time + self.long_press_ms)
+            }
             Gesture::Tap if !self.choices(touch.key).is_empty() => Some(touch.anchor_time + self.long_press_ms),
             _ => None,
         }
@@ -1172,6 +1213,12 @@ impl Keyboard {
             Gesture::Tap if self.layout.keys[touch.key].label == "⏎" => {
                 self.touch.as_mut().expect("touch").capital_typed = true;
                 Action::EnterAction
+            }
+            Gesture::Tap if self.layout.keys[touch.key].label == "space" => {
+                let touch = self.touch.as_mut().expect("touch");
+                touch.capital_typed = true;
+                touch.cursor = Some(Cursor { origin: touch.at, dx: 0, dy: 0 });
+                Action::Redraw
             }
             Gesture::Tap if self.long_press(touch.key) => Action::Redraw,
             _ => Action::Nothing,
@@ -1221,8 +1268,8 @@ impl Keyboard {
 
     /// Opens the key's popup if it has alternatives; returns whether it did.
     /// The choices sit in a row of small hexagons centred just above the
-    /// key; a letter held for its capital has none of its accents chosen
-    /// until the finger moves to one.
+    /// key, the most used first and chosen; a letter held for its capital has
+    /// none of its accents chosen until the finger moves to one.
     pub fn long_press(&mut self, index: usize) -> bool {
         let choices = self.choices(index);
         if choices.is_empty() {
@@ -1238,7 +1285,8 @@ impl Keyboard {
         // Overlapping the key's top point a little, as the honeycomb's rows overlap.
         let y = center.y - layout.cell_height / 2.0 - h / 4.0;
         let cells: Vec<Point> = (0..choices.len()).map(|i| Point { x: first + i as f32 * w, y }).collect();
-        let selected = if holding { None } else { Some(nearest_by_x(&cells, center.x)) };
+        // The most used choice comes first and starts chosen, wherever it sits.
+        let selected = if holding { None } else { Some(0) };
         let origin = self.touch.as_ref().map_or(center, |touch| touch.at);
         self.popup = Some(Popup { choices, cells, cell_width: w, selected, origin, moved: false, replaces: None });
         true
@@ -1745,6 +1793,22 @@ mod tests {
         keyboard.touch_down(enter, 1000);
         assert_eq!(keyboard.touch_up(enter, 1080), Action::Enter);
         assert_eq!(gesture(&mut keyboard, "⏎", &[(0.0, -0.6)]), Action::EnterAction, "a flick up does it too");
+    }
+
+    #[test]
+    fn holding_space_moves_the_cursor_with_the_finger() {
+        let mut keyboard = Keyboard::new(space_bottom(), 1008.0, 1.0, 400);
+        let w = keyboard.layout.cell_width;
+        let space = near(&keyboard, "space", 0.0, 0.0);
+        keyboard.touch_down(space, 0);
+        assert_eq!(keyboard.tick(400), Action::Redraw);
+        assert!(keyboard.moving_cursor());
+        let at = |dx: f32| Point { x: space.x + dx * w, y: space.y };
+        assert_eq!(keyboard.touch_move(at(0.1), 450), Action::Nothing);
+        assert_eq!(keyboard.touch_move(at(0.65), 500), Action::Cursor { dx: 2, dy: 0 });
+        assert_eq!(keyboard.touch_move(at(-0.35), 550), Action::Cursor { dx: -3, dy: 0 });
+        assert_eq!(keyboard.touch_up(at(-0.35), 600), Action::Redraw, "lifting types no space");
+        assert!(!keyboard.moving_cursor());
     }
 
     #[test]

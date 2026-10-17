@@ -48,6 +48,12 @@ object Core {
     /** The QWERTZ row of the key's letter, 0 to 2, which themes colour it by; -1 for other keys. */
     external fun keyRow(handle: Long, index: Int): Int
 
+    /** Whether space is held and the keyboard moves the cursor. */
+    external fun movingCursor(handle: Long): Boolean
+
+    /** While a delete slide is under way, the x it started at and the finger's x; empty otherwise. */
+    external fun deleting(handle: Long): FloatArray
+
     /** The key the finger went down on, or -1. */
     external fun pressed(handle: Long): Int
 

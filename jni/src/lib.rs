@@ -212,6 +212,7 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Backspace => ("backspace", String::new()),
         Action::Enter => ("enter", String::new()),
         Action::EnterAction => ("enter_action", String::new()),
+        Action::Cursor { dx, dy } => ("cursor", format!("{dx} {dy}")),
         Action::Redraw => ("redraw", String::new()),
         Action::Nothing => ("nothing", String::new()),
         Action::Swipe => ("swipe", String::new()),
@@ -290,6 +291,20 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_popupLabel(
 ) -> jstring {
     let popup = keyboard(handle).popup.as_ref().expect("no popup open");
     env.new_string(&popup.choices[index as usize]).expect("label").into_raw()
+}
+
+/// Whether space is held and the keyboard moves the cursor.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_movingCursor(_env: JNIEnv, _class: JClass, handle: jlong) -> jboolean {
+    keyboard(handle).moving_cursor() as jboolean
+}
+
+/// While a delete slide is under way, where it started and where the
+/// finger is, as two x positions; empty otherwise.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_deleting(env: JNIEnv, _class: JClass, handle: jlong) -> jfloatArray {
+    let flat: Vec<f32> = keyboard(handle).deleting().map_or(Vec::new(), |(from, to)| vec![from, to]);
+    floats(&env, &flat)
 }
 
 /// Width of one cell, which labels are sized from.
