@@ -260,14 +260,20 @@ impl Layout {
             }
         }
 
-        // A top row cut at its shoulders shows only its lower part.
-        if spec.numbers.is_some() {
-            for key in keys.iter_mut().filter(|key| key.row == 0) {
-                key.label_at.y += cell_height / 16.0;
+        // A top row cut at its shoulders shows only its lower part, and the
+        // bottom row is cut as far from its lower point, so the two are as
+        // tall as each other.
+        let cut = if spec.numbers.is_some() { cell_height / 8.0 } else { 0.0 };
+        let last = spec.rows.len().saturating_sub(1);
+        for key in &mut keys {
+            if key.row == 0 {
+                key.label_at.y += cut / 2.0;
+            } else if key.row == last {
+                key.label_at.y -= cut / 2.0;
             }
         }
 
-        let height = top + cell_height + (spec.rows.len().saturating_sub(1)) as f32 * row_pitch;
+        let height = top + cell_height - cut + last as f32 * row_pitch;
         Self { keys, cell_width, cell_height, width, height, numbers_bottom }
     }
 
@@ -2010,6 +2016,20 @@ mod tests {
         // f, h and y stay in the cells the middle layout has them in.
         for (row, column) in [(2, 2), (2, 3), (3, 0)] {
             assert_eq!(middle.rows[row].keys[column], bottom.rows[row].keys[column]);
+        }
+    }
+
+    #[test]
+    fn the_top_and_bottom_letter_rows_are_as_tall_as_each_other() {
+        for spec in [space_middle(), space_bottom()] {
+            let layout = Layout::fit(&spec, 1008.0, 1.0);
+            let height = |row: usize| {
+                let key = layout.keys.iter().find(|key| key.row == row && key.half.is_none()).unwrap();
+                let ys: Vec<f32> = layout.outline(key).iter().map(|p| p.y).collect();
+                ys.iter().cloned().fold(f32::MIN, f32::max) - ys.iter().cloned().fold(f32::MAX, f32::min)
+            };
+            let last = spec.rows.len() - 1;
+            assert!((height(0) - height(last)).abs() < 0.5, "{} against {}", height(0), height(last));
         }
     }
 
