@@ -50,12 +50,17 @@ pub struct Tuning {
     /// samples earlier or later (dynamic time warping), so a finger that
     /// slows down or overshoots is not counted off; 0 pairs them in order.
     pub warp: usize,
+    /// What a squared key width between a sharp turn of the path and the
+    /// nearest of the word's keys costs: a finger turns where a letter is.
+    pub turn_weight: f32,
+    /// How sharp a turn has to be to count, in degrees.
+    pub turn_angle: f32,
 }
 
 /// Weights fitted to real swipes: those in FUTO's swipe dataset
 /// (huggingface.co/datasets/futo-org/swipe.futo.org), measured with
-/// `examples/futo.rs`. On swipes left out of the fitting, 87.5% of
-/// dictionary words come first and 96% among the first three.
+/// `examples/futo.rs`. On swipes left out of the fitting, 88.3% of
+/// dictionary words come first and 96.3% among the first three.
 impl Default for Tuning {
     fn default() -> Self {
         Self {
@@ -67,6 +72,8 @@ impl Default for Tuning {
             end_weight: 30.0,
             capitals: 30.0,
             warp: 3,
+            turn_weight: 35.0,
+            turn_angle: 25.0,
         }
     }
 }
@@ -228,6 +235,36 @@ fn warped(a: &[Point], b: &[Point], band: usize) -> f32 {
     previous[n - 1].0 / previous[n - 1].1 as f32
 }
 
+/// Where a path resampled evenly turns sharply: the sharpest point of each
+/// stretch where its direction changes by more than `angle` degrees.
+fn turns(path: &[Point], angle: f32) -> Vec<Point> {
+    let reach = (path.len() / 32).max(2);
+    let limit = angle.to_radians().cos();
+    let bend = |i: usize| -> f32 {
+        let (a, b, c) = (path[i - reach], path[i], path[i + reach]);
+        let (u, v) = ((b.x - a.x, b.y - a.y), (c.x - b.x, c.y - b.y));
+        let lengths = u.0.hypot(u.1) * v.0.hypot(v.1);
+        if lengths == 0.0 { 1.0 } else { (u.0 * v.0 + u.1 * v.1) / lengths }
+    };
+    let mut found = Vec::new();
+    let mut i = reach;
+    while i + reach < path.len() {
+        if bend(i) < limit {
+            // The sharpest point of this stretch, which has the lowest cosine.
+            let mut sharpest = i;
+            while i + reach < path.len() && bend(i) < limit {
+                if bend(i) < bend(sharpest) {
+                    sharpest = i;
+                }
+                i += 1;
+            }
+            found.push(path[sharpest]);
+        }
+        i += 1;
+    }
+    found
+}
+
 /// The words `path` spells best first, at most `limit`, after the word
 /// `previous`.
 pub fn decode(
@@ -255,6 +292,7 @@ pub fn decode_tuned(
     let index = lexicon.swipe_index()?;
     let drawn = resample(path, SAMPLES);
     let dense = resample(path, PASS_SAMPLES);
+    let turned = if tuning.turn_weight > 0.0 { turns(&dense, tuning.turn_angle) } else { Vec::new() };
     let width = keys.width;
     let (first, last) = (path[0], path[path.len() - 1]);
     let starts = keys.near(first, tuning.end_radius);
@@ -281,7 +319,14 @@ pub fn decode_tuned(
                 (closest - tuning.pass_free).max(0.0).powi(2)
             })
             .sum();
-        Some(score - tuning.pass_weight * missed)
+        let unexplained: f32 = turned
+            .iter()
+            .map(|&turn| {
+                let closest = centres.iter().map(|c| distance(*c, turn)).fold(f32::MAX, f32::min) / width;
+                (closest - tuning.pass_free).max(0.0).powi(2)
+            })
+            .sum();
+        Some(score - tuning.pass_weight * missed - tuning.turn_weight * unexplained)
     };
 
     // How much more often a word follows `previous` than it occurs at all.

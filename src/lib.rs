@@ -21,12 +21,20 @@ pub mod swipe;
 pub struct KeySpec {
     pub label: String,
     pub span: usize,
+    /// A second key sharing the cell: the cell is split down the middle,
+    /// `label` on the left half and this on the right.
+    pub right_half: Option<String>,
 }
 
 impl KeySpec {
     pub fn new(label: &str, span: usize) -> Self {
         assert!(span >= 1, "a key spans at least one cell");
-        Self { label: label.to_owned(), span }
+        Self { label: label.to_owned(), span, right_half: None }
+    }
+
+    /// Two keys splitting one cell, left and right.
+    pub fn halves(left: &str, right: &str) -> Self {
+        Self { label: left.to_owned(), span: 1, right_half: Some(right.to_owned()) }
     }
 }
 
@@ -95,6 +103,14 @@ pub struct Key {
     /// area then runs on to the edge, which keeps the keyboard's sides
     /// straight instead of leaving the honeycomb's half-cell notches.
     pub regions: Vec<Point>,
+    /// Which half of its cell the key has, when it shares the cell.
+    pub half: Option<Half>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Half {
+    Left,
+    Right,
 }
 
 impl Key {
@@ -121,6 +137,12 @@ pub struct Layout {
 /// The row index of number row keys, which stand outside the honeycomb.
 const NUMBER_ROW: usize = usize::MAX;
 
+/// Height of the number row in cell heights.
+const NUMBER_BAND: f32 = 0.9;
+
+/// The share of the number row's height over which its two rows interlock.
+const NUMBER_INTERLOCK: f32 = 0.4;
+
 impl Layout {
     /// Fits `spec` to `width` pixels. `stretch` scales cell height relative to
     /// a regular hexagon (1.0 = regular).
@@ -128,7 +150,7 @@ impl Layout {
         let cell_width = width / spec.width_in_cells();
         let cell_height = cell_width * 2.0 / 3f32.sqrt() * stretch;
         let row_pitch = cell_height * 0.75;
-        let numbers_bottom = if spec.numbers.is_some() { cell_height * 0.6 } else { 0.0 };
+        let numbers_bottom = if spec.numbers.is_some() { cell_height * NUMBER_BAND } else { 0.0 };
 
         let mut keys = Vec::new();
         for (row, row_spec) in spec.rows.iter().enumerate() {
@@ -139,7 +161,30 @@ impl Layout {
                     .map(|i| Point { x: (column + i as f32 + 0.5) * cell_width, y })
                     .collect();
                 let label_at = Point { x: (column + key_spec.span as f32 / 2.0) * cell_width, y };
-                keys.push(Key { label: key_spec.label.clone(), row, label_at, regions: cells.clone(), cells });
+                match &key_spec.right_half {
+                    None => keys.push(Key {
+                        label: key_spec.label.clone(),
+                        row,
+                        label_at,
+                        regions: cells.clone(),
+                        cells,
+                        half: None,
+                    }),
+                    Some(right) => {
+                        for (label, half, dx) in
+                            [(&key_spec.label, Half::Left, -0.25), (right, Half::Right, 0.25)]
+                        {
+                            keys.push(Key {
+                                label: label.clone(),
+                                row,
+                                label_at: Point { x: label_at.x + dx * cell_width, y },
+                                regions: cells.clone(),
+                                cells: cells.clone(),
+                                half: Some(half),
+                            });
+                        }
+                    }
+                }
                 column += key_spec.span as f32;
             }
         }
@@ -165,6 +210,7 @@ impl Layout {
                         label_at: Point { x: (left_x - cell_width / 2.0) / 2.0, y },
                         cells: vec![centre],
                         regions: vec![centre],
+                        half: None,
                     }),
                     None => {
                         // The label moves to the middle of what the key now covers.
@@ -183,6 +229,7 @@ impl Layout {
                         label_at: Point { x: (right_x + cell_width / 2.0 + width) / 2.0, y },
                         cells: vec![centre],
                         regions: vec![centre],
+                        half: None,
                     }),
                     None => {
                         let key = &mut keys[right];
@@ -194,15 +241,20 @@ impl Layout {
         }
 
         if let Some(digits) = &spec.numbers {
+            // Digits alternate between an upper and a lower row, each key
+            // two steps wide: the upper ones point down between the lower
+            // ones, which point up between them, over the middle of the band.
             let step = width / digits.chars().count() as f32;
             for (i, digit) in digits.chars().enumerate() {
-                let centre = Point { x: (i as f32 + 0.5) * step, y: numbers_bottom / 2.0 };
+                let y = numbers_bottom * if i % 2 == 0 { 0.25 } else { 0.75 };
+                let centre = Point { x: (i as f32 + 0.5) * step, y };
                 keys.push(Key {
                     label: digit.to_string(),
                     row: NUMBER_ROW,
                     label_at: centre,
                     cells: vec![centre],
                     regions: vec![centre],
+                    half: None,
                 });
             }
         }
@@ -227,6 +279,16 @@ impl Layout {
         if self.numbers_bottom > 0.0 {
             self.numbers_bottom += by;
         }
+    }
+
+    /// How much heights count less than widths when the number row is split
+    /// between its digits. With rows at a quarter and three quarters of the
+    /// band, the keys of one row then reach between those of the other over
+    /// `NUMBER_INTERLOCK` of the band's height.
+    fn number_squash(&self) -> f32 {
+        let digits = self.keys.iter().filter(|key| key.row == NUMBER_ROW).count().max(1);
+        let step = self.width / digits as f32;
+        (NUMBER_INTERLOCK / 2.0).sqrt() * self.numbers_bottom / step
     }
 
     /// The key under a touch: the one owning the nearest cell centre.
@@ -274,12 +336,27 @@ impl Layout {
         };
         // Number keys own the band above the honeycomb, split by x alone.
         let in_band = touch.y < self.numbers_bottom;
-        self.keys
+        let squash = self.number_squash();
+        let distance = |cell: &Point| {
+            if in_band {
+                let (dx, dy) = (touch.x - cell.x, (touch.y - cell.y) / squash);
+                dx * dx + dy * dy
+            } else {
+                distance(cell)
+            }
+        };
+        let (key, cell) = self
+            .keys
             .iter()
             .filter(|key| (key.row == NUMBER_ROW) == in_band)
-            .flat_map(|key| key.regions.iter().map(move |cell| (key, distance(cell))))
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(key, _)| key)
+            .flat_map(|key| key.regions.iter().map(move |cell| (key, *cell)))
+            .min_by(|a, b| distance(&a.1).total_cmp(&distance(&b.1)))?;
+        if key.half.is_none() {
+            return Some(key);
+        }
+        // A split cell: the half the touch is on.
+        let side = if touch.x < cell.x { Half::Left } else { Half::Right };
+        self.keys.iter().find(|other| other.half == Some(side) && other.regions.iter().any(|c| same(*c, cell)))
     }
 
     /// Outline of a key: every point of the keyboard whose nearest cell
@@ -292,14 +369,25 @@ impl Layout {
     /// is drawn is exactly what `key_at` answers to.
     pub fn outline(&self, key: &Key) -> Vec<Point> {
         if key.row == NUMBER_ROW {
-            let step = self.width / self.keys.iter().filter(|key| key.row == NUMBER_ROW).count() as f32;
-            let (x, bottom) = (key.cells[0].x, self.numbers_bottom);
-            return vec![
-                Point { x: x - step / 2.0, y: 0.0 },
-                Point { x: x + step / 2.0, y: 0.0 },
-                Point { x: x + step / 2.0, y: bottom },
-                Point { x: x - step / 2.0, y: bottom },
+            // The band split between the digits by nearness, measured where
+            // their honeycomb is not squashed.
+            let squash = self.number_squash();
+            let unsquash = |p: Point| Point { x: p.x, y: p.y / squash };
+            let own = unsquash(key.cells[0]);
+            let bottom = self.numbers_bottom / squash;
+            let mut polygon = vec![
+                Point { x: 0.0, y: 0.0 },
+                Point { x: self.width, y: 0.0 },
+                Point { x: self.width, y: bottom },
+                Point { x: 0.0, y: bottom },
             ];
+            for other in self.keys.iter().filter(|other| other.row == NUMBER_ROW) {
+                let other = unsquash(other.cells[0]);
+                if !same(other, own) {
+                    polygon = clip_nearer(&polygon, own, other);
+                }
+            }
+            return drop_collinear(polygon).into_iter().map(|p| Point { x: p.x, y: p.y * squash }).collect();
         }
         let stretch = self.cell_height / (self.cell_width * 2.0 / 3f32.sqrt());
         // Work in coordinates where the hexagons are regular, so that
@@ -327,7 +415,16 @@ impl Layout {
             }
             // Clipping can leave corners in the middle of a straight edge; the
             // shared edge must be one edge on both sides for the merge to find it.
-            let polygon = drop_collinear(polygon);
+            let mut polygon = drop_collinear(polygon);
+            // A shared cell is cut down the middle.
+            if let Some(half) = key.half {
+                let (left, right) = (Point { x: cell.x - 1.0, y: cell.y }, Point { x: cell.x + 1.0, y: cell.y });
+                polygon = match half {
+                    Half::Left => clip_nearer(&polygon, left, right),
+                    Half::Right => clip_nearer(&polygon, right, left),
+                };
+                polygon = drop_collinear(polygon);
+            }
             outline = Some(match outline {
                 None => polygon,
                 Some(left) => merge_along_shared_edge(&left, &polygon),
@@ -444,23 +541,28 @@ pub fn honeycomb() -> LayoutSpec {
 
 /// the reference layout's arrangement with nothing but letters among the letters and
 /// space at the bottom. Its rows of six and seven hold exactly the 26
-/// letters in four rows, so x c v b move up from below into the cells
-/// the reference layout gives its two spaces, keeping their order left to right. Shift
-/// and backspace fill the half cells at the ends of that row, and a number
-/// row runs along the top. For trying how the original's arrangement feels
-/// next to [`honeycomb`]; it is a registered design and stays out of any
-/// release.
+/// letters in four rows: x c v b move up from below the reference layout's last letter
+/// row into it, and the four letters they push out move up into the cells
+/// the reference layout gives its two spaces. Of the placements that move letters the
+/// least from where the reference layout has them, this one keeps the QWERTZ order:
+/// s d f n h j where QWERTZ has s d f g h j, and y x c v b m in QWERTZ's
+/// bottom row order. Shift and backspace fill the half cells at the ends of
+/// the row above, comma and full stop share the cell right of a three cell
+/// space, and a number row runs along the top. For trying how the
+/// original's arrangement feels next to [`honeycomb`]; it is a registered
+/// design and stays out of any release.
 pub fn space_middle() -> LayoutSpec {
-    let mut middle = row(0, letters("xcfhvb"));
+    let mut middle = row(0, letters("sdfnhj"));
     middle.left_edge = Some("⇧".into());
     middle.right_edge = Some("⌫".into());
+    let bottom = vec![KeySpec::new("?123", 1), KeySpec::new("space", 3), KeySpec::halves(",", "."), KeySpec::new("⏎", 1)];
     LayoutSpec {
         rows: vec![
             row(0, letters("wetzio")),
             row(0, letters("qargulp")),
             middle,
-            row(0, letters("ysdnmjk")),
-            row(0, keys(&[("?123", 1), (",", 1), ("space", 2), (".", 1), ("⏎", 1)])),
+            row(0, letters("yxcvbmk")),
+            row(0, bottom),
         ],
         first_row_shifted: true,
         numbers: Some("1234567890".into()),
@@ -1227,5 +1329,22 @@ mod tests {
         let keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
         let letters = keyboard.layout.keys.iter().enumerate().filter(|(i, _)| keyboard.key_row(*i).is_some());
         assert_eq!(letters.count(), 26);
+    }
+
+    #[test]
+    fn halves_split_their_cell_and_numbers_zigzag() {
+        let layout = Layout::fit(&space_middle(), 1008.0, 1.0);
+        let comma = layout.find(",");
+        let cell = comma.cells[0];
+        let w = layout.cell_width;
+        assert_eq!(layout.key_at(Point { x: cell.x - w / 4.0, y: cell.y }).unwrap().label, ",");
+        assert_eq!(layout.key_at(Point { x: cell.x + w / 4.0, y: cell.y }).unwrap().label, ".");
+        assert!((polygon_area(&layout.outline(comma)) - polygon_area(&layout.outline(layout.find(".")))).abs() < 1.0);
+        let (one, two) = (layout.find("1").cells[0], layout.find("2").cells[0]);
+        assert!(two.y > one.y && two.x > one.x);
+        for digit in ["1", "2", "5", "0"] {
+            let key = layout.find(digit);
+            assert_eq!(layout.key_at(key.cells[0]).unwrap().label, digit);
+        }
     }
 }

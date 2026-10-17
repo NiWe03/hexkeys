@@ -259,41 +259,78 @@ class KeyboardView(
         close()
     }
 
+    /** The finger the core is following, or -1. */
+    private var finger = -1
+    private var fingerX = 0f
+    private var fingerY = 0f
+
     /**
      * Touches go to the core, which tells taps, flicks and holds apart; the
      * view only redraws, passes on what they mean, and wakes the core when
      * a hold it is timing is due.
+     *
+     * The core follows one finger. A second finger coming down ends the
+     * first finger's touch where it is, as typing with two thumbs rolls from
+     * one key to the next before the first thumb has lifted; the core then
+     * follows the new finger and ignores the old one.
      */
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (handle == 0L) return false
-        val x = event.x
-        val y = event.y - keysTop
+        val index = event.actionIndex
         val time = event.eventTime
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            stripTouch = if (y < 0) (x / (width / 3f)).toInt().coerceIn(0, 2) else -1
-        }
-        if (stripTouch >= 0) {
-            if (event.actionMasked == MotionEvent.ACTION_UP) {
-                val slot = (x / (width / 3f)).toInt().coerceIn(0, 2)
-                val word = slots[stripTouch]
-                if (slot == stripTouch && y < 0 && word.isNotEmpty()) onPick(word, replaces)
-                stripTouch = -1
-            }
-            return true
-        }
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> Core.touchDown(handle, x, y, time)
-            MotionEvent.ACTION_MOVE -> Core.touchMove(handle, x, y, time)
-            MotionEvent.ACTION_UP -> {
-                act(Core.touchUp(handle, x, y, time))
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                if (finger >= 0) {
+                    lift(fingerX, fingerY, time)
+                }
+                val x = event.getX(index)
+                val y = event.getY(index) - keysTop
+                stripTouch = if (y < 0) (x / (width / 3f)).toInt().coerceIn(0, 2) else -1
+                if (stripTouch >= 0) {
+                    finger = -1
+                    return true
+                }
+                finger = event.getPointerId(index)
+                fingerX = x
+                fingerY = y
+                Core.touchDown(handle, x, y, time)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val at = event.findPointerIndex(finger)
+                if (at < 0) return true
+                fingerX = event.getX(at)
+                fingerY = event.getY(at) - keysTop
+                Core.touchMove(handle, fingerX, fingerY, time)
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                val x = event.getX(index)
+                val y = event.getY(index) - keysTop
+                if (stripTouch >= 0 && event.actionMasked == MotionEvent.ACTION_UP) {
+                    val slot = (x / (width / 3f)).toInt().coerceIn(0, 2)
+                    val word = slots[stripTouch]
+                    if (slot == stripTouch && y < 0 && word.isNotEmpty()) onPick(word, replaces)
+                    stripTouch = -1
+                    return true
+                }
+                if (event.getPointerId(index) == finger) lift(x, y, time)
                 return true
             }
-            MotionEvent.ACTION_CANCEL -> Core.touchCancel(handle)
+            MotionEvent.ACTION_CANCEL -> {
+                Core.touchCancel(handle)
+                finger = -1
+                stripTouch = -1
+            }
         }
         schedule()
         invalidate()
         return true
+    }
+
+    /** Ends the followed finger's touch at a point and acts on it. */
+    private fun lift(x: Float, y: Float, time: Long) {
+        finger = -1
+        act(Core.touchUp(handle, x, y, time))
     }
 
     private fun act(action: Array<String>) {
