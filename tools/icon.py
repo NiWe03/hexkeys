@@ -30,14 +30,15 @@ RES = pathlib.Path(__file__).resolve().parent.parent / "android/app/src/main/res
 # shows, how far that letter turns clockwise, in degrees (the seams between
 # the top key and the two below run 30 degrees from level), and how far it
 # sits below its key's middle, in key widths, nearer the other two.
-KEYS = [("r", "e", 0, 0.1), ("d", "h", -30, 0), ("f", "x", 30, 0)]
+KEYS = [("r", "e", 0, 0), ("d", "h", -30, 0), ("f", "x", 30, 0)]
 BACKGROUND = "#FF1B1B1F"
 FLOW = ["#FF5F72D9", "#FF3FA393", "#FFA465B8"]
 
 # Adaptive icons are 108 units across, of which a launcher's mask shows the
-# middle 72 at most and a circle of 66 for sure; the keys take 60 % of the 72.
+# middle 72 at most and a circle of 66 for sure; the keys fill most of that
+# circle, so as little backdrop as the mask allows shows around them.
 VIEW = 108
-SIZE = 72 * 0.6
+SIZE = 56
 
 # In key widths: the outline's corner radius and stroke, the seams' stroke,
 # and the letters' size.
