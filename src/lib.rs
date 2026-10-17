@@ -617,7 +617,7 @@ const SYMBOLS_KEY: &str = "@#€";
 const SYMBOLS: &str = "@#€&-+()/*\"':;!_%=$<>[]{}\\|~^°";
 
 /// Rarer symbols for the second page.
-const MORE_SYMBOLS: &str = "§¢£¥₹©®™✓•¶∆π√÷×±≈≠≤≥‰¿¡«»„“”–—…`";
+const MORE_SYMBOLS: &str = "§¢£¥₹©®™✓•π√÷×±≈≠≤≥‰«»„“”–—`";
 
 /// The key that turns to the second symbol page, and on it back to the first.
 const MORE: &str = "=\\<";
@@ -642,6 +642,13 @@ pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
         .collect();
     let pool = if page == 0 { SYMBOLS } else { MORE_SYMBOLS };
     let placed: &[(&str, &str)] = if page == 0 { PLACED } else { &[] };
+    // What the first page has no room for leads the second.
+    let pool: String = if page == 0 {
+        pool.to_owned()
+    } else {
+        let first: Vec<String> = symbol_layer(letters, 0).rows.iter().flat_map(|row| row.keys.iter().map(|key| key.label.clone())).collect();
+        SYMBOLS.chars().filter(|c| !first.contains(&c.to_string())).chain(pool.chars()).collect()
+    };
     let mut symbols = pool
         .chars()
         .map(String::from)
@@ -1577,11 +1584,12 @@ pub fn qwertz_row(label: &str) -> Option<usize> {
 /// Long-press alternatives of punctuation, left to right. Letters offer
 /// the accented letters of the languages in use instead, see
 /// [`Keyboard::accents`].
-/// What flicking up on a key that is no letter types: its first alternate,
-/// except on the digits, whose fractions are only offered when held and so
-/// are not shown on them.
+/// What flicking up on a key that is no letter types: the first alternate
+/// of the letter page's punctuation keys. Other keys' alternates, the
+/// digits' fractions and the symbols' typographic kinds, are only offered
+/// when held, and so are not shown on them.
 fn flicked(label: &str) -> Option<&'static str> {
-    if label.chars().all(|c| c.is_ascii_digit()) { None } else { alternates(label).first().copied() }
+    if matches!(label, "." | "?" | ",") { alternates(label).first().copied() } else { None }
 }
 
 fn alternates(label: &str) -> &'static [&'static str] {
@@ -1595,6 +1603,10 @@ fn alternates(label: &str) -> &'static [&'static str] {
         "1" => &["½", "⅓", "¼", "⅕", "⅙", "⅛"],
         "2" => &["⅔", "⅖"],
         "3" => &["¾", "⅗", "⅜"],
+        // On the symbol pages: the typographic kinds of a mark.
+        "-" => &["–", "—"],
+        "\"" => &["„", "“", "”", "«", "»"],
+        "'" => &["`", "‘", "’", "‚"],
         _ => &[],
     }
 }
@@ -1850,6 +1862,23 @@ mod tests {
         let letters = keyboard_index(&keyboard, "ABC");
         keyboard.press(letters);
         assert_eq!(keyboard.layout.find("q").label, "q");
+    }
+
+    #[test]
+    fn every_symbol_is_on_a_page() {
+        for letters in [space_middle(), space_bottom(), with_shift_and_backspace(space_middle()), with_shift_and_backspace(space_bottom())] {
+            let labels: Vec<String> = [symbol_layer(&letters, 0), symbol_layer(&letters, 1), letters.clone()]
+                .iter()
+                .flat_map(|spec| spec.rows.iter().flat_map(|row| row.keys.iter().map(|key| key.label.clone())).collect::<Vec<_>>())
+                .collect();
+            let held: Vec<String> = labels.iter().flat_map(|label| alternates(label).iter().map(|a| a.to_string())).collect();
+            let missing: String = SYMBOLS
+                .chars()
+                .chain(MORE_SYMBOLS.chars())
+                .filter(|c| !labels.contains(&c.to_string()) && !held.contains(&c.to_string()))
+                .collect();
+            assert!(missing.is_empty(), "missing {missing}");
+        }
     }
 
     #[test]
