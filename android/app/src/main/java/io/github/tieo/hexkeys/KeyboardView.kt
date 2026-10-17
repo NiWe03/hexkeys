@@ -536,17 +536,17 @@ class KeyboardView(
                 drawIcon(canvas, enterSmall, position[0], position[1] - cellWidth * 0.24f, cellWidth * 0.22f, hintPaint.color)
             } else if (label == SYMBOLS_KEY) {
                 // The emoji a flick up opens, small above the symbols, as flick hints sit.
-                drawLabel(canvas, label, floatArrayOf(position[0], position[1] + cellWidth * 0.14f), cellWidth)
-                drawIcon(canvas, R.drawable.icon_mood, position[0], position[1] - cellWidth * 0.26f, cellWidth * 0.22f, hintPaint.color)
+                drawLabel(canvas, label, floatArrayOf(position[0], position[1] + cellWidth * HINT_BELOW), cellWidth)
+                drawIcon(canvas, R.drawable.icon_mood, position[0], position[1] - cellWidth * HINT_ABOVE, cellWidth * 0.22f, hintPaint.color)
             } else if (hint.isEmpty()) {
                 drawLabel(canvas, Core.label(handle, index), position, cellWidth)
             } else {
                 // The alternative sits on the side the flick goes to, the key's own sign moved off it.
                 val side = -1f
-                val shifted = floatArrayOf(position[0], position[1] - side * cellWidth * 0.14f)
+                val shifted = floatArrayOf(position[0], position[1] - side * cellWidth * HINT_BELOW)
                 drawLabel(canvas, Core.label(handle, index), shifted, cellWidth)
                 hintPaint.textSize = cellWidth * 0.28f
-                drawCentred(canvas, hint, position[0], position[1] + side * cellWidth * 0.26f, hintPaint)
+                drawCentred(canvas, hint, position[0], position[1] + side * cellWidth * HINT_ABOVE, hintPaint)
             }
         }
         val choices = if (gestureBar) 0 else Core.popupCount(handle)
@@ -1096,6 +1096,14 @@ class KeyboardView(
     companion object {
         /** The key to the symbols, which a flick up on opens the emoji. */
         private const val SYMBOLS_KEY = "@#€"
+
+        /**
+         * How far a label with a small sign above it moves down, and how far
+         * up the sign sits, in key widths: close enough together that the
+         * pair fits under the points reaching into the bottom row.
+         */
+        private const val HINT_BELOW = 0.10f
+        private const val HINT_ABOVE = 0.20f
 
         /** How tall the number row is as the bar under a panel, of its full height. */
         private const val GESTURE_BAR = 0.4f
