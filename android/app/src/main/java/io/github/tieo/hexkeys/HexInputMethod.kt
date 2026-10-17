@@ -77,7 +77,7 @@ class HexInputMethod : InputMethodService() {
                 emojiSearch = null
             }
             Theme.KEY -> keyboard?.theme = Theme.current(this)
-            KeyboardView.LAYOUT, KeyboardView.DELETE_FROM_LEFT, KeyboardView.CAPITAL, KeyboardView.EDIT_KEYS ->
+            KeyboardView.LAYOUT, KeyboardView.DELETE_FROM_LEFT, KeyboardView.EDIT_KEYS ->
                 keyboard?.requestLayout()
             Dictionaries.LEARNED_RESET -> {
                 Core.words.execute { Core.lexiconForget(lexicon) }
@@ -494,15 +494,6 @@ class HexInputMethod : InputMethodService() {
                     }
                     else -> deleteCharacter()
                 }
-            }
-            "replace" -> {
-                // A held letter's capital, typed already, swapped for an accent.
-                val (old, new) = text.split("\t")
-                val before = connection.textBefore()
-                connection.beginBatch()
-                if (before.endsWith(old)) connection.deleteBefore(old.length)
-                connection.commit(new)
-                connection.endBatch()
             }
             // In a field of several lines enter starts a new one, written as text so an
             // app that sends on the enter key does not; holding it does the field's action.

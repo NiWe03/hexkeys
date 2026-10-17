@@ -71,7 +71,7 @@ object Core {
     external fun touchMove(handle: Long, x: Float, y: Float, time: Long): Array<String>
 
     /** Delete swipes from the left edge instead of the right; the capital gesture as 0 flick up, 1 hold. */
-    external fun configure(handle: Long, deleteFromLeft: Boolean, capital: Int)
+    external fun configure(handle: Long, deleteFromLeft: Boolean)
 
     /** What lifting means, as kind (commit, replace, backspace, enter, redraw, nothing) and text; replace has the old and new text split by a tab. */
     external fun touchUp(handle: Long, x: Float, y: Float, time: Long): Array<String>

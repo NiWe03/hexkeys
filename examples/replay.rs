@@ -7,7 +7,7 @@
 
 use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::{Lexicon, last_word};
-use hexkeys::{Action, Capital, Keyboard, Point, swipe, space_middle, space_bottom, with_shift_and_backspace};
+use hexkeys::{Action, Keyboard, Point, swipe, space_middle, space_bottom, with_shift_and_backspace};
 use serde_json::Value;
 
 fn main() {
@@ -31,10 +31,6 @@ fn main() {
         }
         let mut keyboard = Keyboard::new(letters, record["width"].as_f64().unwrap() as f32, 1.0, 400);
         keyboard.gestures.delete_from_left = record["deleteFromLeft"].as_bool().unwrap_or(false);
-        keyboard.gestures.capital = match record["capital"].as_str() {
-            Some("hold") => Capital::Hold,
-            _ => Capital::FlickUp,
-        };
         let point = |p: &Value| (Point { x: p[0].as_f64().unwrap() as f32, y: p[1].as_f64().unwrap() as f32 }, p[2].as_u64().unwrap());
         let mut actions = Vec::new();
         let mut keep = |action: Action| {

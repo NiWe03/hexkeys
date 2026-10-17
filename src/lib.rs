@@ -766,8 +766,6 @@ pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
 pub enum Action {
     /// Insert this text at the cursor.
     Commit(String),
-    /// Replace `old`, just typed before the cursor, with `new`.
-    Replace { old: String, new: String },
     Backspace,
     Enter,
     /// Enter held: the field's own action, such as send or search.
@@ -822,9 +820,6 @@ pub struct Popup {
     pub origin: Point,
     /// The finger has moved away from `origin`.
     pub moved: bool,
-    /// A capital typed already by holding its letter, which a chosen
-    /// accent replaces; lifting without choosing one keeps it.
-    pub replaces: Option<String>,
 }
 
 /// How big a popup's hexagons are next to a key's, as on other keyboards
@@ -903,33 +898,16 @@ const WORD_REPEAT_MS: u64 = 300;
 /// The shortest pause between whole words, which the pause shrinks to.
 const WORD_REPEAT_FASTEST: u64 = 60;
 
-/// The gesture that types a capital letter.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Capital {
-    /// A short flick up from the letter.
-    FlickUp,
-    /// Holding the letter: the capital is typed the moment the touch counts
-    /// as a hold, and the letter's accents open with it chosen, so sliding
-    /// to one of them swaps it in.
-    Hold,
-}
-
-/// How long a letter is held before it types its capital, in ms. Taps in
-/// the phone's gesture log last 63 ms at the median and 100 ms at the
-/// 99.5th percentile, the longest 130 ms.
-const CAPITAL_HOLD_MS: u64 = 200;
-
 /// How gestures are set up, from the settings.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Gestures {
     /// Delete swipes come in from the left edge instead of the right.
     pub delete_from_left: bool,
-    pub capital: Capital,
 }
 
 impl Default for Gestures {
     fn default() -> Self {
-        Self { delete_from_left: false, capital: Capital::FlickUp }
+        Self { delete_from_left: false }
     }
 }
 
@@ -993,9 +971,9 @@ struct Touch {
     /// Went down where delete slides start, so sliding inwards deletes.
     at_edge: bool,
     deleting: Option<Deleting>,
-    /// Held long enough to have acted already: typed its letter's capital,
-    /// or enter's action; lifting then adds nothing.
-    capital_typed: bool,
+    /// Held long enough to have acted already, as enter's action; lifting
+    /// then adds nothing.
+    acted: bool,
     /// Space held: the keyboard is a touchpad for the cursor.
     cursor: Option<Cursor>,
 }
@@ -1153,14 +1131,6 @@ impl Keyboard {
         }
     }
 
-    /// Whether a gesture on a letter is the one set up to type its capital.
-    fn is_capital(&self, gesture: Gesture) -> bool {
-        matches!(
-            (self.gestures.capital, gesture),
-            (Capital::FlickUp, Gesture::Up)
-        )
-    }
-
     /// Whether a touch starts where delete slides do: the number row's third
     /// on the delete side. Swipe typing never starts there, so a slide
     /// cannot be mistaken for a swiped word; anywhere on the letters a
@@ -1255,7 +1225,7 @@ impl Keyboard {
             path: vec![at],
             at_edge,
             deleting: None,
-            capital_typed: false,
+            acted: false,
             cursor: None,
         });
     }
@@ -1292,7 +1262,7 @@ impl Keyboard {
             && (at.x - touch.start.x).abs() >= FLICK * w
             && (at.x - touch.start.x).abs() >= (at.y - touch.start.y).abs()
         {
-            touch.capital_typed = true;
+            touch.acted = true;
             touch.cursor = Some(Cursor { origin: touch.start, dx: 0, dy: 0, edge_steps: 0 });
             self.touch = Some(touch);
             return self.touch_move(at, time);
@@ -1352,7 +1322,7 @@ impl Keyboard {
         }
         let moved = self.touch_move(at, time);
         let Some(touch) = self.touch.take() else { return moved };
-        if touch.capital_typed {
+        if touch.acted {
             return Action::Redraw;
         }
         let gesture = self.gesture(&touch);
@@ -1379,12 +1349,12 @@ impl Keyboard {
             // A flick up on enter, towards the action drawn above its arrow, does the field's action.
             Gesture::Up if label == "⏎" => Action::EnterAction,
             Gesture::Up if label == SYMBOLS_KEY => Action::Emoji,
-            _ if is_letter(&label) && self.is_capital(gesture) => {
+            Gesture::Up if is_letter(&label) => {
                 self.letter_typed();
                 Action::Commit(upper(&label))
             }
-            // On punctuation the capital gesture types the key's first alternative.
-            _ if self.is_capital(gesture) && flicked(&label).is_some() => Action::Commit(flicked(&label).unwrap_or_default().to_owned()),
+            // On punctuation a flick up types the key's first alternative.
+            Gesture::Up if flicked(&label).is_some() => Action::Commit(flicked(&label).unwrap_or_default().to_owned()),
             Gesture::Path if self.is_swipe(&touch) => {
                 self.swiped = Some(Swiped { path: touch.path, capital: self.shift != Shift::Off });
                 self.letter_typed();
@@ -1415,9 +1385,8 @@ impl Keyboard {
             Gesture::Tap if self.layout.keys[touch.key].label == "⌫" => {
                 Some(touch.repeat_at.unwrap_or(touch.anchor_time + self.long_press_ms))
             }
-            _ if touch.capital_typed => None,
+            _ if touch.acted => None,
             Gesture::Tap if self.layout.keys[touch.key].label == "⇧" => Some(touch.anchor_time + self.long_press_ms),
-            Gesture::Tap if self.holds_for_capital(touch.key) => Some(touch.anchor_time + CAPITAL_HOLD_MS),
             Gesture::Tap if matches!(self.layout.keys[touch.key].label.as_str(), "⏎" | "space") || self.in_cursor_zone(touch.start) => {
                 Some(touch.anchor_time + self.long_press_ms)
             }
@@ -1463,37 +1432,27 @@ impl Keyboard {
                 touch.repeat_at = Some(time + pause as u64);
                 Action::Delete { pieces: deleting.pieces(), words: true, started: false }
             }
-            Gesture::Tap if self.holds_for_capital(touch.key) => {
-                self.touch.as_mut().expect("touch").capital_typed = true;
-                let capital = upper(&self.layout.keys[touch.key].label);
-                // A letter with accents offers them to slide to, in place of the capital.
-                if self.long_press(touch.key) {
-                    self.popup.as_mut().expect("popup").replaces = Some(capital.clone());
-                }
-                self.letter_typed();
-                Action::Commit(capital)
-            }
             Gesture::Tap if self.layout.keys[touch.key].label == "⏎" => {
-                self.touch.as_mut().expect("touch").capital_typed = true;
+                self.touch.as_mut().expect("touch").acted = true;
                 Action::EnterAction
             }
             // Backspace held deletes again and again until the finger lifts.
             Gesture::Tap if self.layout.keys[touch.key].label == "⌫" => {
                 let touch = self.touch.as_mut().expect("touch");
-                touch.capital_typed = true;
+                touch.acted = true;
                 touch.repeat_at = Some(time + BACKSPACE_REPEAT_MS);
                 Action::Backspace
             }
             // Shift held locks capitals.
             Gesture::Tap if self.layout.keys[touch.key].label == "⇧" => {
-                self.touch.as_mut().expect("touch").capital_typed = true;
+                self.touch.as_mut().expect("touch").acted = true;
                 self.shift = Shift::Locked;
                 Action::Redraw
             }
             // Holding space, or the number row's middle, makes the keys a touchpad for the cursor.
             Gesture::Tap if self.layout.keys[touch.key].label == "space" || self.in_cursor_zone(touch.start) => {
                 let touch = self.touch.as_mut().expect("touch");
-                touch.capital_typed = true;
+                touch.acted = true;
                 touch.cursor = Some(Cursor { origin: touch.at, dx: 0, dy: 0, edge_steps: 0 });
                 Action::Redraw
             }
@@ -1545,8 +1504,7 @@ impl Keyboard {
 
     /// Opens the key's popup if it has alternatives; returns whether it did.
     /// The choices sit in a row of small hexagons centred just above the
-    /// key, the most used first and chosen; a letter held for its capital has
-    /// none of its accents chosen until the finger moves to one.
+    /// key, the most used first and chosen.
     pub fn long_press(&mut self, index: usize) -> bool {
         let choices = self.choices(index);
         if choices.is_empty() {
@@ -1555,7 +1513,6 @@ impl Keyboard {
         let layout = &self.layout;
         let center = layout.keys[index].center();
         let (w, h) = (layout.cell_width * POPUP_SCALE, layout.cell_height * POPUP_SCALE);
-        let holding = self.holds_for_capital(index);
         // A small honeycomb above the key, the most used straight above it and
         // the rest in the free cells nearest the key, towards the middle of the
         // keyboard first: at an edge the row next to the key runs longer
@@ -1578,9 +1535,8 @@ impl Keyboard {
         let cells: Vec<Point> =
             places.iter().map(|&(o, row)| Point { x: above + o * w, y: y - row as f32 * h * 0.75 }).collect();
         // The most used choice comes first and starts chosen, wherever it sits.
-        let selected = if holding { None } else { Some(0) };
         let origin = self.touch.as_ref().map_or(center, |touch| touch.at);
-        self.popup = Some(Popup { choices, cells, cell_width: w, selected, origin, moved: false, replaces: None });
+        self.popup = Some(Popup { choices, cells, cell_width: w, selected: Some(0), origin, moved: false });
         true
     }
 
@@ -1604,7 +1560,7 @@ impl Keyboard {
             // What a flick up types already is not offered again.
             None => alternates(label)
                 .iter()
-                .skip(if self.gestures.capital == Capital::FlickUp && flicked(label).is_some() { 1 } else { 0 })
+                .skip(if flicked(label).is_some() { 1 } else { 0 })
                 .map(|c| (*c).to_owned())
                 .collect(),
         };
@@ -1614,35 +1570,24 @@ impl Keyboard {
         choices
     }
 
-    /// Whether holding this key offers its capital: a letter, with holding
-    /// set up as the capital gesture.
-    fn holds_for_capital(&self, index: usize) -> bool {
-        self.gestures.capital == Capital::Hold && is_letter(&self.layout.keys[index].label)
-    }
-
     /// Follows the finger along an open popup.
     pub fn popup_move(&mut self, touch: Point) {
         let still = STILL * self.layout.cell_width;
-        let key_top = self.layout.cell_height * POPUP_SCALE;
         if let Some(popup) = &mut self.popup {
             popup.moved |= distance(touch, popup.origin) > still;
             if popup.moved {
-                // Back down on the key, a held capital is kept after all.
-                let back = popup.replaces.is_some() && touch.y > popup.cells[0].y + key_top;
-                popup.selected = if back { None } else { Some(nearest(&popup.cells, touch)) };
+                popup.selected = Some(nearest(&popup.cells, touch));
             }
         }
     }
 
-    /// Lifting the finger commits the chosen alternative, in place of a
-    /// capital typed by holding when there is one.
+    /// Lifting the finger commits the chosen alternative.
     pub fn popup_release(&mut self) -> Action {
         let Some(popup) = self.popup.take() else { return Action::Redraw };
         self.letter_typed();
-        match (popup.selected, popup.replaces) {
-            (Some(index), Some(old)) => Action::Replace { old, new: popup.choices[index].clone() },
-            (Some(index), None) => Action::Commit(popup.choices[index].clone()),
-            (None, _) => Action::Redraw,
+        match popup.selected {
+            Some(index) => Action::Commit(popup.choices[index].clone()),
+            None => Action::Redraw,
         }
     }
 
@@ -1668,20 +1613,13 @@ impl Keyboard {
     /// up shows the capital it will type.
     pub fn label(&self, index: usize) -> String {
         let label = &self.layout.keys[index].label;
-        let flicked = self.touch.as_ref().is_some_and(|touch| {
-            let gesture = self.gesture(touch);
-            touch.key == index
-                && self.is_capital(gesture)
-        });
+        let flicked = self.touch.as_ref().is_some_and(|touch| touch.key == index && self.gesture(touch) == Gesture::Up);
         if is_letter(label) && (self.shift != Shift::Off || flicked) { upper(label) } else { label.clone() }
     }
 
-    /// What the capital gesture types on a punctuation key, shown small on
-    /// it; empty for other keys.
+    /// What a flick up types on a punctuation key, shown small on it; empty
+    /// for other keys.
     pub fn hint(&self, index: usize) -> &'static str {
-        if self.gestures.capital != Capital::FlickUp {
-            return "";
-        }
         flicked(&self.layout.keys[index].label).unwrap_or("")
     }
 
@@ -2216,45 +2154,9 @@ mod tests {
     }
 
     #[test]
-    fn a_flick_up_types_a_capital_unless_holding_is_set_up() {
+    fn a_flick_up_types_a_capital() {
         let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
-        let up = [(0.0, -0.6)];
-        assert_eq!(gesture(&mut keyboard, "g", &up), Action::Commit("G".into()));
-        keyboard.gestures.capital = Capital::Hold;
-        assert_eq!(gesture(&mut keyboard, "g", &up), Action::Nothing);
-    }
-
-    #[test]
-    fn holding_a_letter_types_its_capital_at_once_and_an_accent_can_replace_it() {
-        let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
-        keyboard.gestures.capital = Capital::Hold;
-        keyboard.accents.insert('a', vec!['ä', 'à']);
-        // No accents: the capital is all there is, and lifting adds nothing.
-        keyboard.touch_down(near(&keyboard, "g", 0.0, 0.0), 0);
-        assert_eq!(keyboard.deadline(), Some(CAPITAL_HOLD_MS));
-        assert_eq!(keyboard.tick(CAPITAL_HOLD_MS), Action::Commit("G".into()));
-        assert!(keyboard.popup.is_none());
-        assert_eq!(keyboard.deadline(), None);
-        assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.0, 0.0), 900), Action::Redraw);
-        // Accents open with the capital typed and none of them chosen.
-        keyboard.touch_down(near(&keyboard, "a", 0.0, 0.0), 1000);
-        assert_eq!(keyboard.tick(1000 + CAPITAL_HOLD_MS), Action::Commit("A".into()));
-        let popup = keyboard.popup.clone().expect("popup");
-        assert_eq!(popup.choices, ["ä", "à"]);
-        assert_eq!(popup.selected, None);
-        assert!((popup.cells[0].x - near(&keyboard, "a", 0.0, 0.0).x).abs() < 1.0, "the most used accent sits above the key");
-        assert!(popup.cells[1].x > popup.cells[0].x, "the next one towards the middle, to its right");
-        // A finger never holds perfectly still; a little drift keeps the capital.
-        keyboard.touch_move(near(&keyboard, "a", 0.1, 0.05), 1250);
-        assert_eq!(keyboard.touch_up(near(&keyboard, "a", 0.1, 0.05), 1300), Action::Redraw);
-        keyboard.touch_down(near(&keyboard, "a", 0.0, 0.0), 2000);
-        keyboard.tick(2000 + CAPITAL_HOLD_MS);
-        let cell = keyboard.popup.as_ref().unwrap().cells[0];
-        keyboard.touch_move(cell, 2400);
-        assert_eq!(keyboard.touch_up(cell, 2450), Action::Replace { old: "A".into(), new: "ä".into() });
-        // Punctuation keeps the long press.
-        keyboard.touch_down(near(&keyboard, ".", 0.0, 0.0), 3000);
-        assert_eq!(keyboard.deadline(), Some(3400));
+        assert_eq!(gesture(&mut keyboard, "g", &[(0.0, -0.6)]), Action::Commit("G".into()));
     }
 
     #[test]

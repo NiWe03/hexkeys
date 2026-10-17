@@ -76,12 +76,6 @@ class SettingsActivity : Activity() {
                 listOf("left" to "Left edge", "right" to "Right edge"),
                 if (ui.preferences.getBoolean(KeyboardView.DELETE_FROM_LEFT, false)) "left" else "right",
             ) { id -> ui.preferences.edit().putBoolean(KeyboardView.DELETE_FROM_LEFT, id == "left").apply() },
-            ui.label("Capital letter"),
-            ui.segmented(
-                KeyboardView.CAPITALS.zip(listOf("Flick up", "Hold")),
-                ui.preferences.getString(KeyboardView.CAPITAL, null)?.takeIf { it in KeyboardView.CAPITALS }
-                    ?: KeyboardView.CAPITALS.first(),
-            ) { id -> ui.preferences.edit().putString(KeyboardView.CAPITAL, id).apply() },
         ))
 
         column.addView(ui.heading("Voice"))

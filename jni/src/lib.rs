@@ -8,7 +8,7 @@
 
 use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::Lexicon;
-use hexkeys::{Action, Capital, Keyboard, Point, suggest, swipe, space_middle, space_bottom, with_shift_and_backspace};
+use hexkeys::{Action, Keyboard, Point, suggest, swipe, space_middle, space_bottom, with_shift_and_backspace};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JFloatArray, JString};
 use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
@@ -213,7 +213,6 @@ fn floats(env: &JNIEnv, values: &[f32]) -> jfloatArray {
 fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
     let (kind, text) = match action {
         Action::Commit(text) => ("commit", text),
-        Action::Replace { old, new } => ("replace", format!("{old}\t{new}")),
         Action::Backspace => ("backspace", String::new()),
         Action::Enter => ("enter", String::new()),
         Action::EnterAction => ("enter_action", String::new()),
@@ -614,21 +613,15 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_decodeSwipe(
 }
 
 /// Sets up the gestures: delete swipes from the left edge instead of the
-/// right, and the capital gesture as 0 flick up, 1 hold.
+/// right.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_configure(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
     delete_from_left: jboolean,
-    capital: jint,
 ) {
-    let gestures = &mut keyboard(handle).gestures;
-    gestures.delete_from_left = delete_from_left != 0;
-    gestures.capital = match capital {
-        1 => Capital::Hold,
-        _ => Capital::FlickUp,
-    };
+    keyboard(handle).gestures.delete_from_left = delete_from_left != 0;
 }
 
 /// The accented letters of the lexicon's languages by plain letter, as

@@ -390,11 +390,7 @@ class KeyboardView(
             Core.setStrip(handle, stripHeight.toFloat())
             loadOutlines()
         }
-        Core.configure(
-            handle,
-            preferences.getBoolean(DELETE_FROM_LEFT, false),
-            CAPITALS.indexOf(preferences.getString(CAPITAL, null)).coerceAtLeast(0),
-        )
+        Core.configure(handle, preferences.getBoolean(DELETE_FROM_LEFT, false))
         setMeasuredDimension(width, keysTop + Core.height(handle).toInt() + navigationBar)
     }
 
@@ -912,7 +908,6 @@ class KeyboardView(
             .put("width", width)
             .put("cellWidth", Core.cellWidth(handle).toDouble())
             .put("key", if (pressed >= 0) Core.label(handle, pressed) else "")
-            .put("capital", Dictionaries.preferences(context).getString(CAPITAL, CAPITALS.first()))
             .put("editKeys", Dictionaries.preferences(context).getBoolean(EDIT_KEYS, false))
             .put("deleteFromLeft", Dictionaries.preferences(context).getBoolean(DELETE_FROM_LEFT, false))
             .put("before", logContext())
@@ -1160,8 +1155,5 @@ class KeyboardView(
         /** Preference adding shift and backspace keys to the layout. */
         const val EDIT_KEYS = "edit_keys"
 
-        /** Preference naming the capital gesture, one of [CAPITALS] in the core's order. */
-        const val CAPITAL = "capital"
-        val CAPITALS = listOf("flick_up", "hold")
     }
 }
