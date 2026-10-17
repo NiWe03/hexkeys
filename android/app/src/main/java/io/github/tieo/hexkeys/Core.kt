@@ -83,6 +83,9 @@ object Core {
     /** Room above the keys a long-press popup can reach into. */
     external fun headroom(handle: Long): Float
 
+    /** How tall the strip between the keys and the headroom is, which popups reach over too. */
+    external fun setStrip(handle: Long, height: Float)
+
     /** Choices in the open popup, 0 when none is open. */
     external fun popupCount(handle: Long): Int
     /** The choice lifting the finger takes, or -1 for none. */
@@ -120,8 +123,8 @@ object Core {
     external fun trail(handle: Long): FloatArray
 
 
-    /** The accented letters of the lexicon's languages, as "a:ä;o:ö"; slow, call it off the main thread. */
-    external fun lexiconAccents(lexicon: Long): String
+    /** The accented letters of the lexicon's languages, as "a:ä;o:ö", those of dictionary [first] ahead (-1 for none); slow the first time, call it off the main thread. */
+    external fun lexiconAccents(lexicon: Long, first: Int): String
 
     /** Sets what holding a letter offers, in the form [lexiconAccents] returns. */
     external fun setAccents(handle: Long, accents: String)

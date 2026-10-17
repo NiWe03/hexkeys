@@ -276,6 +276,8 @@ pub struct Lexicon {
     /// The dictionaries' words as swipe typing looks them up, built at the
     /// first swipe and dropped whenever the dictionaries change.
     swipe: OnceLock<Index>,
+    /// Accented letters each dictionary uses and how much, counted once.
+    accent_uses: OnceLock<Vec<HashMap<char, f64>>>,
     /// Frequency points each dictionary's words gain from the language of
     /// the text being written, by [`Lexicon::set_context`].
     boosts: Vec<f32>,
@@ -286,10 +288,10 @@ pub struct Lexicon {
 }
 
 /// The most frequency points the language of the last words written gives
-/// its words, a quarter of the frequency range: it reorders words of
-/// similar frequency towards the language being written without turning
-/// over large gaps.
-const LANGUAGE_BOOST: f32 = 60.0;
+/// its words, about half the frequency range: enough that English "I'm"
+/// (116) beats German "im" (229) in an English sentence, as the user
+/// expects, and replays of the phone's swipes kept their words otherwise.
+const LANGUAGE_BOOST: f32 = 120.0;
 
 /// How many of the last words written tell the language.
 const CONTEXT_WORDS: usize = 6;
@@ -346,11 +348,13 @@ impl Lexicon {
     pub fn add(&mut self, dictionary: Dictionary) {
         self.dictionaries.push(dictionary);
         self.swipe = OnceLock::new();
+        self.accent_uses = OnceLock::new();
     }
 
     pub fn clear(&mut self) {
         self.dictionaries.clear();
         self.swipe = OnceLock::new();
+        self.accent_uses = OnceLock::new();
     }
 
     pub(crate) fn swipe_index(&self) -> Result<&Index, Error> {
@@ -366,33 +370,59 @@ impl Lexicon {
     /// every word of the languages in use can be spelled. A letter's use
     /// counts each word it is in by how common the word is.
     pub fn accents(&self) -> Result<HashMap<char, Vec<char>>, Error> {
-        let mut uses: HashMap<char, f64> = HashMap::new();
-        let mut count = |word: &str, frequency: u8| {
-            // Frequencies are logarithmic; 12 steps for a doubling fits how often
-            // short common words such as French à occur in text.
-            let weight = 2f64.powf(frequency as f64 / 12.0);
-            for c in word.chars().flat_map(char::to_lowercase) {
-                if c.is_alphabetic() && !c.is_ascii() && plain(c).is_some() {
-                    *uses.entry(c).or_insert(0.0) += weight;
-                }
+        self.accents_for(None)
+    }
+
+    /// [`Lexicon::accents`] with the accents dictionary `first` uses ranked
+    /// ahead of the others, by how much that language uses them: with
+    /// German being written ä ö ü come first, with French é è à.
+    pub fn accents_for(&self, first: Option<usize>) -> Result<HashMap<char, Vec<char>>, Error> {
+        let uses = self.accent_uses()?;
+        let mut total: HashMap<char, f64> = HashMap::new();
+        for counts in uses {
+            for (&c, &used) in counts {
+                *total.entry(c).or_insert(0.0) += used;
             }
-        };
-        for dictionary in &self.dictionaries {
-            dictionary.for_each_word(&mut count)?;
         }
-        let mut accents: HashMap<char, Vec<(char, f64)>> = HashMap::new();
-        for (c, used) in uses {
+        let preferred = first.and_then(|d| uses.get(d));
+        let mut accents: HashMap<char, Vec<(char, f64, f64)>> = HashMap::new();
+        for (&c, &used) in &total {
             if let Some(base) = plain(c) {
-                accents.entry(base).or_default().push((c, used));
+                let own = preferred.and_then(|counts| counts.get(&c)).copied().unwrap_or(0.0);
+                accents.entry(base).or_default().push((c, own, used));
             }
         }
         Ok(accents
             .into_iter()
             .map(|(base, mut letters)| {
-                letters.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-                (base, letters.into_iter().take(MAX_ACCENTS).map(|(c, _)| c).collect())
+                letters.sort_by(|a, b| b.1.total_cmp(&a.1).then(b.2.total_cmp(&a.2)).then(a.0.cmp(&b.0)));
+                (base, letters.into_iter().take(MAX_ACCENTS).map(|(c, _, _)| c).collect())
             })
             .collect())
+    }
+
+    /// How much each dictionary uses each accented letter, counted over all
+    /// its words once and kept.
+    fn accent_uses(&self) -> Result<&Vec<HashMap<char, f64>>, Error> {
+        if let Some(uses) = self.accent_uses.get() {
+            return Ok(uses);
+        }
+        let mut all = Vec::new();
+        for dictionary in &self.dictionaries {
+            let mut uses: HashMap<char, f64> = HashMap::new();
+            dictionary.for_each_word(|word: &str, frequency: u8| {
+                // Frequencies are logarithmic; 12 steps for a doubling fits how often
+                // short common words such as French à occur in text.
+                let weight = 2f64.powf(frequency as f64 / 12.0);
+                for c in word.chars().flat_map(char::to_lowercase) {
+                    if c.is_alphabetic() && !c.is_ascii() && plain(c).is_some() {
+                        *uses.entry(c).or_insert(0.0) += weight;
+                    }
+                }
+            })?;
+            all.push(uses);
+        }
+        Ok(self.accent_uses.get_or_init(|| all))
     }
 
     /// Learned words with the frequency they rank with.
@@ -748,6 +778,15 @@ mod tests {
         lexicon.pinned = Some(1);
         lexicon.set_context("and also ");
         assert_eq!((words(&lexicon, "im", None)[0].as_str(), lexicon.language()), ("im", Some(1)), "a picked language wins");
+    }
+
+    #[test]
+    fn the_language_in_use_puts_its_accents_first() {
+        let french = Dictionary::new(encode(&[("à", 250), ("là", 200)], &[])).unwrap();
+        let portuguese = Dictionary::new(encode(&[("ânimo", 150)], &[])).unwrap();
+        let lexicon = Lexicon::new(vec![french, portuguese]);
+        assert_eq!(lexicon.accents_for(None).unwrap()[&'a'], ['à', 'â']);
+        assert_eq!(lexicon.accents_for(Some(1)).unwrap()[&'a'], ['â', 'à']);
     }
 
     #[test]

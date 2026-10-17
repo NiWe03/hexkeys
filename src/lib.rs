@@ -546,7 +546,7 @@ pub fn honeycomb() -> LayoutSpec {
             row(0, letters("wdthjo")),
             row(0, letters("asfgbkl")),
             last_letters,
-            bottom_row("?123"),
+            bottom_row(SYMBOLS_KEY),
         ],
         first_row_shifted: false,
         numbers: Some("1234567890".into()),
@@ -558,7 +558,7 @@ pub fn honeycomb() -> LayoutSpec {
 /// s d f h j k and bottom row y x c v b n m, which fill the next two rows
 /// in QWERTZ order, f h and y in the cells the reference layout has them in. Keeping
 /// the reference layout's y s d n m j k instead leaves no room for b left of n. The
-/// bottom row reads . space ? as the reference layout's middle row does, and ?123 and
+/// bottom row reads . space ? as the reference layout's middle row does, and the symbols key and
 /// enter stay in their cells.
 pub fn space_bottom() -> LayoutSpec {
     LayoutSpec {
@@ -567,7 +567,7 @@ pub fn space_bottom() -> LayoutSpec {
             row(0, letters("qargulp")),
             row(0, letters("sdfhjk")),
             row(0, letters("yxcvbnm")),
-            row(0, keys(&[(".", 1), ("space", 2), ("?", 1), ("?123", 1), ("⏎", 1)])),
+            row(0, keys(&[(".", 1), ("space", 2), ("?", 1), (SYMBOLS_KEY, 1), ("⏎", 1)])),
         ],
         first_row_shifted: true,
         numbers: Some("1234567890".into()),
@@ -595,7 +595,7 @@ pub fn space_middle() -> LayoutSpec {
             row(0, letters("qargulp")),
             row(0, keys(&[(".", 1), ("space", 1), ("f", 1), ("h", 1), ("space", 1), ("?", 1)])),
             row(0, letters("ysdnmjk")),
-            row(0, keys(&[("x", 1), ("c", 1), ("v", 1), ("b", 1), ("?123", 1), ("⏎", 1)])),
+            row(0, keys(&[("x", 1), ("c", 1), ("v", 1), ("b", 1), (SYMBOLS_KEY, 1), ("⏎", 1)])),
         ],
         first_row_shifted: true,
         numbers: Some("1234567890".into()),
@@ -607,6 +607,10 @@ pub fn space_middle() -> LayoutSpec {
 fn bottom_row(switch: &str) -> RowSpec {
     row(0, keys(&[(switch, 1), (",", 1), ("space", 3), (".", 1), ("⏎", 1)]))
 }
+
+/// The key to the symbol page, named after the symbols on it: the digits
+/// and the question mark it used to name are on the letter page already.
+const SYMBOLS_KEY: &str = "@#€";
 
 /// Symbols for the first symbol page, most used first.
 const SYMBOLS: &str = "@#€&-+()/*\"':;!_%=$<>[]{}\\|~^°";
@@ -634,7 +638,7 @@ pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
     let pool = if page == 0 { SYMBOLS } else { MORE_SYMBOLS };
     let mut symbols = pool.chars().map(String::from).filter(|symbol| !on_letters.contains(symbol));
     let has_shift = spec.rows.iter().any(|row| row.left_edge.as_deref() == Some("⇧"));
-    let turn = if page == 0 { MORE } else { "?123" };
+    let turn = if page == 0 { MORE } else { SYMBOLS_KEY };
     let last_letter = spec
         .rows
         .iter()
@@ -643,7 +647,7 @@ pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
         .last();
     for (r, row) in spec.rows.iter_mut().enumerate() {
         for (k, key) in row.keys.iter_mut().enumerate() {
-            if key.label == "?123" {
+            if key.label == SYMBOLS_KEY {
                 key.label = "ABC".into();
             } else if is_letter(&key.label) {
                 key.label = if !has_shift && Some((r, k)) == last_letter {
@@ -945,6 +949,9 @@ pub struct Keyboard {
     /// Accented letters by the plain letter whose key offers them when held,
     /// from the languages in use.
     pub accents: std::collections::HashMap<char, Vec<char>>,
+    /// How tall what lies between the keys and the headroom is, the
+    /// suggestion strip, which a popup can reach over.
+    pub strip: f32,
 }
 
 impl Keyboard {
@@ -967,6 +974,7 @@ impl Keyboard {
             swiped: None,
             gestures: Gestures::default(),
             accents: Default::default(),
+            strip: 0.0,
         }
     }
 
@@ -1368,20 +1376,27 @@ impl Keyboard {
         let center = layout.keys[index].center();
         let (w, h) = (layout.cell_width * POPUP_SCALE, layout.cell_height * POPUP_SCALE);
         let holding = self.holds_for_capital(index);
-        // A small honeycomb above the key: the most used straight above it, the
-        // next to its right, then left; more go into an interlocking row above.
-        // It is pushed inwards where it would leave the sides.
-        // Towards the middle of the keyboard: mirrored on its right half.
-        let mirror = if center.x > layout.width / 2.0 { -1.0 } else { 1.0 };
-        let places: Vec<(f32, usize)> = popup_places(choices.len()).into_iter().map(|(o, row)| (o * mirror, row)).collect();
-        let (lowest, highest) = places.iter().fold((0f32, 0f32), |(lo, hi), &(o, _)| (lo.min(o), hi.max(o)));
-        let shift = (w / 2.0 - (center.x + lowest * w)).max(0.0) - (center.x + highest * w - (layout.width - w / 2.0)).max(0.0);
+        // A small honeycomb above the key, the most used straight above it and
+        // the rest in the free cells nearest the key, towards the middle of the
+        // keyboard first: at an edge the row next to the key runs longer
+        // inwards rather than pushing the whole popup off its key.
+        let inwards = if center.x > layout.width / 2.0 { -1.0 } else { 1.0 };
+        // A key narrower than a popup cell at the edge, as the number row's
+        // ends are, has its first choice as near above it as fits.
+        let above = center.x.clamp(w / 2.0, layout.width - w / 2.0);
+        let fits = |offset: f32| {
+            let x = above + offset * w;
+            x - w / 2.0 >= -0.01 && x + w / 2.0 <= layout.width + 0.01
+        };
         // Overlapping the key's top point a little, as the honeycomb's rows overlap,
         // and no higher than the room above the keyboard, which the number row's
         // popups would leave.
         let y = (center.y - layout.cell_height / 2.0 - h / 4.0).max(h / 2.0 - self.headroom());
+        // As many rows as the strip and the room above it hold.
+        let rows = 1 + ((y - h / 2.0 + self.headroom() + self.strip) / (h * 0.75) + 0.01).max(0.0) as usize;
+        let places = popup_places(choices.len(), rows, inwards, h / w, fits);
         let cells: Vec<Point> =
-            places.iter().map(|&(o, row)| Point { x: center.x + o * w + shift, y: y - row as f32 * h * 0.75 }).collect();
+            places.iter().map(|&(o, row)| Point { x: above + o * w, y: y - row as f32 * h * 0.75 }).collect();
         // The most used choice comes first and starts chosen, wherever it sits.
         let selected = if holding { None } else { Some(0) };
         let origin = self.touch.as_ref().map_or(center, |touch| touch.at);
@@ -1505,7 +1520,7 @@ impl Keyboard {
             "⏎" => Action::Enter,
             "space" => Action::Commit(" ".into()),
             "ABC" => self.show(0),
-            "?123" => self.show(1),
+            SYMBOLS_KEY => self.show(1),
             "=\\<" => self.show(2),
             _ => {
                 let text = self.label(index);
@@ -1531,9 +1546,15 @@ pub fn qwertz_row(label: &str) -> Option<usize> {
 /// [`Keyboard::accents`].
 fn alternates(label: &str) -> &'static [&'static str] {
     match label {
-        "." => &[",", ":", "-", ";", "…"],
+        "." => &[",", ":", "-", ";"],
         "?" => &["!", "'", "\"", "¿", "¡"],
         "," => &[":", "-", ";", "'", "\""],
+        // The digits that start fractions: the fractions they start, most used
+        // first. The number row's other digits keep it for the cursor and
+        // deleting.
+        "1" => &["½", "⅓", "¼", "⅕", "⅙", "⅛"],
+        "2" => &["⅔", "⅖"],
+        "3" => &["¾", "⅗", "⅜"],
         _ => &[],
     }
 }
@@ -1553,15 +1574,30 @@ fn nearest(cells: &[Point], at: Point) -> usize {
 /// up: three to the first row (above the key, right, left), four to the
 /// next, shifted half a cell to interlock (right of centre, left, then
 /// outer right and left), and so on.
-fn popup_places(count: usize) -> Vec<(f32, usize)> {
-    let mut places = Vec::new();
-    let mut row = 0;
-    while places.len() < count {
-        let offsets: &[f32] = if row % 2 == 0 { &[0.0, 1.0, -1.0] } else { &[0.5, -0.5, 1.5, -1.5] };
-        places.extend(offsets.iter().map(|&o| (o, row)).take(count - places.len()));
-        row += 1;
+/// Where `count` popup choices go, as (offset in cells sideways, row up),
+/// nearest the key first: rows interlock, so every other row sits half a
+/// cell over. Of cells equally near, the lower row, the one nearer straight
+/// above, then the one `inwards` (1 right, -1 left) comes first. Only
+/// the lowest `rows` rows and offsets `fits` accepts are used; `ratio` is a cell's height to its width.
+fn popup_places(count: usize, rows: usize, inwards: f32, ratio: f32, fits: impl Fn(f32) -> bool) -> Vec<(f32, usize)> {
+    let mut free = Vec::new();
+    for row in 0..rows.max(1) {
+        let half = if row % 2 == 0 { 0.0 } else { 0.5 };
+        for step in -(count as i32)..=count as i32 {
+            let offset = step as f32 + half;
+            if fits(offset) {
+                free.push((offset, row));
+            }
+        }
     }
-    places
+    let key = |&(offset, row): &(f32, usize)| {
+        let up = row as f32 * 0.75 * ratio;
+        let near = ((offset * offset + up * up).sqrt() * 100.0).round() as i32;
+        (near, row, (offset.abs() * 2.0) as i32, offset * inwards < 0.0)
+    };
+    free.sort_by_key(key);
+    free.truncate(count);
+    free
 }
 
 fn is_letter(label: &str) -> bool {
@@ -1734,9 +1770,33 @@ mod tests {
     }
 
     #[test]
+    fn an_edge_key_keeps_its_popup_above_it() {
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.3, 400);
+        let one = keyboard_index(&keyboard, "1");
+        assert!(keyboard.long_press(one));
+        let popup = keyboard.popup.clone().unwrap();
+        let center = keyboard.layout.keys[one].center();
+        let w = keyboard.layout.cell_width * POPUP_SCALE;
+        assert!((popup.cells[0].x - center.x.max(w / 2.0)).abs() < 0.01, "the first choice above");
+        let lowest = popup.cells.iter().filter(|c| (c.y - popup.cells[0].y).abs() < 0.01).count();
+        assert_eq!(lowest, popup.cells.len(), "one row where only one fits");
+        let top = popup.cells.iter().map(|c| c.y).fold(f32::MAX, f32::min);
+        let h = keyboard.layout.cell_height * POPUP_SCALE;
+        assert!(top - h / 2.0 >= -keyboard.headroom() - 0.01, "without a strip one row");
+        keyboard.popup_cancel();
+        keyboard.strip = keyboard.layout.cell_height * 0.6;
+        assert!(keyboard.long_press(one));
+        let popup = keyboard.popup.clone().unwrap();
+        let top = popup.cells.iter().map(|c| c.y).fold(f32::MAX, f32::min);
+        assert!(top < popup.cells[0].y, "a strip makes room for a second row");
+        assert!(top - h / 2.0 >= -keyboard.headroom() - keyboard.strip - 0.01, "every row in the room above");
+        assert!(popup.cells.iter().all(|c| c.x - w / 2.0 >= -0.01 && c.x >= popup.cells[0].x - 0.01));
+    }
+
+    #[test]
     fn symbol_layers_switch_and_type() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
-        let symbols = keyboard_index(&keyboard, "?123");
+        let symbols = keyboard_index(&keyboard, SYMBOLS_KEY);
         assert_eq!(keyboard.press(symbols), Action::Redraw);
         let at = keyboard_index(&keyboard, "@");
         assert_eq!(keyboard.press(at), Action::Commit("@".into()));
@@ -2074,7 +2134,7 @@ mod tests {
     #[test]
     fn halves_split_their_cell_and_numbers_zigzag() {
         let mut spec = space_middle();
-        spec.rows[4] = row(0, vec![KeySpec::new("?123", 1), KeySpec::new("space", 3), KeySpec::halves(",", "."), KeySpec::new("⏎", 1)]);
+        spec.rows[4] = row(0, vec![KeySpec::new(SYMBOLS_KEY, 1), KeySpec::new("space", 3), KeySpec::halves(",", "."), KeySpec::new("⏎", 1)]);
         let layout = Layout::fit(&spec, 1008.0, 1.0);
         let comma = layout.keys.iter().find(|key| key.half == Some(Half::Left)).unwrap();
         let cell = comma.cells[0];
@@ -2154,14 +2214,14 @@ mod tests {
             let [plain, symbols, more] = &keyboard.layers;
             for (key, symbol) in plain.keys.iter().zip(&symbols.keys) {
                 assert_eq!(key.cells, symbol.cells, "{} and {} share a place", key.label, symbol.label);
-                if key.label == "?123" {
+                if key.label == SYMBOLS_KEY {
                     assert_eq!(symbol.label, "ABC");
                 } else if !is_letter(&key.label) && key.label != "⇧" {
                     assert_eq!(key.label, symbol.label);
                 }
             }
             assert!(symbols.keys.iter().any(|key| key.label == MORE));
-            assert!(more.keys.iter().any(|key| key.label == "?123"));
+            assert!(more.keys.iter().any(|key| key.label == SYMBOLS_KEY));
             let on_letters: Vec<&str> = plain.keys.iter().map(|key| key.label.as_str()).collect();
             assert!(symbols.keys.iter().filter(|key| !on_letters.contains(&key.label.as_str())).count() >= 20);
         }

@@ -117,7 +117,7 @@ class HexInputMethod : InputMethodService() {
             val fresh = Core.lexiconCreate()
             val added = files.filter { file -> Dictionaries.read(this, file)?.let { Core.lexiconAdd(fresh, it) } == true }
             for ((word, times) in words) Core.lexiconLearn(fresh, word, times)
-            val accents = Core.lexiconAccents(fresh)
+            val accents = Core.lexiconAccents(fresh, -1)
             Core.words.execute {
                 if (lexicon == 0L) {
                     Core.lexiconDestroy(fresh)
@@ -630,6 +630,17 @@ class HexInputMethod : InputMethodService() {
 
     /** Shows the language on the space bar, dim while it is only a guess. */
     private fun showLanguage(index: Int?) {
+        // Holding a letter offers the language in use's accents first.
+        if (index != language) {
+            Core.words.execute {
+                if (lexicon == 0L) return@execute
+                val accents = Core.lexiconAccents(lexicon, index ?: -1)
+                mainExecutor.execute {
+                    this.accents = accents
+                    keyboard?.accents = accents
+                }
+            }
+        }
         language = index
         val file = index?.let { lexiconFiles.getOrNull(it) }
         val name = file?.let { f -> Dictionaries.catalog(this).firstOrNull { it.file == f }?.name } ?: if (file == Dictionaries.BUILT_IN) "English" else null

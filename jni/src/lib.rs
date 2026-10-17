@@ -241,6 +241,17 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_headroom(
     keyboard(handle).headroom()
 }
 
+/// Sets how tall the strip between the keys and the headroom is.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_setStrip(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    height: jfloat,
+) {
+    keyboard(handle).strip = height;
+}
+
 /// Number of choices in the open popup, 0 when none is open.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_popupCount(
@@ -555,11 +566,17 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_configure(
 }
 
 /// The accented letters of the lexicon's languages by plain letter, as
-/// "a:ä;o:ö;s:ß", most used first. Slow on large dictionaries: call it off
-/// the main thread.
+/// "a:ä;o:ö;s:ß", most used first, those of dictionary `first` ahead when
+/// it is not -1. The first call counts through every word, which takes a
+/// while on large dictionaries: call it off the main thread.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconAccents(env: JNIEnv, _class: JClass, handle: jlong) -> jstring {
-    let accents = lexicon(handle).accents().unwrap_or_default();
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconAccents(
+    env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    first: jint,
+) -> jstring {
+    let accents = lexicon(handle).accents_for(usize::try_from(first).ok()).unwrap_or_default();
     let text: Vec<String> =
         accents.iter().map(|(letter, accented)| format!("{letter}:{}", accented.iter().collect::<String>())).collect();
     env.new_string(text.join(";")).expect("string").into_raw()

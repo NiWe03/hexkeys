@@ -278,6 +278,7 @@ class KeyboardView(
             CAPITALS.indexOf(preferences.getString(CAPITAL, null)).coerceAtLeast(0),
         )
         headroom = Core.headroom(handle).toInt()
+        Core.setStrip(handle, stripHeight.toFloat())
         loadOutlines()
         setMeasuredDimension(width, keysTop + Core.height(handle).toInt() + navigationBar)
     }
