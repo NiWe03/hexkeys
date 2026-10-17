@@ -17,6 +17,7 @@ pub mod dictionary;
 mod letters;
 pub mod suggest;
 pub mod swipe;
+pub mod telex;
 
 /// One key as authored in a layout: what it is and how many cells it spans.
 #[derive(Clone, Debug, PartialEq)]
