@@ -1534,15 +1534,6 @@ fn alternates(label: &str) -> &'static [&'static str] {
         "." => &[",", ":", "-", ";", "…"],
         "?" => &["!", "'", "\"", "¿", "¡"],
         "," => &[":", "-", ";", "'", "\""],
-        // Digits offer the fractions they start and a sign like them; superscripts
-        // looked like the digit again.
-        "1" => &["½", "⅓", "¼", "⅛"],
-        "2" => &["⅔"],
-        "3" => &["¾", "⅜"],
-        "5" => &["⅝"],
-        "7" => &["⅞"],
-        "8" => &["∞"],
-        "0" => &["∅", "ⁿ"],
         _ => &[],
     }
 }
