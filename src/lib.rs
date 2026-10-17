@@ -289,12 +289,13 @@ impl Layout {
         }
 
         // A bottom row of whole cells straight under the row above: the row above
-        // keeps its points, and the bottom row's labels sit in the middle of what
-        // is left of it below them.
+        // keeps its points, which reach down to a quarter cell above the bottom
+        // row's centres. Its labels go a little lower than the middle of what is
+        // left below them, so the small sign drawn above a label clears the point.
         let flat_row = (last > 0 && spec.shift(last) == spec.shift(last - 1)).then_some(last);
         if flat_row.is_some() {
             for key in keys.iter_mut().filter(|key| key.row == last) {
-                key.label_at.y += cell_height / 16.0;
+                key.label_at.y += cell_height * 3.0 / 16.0;
             }
         }
         let height = top + cell_height - cut + last as f32 * row_pitch;
