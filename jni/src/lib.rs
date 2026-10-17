@@ -323,6 +323,12 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_lexiconPin(_env: JNIEnv,
     lexicon(handle).pinned = usize::try_from(index).ok();
 }
 
+/// Where the number row ends, which delete slides start above.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_tieo_hexkeys_Core_numbersBottom(_env: JNIEnv, _class: JClass, handle: jlong) -> jfloat {
+    keyboard(handle).layout.numbers_bottom
+}
+
 /// Width of one cell, which labels are sized from.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_cellWidth(

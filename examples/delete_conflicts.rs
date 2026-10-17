@@ -1,5 +1,5 @@
 //! Words whose swipe could be taken for a delete slide: those starting on a
-//! key within the delete edge. Each is swiped through the keyboard at the
+//! key in the right edge column, where delete slides used to start. Each is swiped through the keyboard at the
 //! speeds measured from the phone's gesture log, through its letters' key
 //! centres with some scatter, after the pause a finger makes before it
 //! moves; prints how many come out as a delete instead of a swipe, by

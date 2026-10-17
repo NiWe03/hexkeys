@@ -35,6 +35,9 @@ object Core {
     external fun height(handle: Long): Float
     external fun keyCount(handle: Long): Int
 
+    /** Where the number row ends; delete slides start above it. */
+    external fun numbersBottom(handle: Long): Float
+
     /** Width of one cell, which labels are sized from. */
     external fun cellWidth(handle: Long): Float
 

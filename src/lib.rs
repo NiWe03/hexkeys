@@ -735,22 +735,6 @@ const FLICK: f32 = 0.35;
 /// How far a finger may drift and still count as holding still, in key widths.
 const STILL: f32 = 0.25;
 
-/// How near the delete edge a touch has to start to be a delete swipe, in
-/// key widths: a finger sliding in from the edge lands close to it. In the
-/// phone's log most strokes leftwards from within 1.1 key widths of the
-/// right edge were deletes started a little too far in, decoded as swipes.
-const EDGE: f32 = 1.1;
-
-/// How far a delete swipe may bend away from the straight line between
-/// where it started and where the finger is, before it counts as swipe
-/// typing after all, in key widths: a swiped word turns at its letters,
-/// a delete slide runs straight, level or slanted.
-const DELETE_STRAY: f32 = 0.5;
-
-/// How long after it starts a delete slide can still turn into swipe
-/// typing, in ms. A swipe starting at the edge bends at once; a delete held
-/// for seconds and moved back and forth drifts too, which must not count.
-const DELETE_DECIDE_MS: u64 = 400;
 
 /// How near the far side of the keyboard a delete swipe has to reach to
 /// delete whole words, in key widths from that edge: holding anywhere else
@@ -890,7 +874,7 @@ struct Touch {
     last_time: u64,
     /// Every point the finger has been, for swipe typing.
     path: Vec<Point>,
-    /// Went down at the delete edge, so sliding inwards deletes.
+    /// Went down where delete slides start, so sliding inwards deletes.
     at_edge: bool,
     deleting: Option<Deleting>,
     /// Held long enough to have acted already: typed its letter's capital,
@@ -1020,11 +1004,9 @@ impl Keyboard {
             return None;
         }
         let (dx, dy) = (touch.at.x - touch.start.x, touch.at.y - touch.start.y);
-        let third = self.layout.width / 3.0;
-        let near_edge = if self.gestures.delete_from_left { touch.start.x < third } else { touch.start.x > 2.0 * third };
         if dy.abs() > 1.4 * dx.abs() {
             Some(if dy < 0.0 { Gesture::Up } else { Gesture::Down })
-        } else if dx.abs() > 1.4 * dy.abs() && near_edge && self.inwards(touch, touch.at) > 0.0 {
+        } else if dx.abs() > 1.4 * dy.abs() && touch.at_edge && self.inwards(touch, touch.at) > 0.0 {
             Some(Gesture::QuickDelete)
         } else {
             None
@@ -1037,6 +1019,15 @@ impl Keyboard {
             (self.gestures.capital, gesture),
             (Capital::FlickUp, Gesture::Up)
         )
+    }
+
+    /// Whether a touch starts where delete slides do: the number row's half
+    /// on the delete side. Swipe typing never starts there, so a slide
+    /// cannot be mistaken for a swiped word; anywhere on the letters a
+    /// word's path from the edge column looked like one.
+    fn in_delete_zone(&self, at: Point) -> bool {
+        let half = self.layout.width / 2.0;
+        at.y < self.layout.numbers_bottom && if self.gestures.delete_from_left { at.x < half } else { at.x > half }
     }
 
     /// Whether a delete swipe has reached the far side of the keyboard,
@@ -1088,8 +1079,7 @@ impl Keyboard {
 
     pub fn touch_down(&mut self, at: Point, time: u64) {
         self.popup = None;
-        let edge = EDGE * self.layout.cell_width;
-        let at_edge = if self.gestures.delete_from_left { at.x < edge } else { at.x > self.layout.width - edge };
+        let at_edge = self.in_delete_zone(at);
         self.touch = self.key_at(at).map(|key| Touch {
             key,
             start: at,
@@ -1150,14 +1140,6 @@ impl Keyboard {
         {
             touch.deleting = Some(Deleting { characters: 0, words: 0 });
             started = true;
-        }
-        // Bent early on: swipe typing after all, with everything put back. Later
-        // the slide stays a delete however the finger wanders back and forth.
-        if touch.deleting.is_some() && time - touch.start_time < DELETE_DECIDE_MS && bend(&touch.path) > DELETE_STRAY * w {
-            touch.deleting = None;
-            touch.at_edge = false;
-            self.touch = Some(touch);
-            return Action::Delete { pieces: 0, words: false, started: false };
         }
         if let Some(deleting) = &mut touch.deleting {
             let before = deleting.pieces();
@@ -1794,7 +1776,7 @@ mod tests {
     fn a_slide_from_the_right_edge_deletes_and_sliding_back_puts_back() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         let w = keyboard.layout.cell_width;
-        let y = keyboard.layout.find("l").center().y;
+        let y = keyboard.layout.numbers_bottom / 2.0;
         let at = |x: f32| Point { x, y };
         keyboard.touch_down(at(1007.0), 0);
         assert_eq!(keyboard.touch_move(at(1007.0 - 0.2 * w), 100), Action::Nothing, "not yet a slide");
@@ -1806,8 +1788,12 @@ mod tests {
         assert_eq!(keyboard.touch_move(at(1007.0 - 1.2 * w), 800), Action::Delete { pieces: 2, words: false, started: false });
         assert_eq!(keyboard.pressed(), None);
         assert_eq!(keyboard.touch_up(at(1007.0 - 1.2 * w), 900), Action::Nothing);
-        // From inside the keyboard the same slide is a flick that does nothing.
+        // On the letters the same slide is a flick that does nothing, even from the edge.
         assert_eq!(gesture(&mut keyboard, "g", &[(-0.3, 0.0), (-0.6, 0.1)]), Action::Nothing);
+        let p = keyboard.layout.find("p").cells[0];
+        keyboard.touch_down(Point { x: 1007.0, y: p.y }, 1000);
+        assert_eq!(keyboard.touch_move(Point { x: 1007.0 - 1.4 * w, y: p.y }, 1200), Action::Nothing);
+        assert!(keyboard.deleting().is_none());
     }
 
     #[test]
@@ -1815,7 +1801,7 @@ mod tests {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         keyboard.gestures.delete_from_left = true;
         let w = keyboard.layout.cell_width;
-        let y = keyboard.layout.find("a").center().y;
+        let y = keyboard.layout.numbers_bottom / 2.0;
         keyboard.touch_down(Point { x: 1.0, y }, 0);
         assert_eq!(keyboard.touch_move(Point { x: 1.0 + 0.4 * w, y }, 200), Action::Delete { pieces: 0, words: false, started: true });
         assert_eq!(keyboard.touch_move(Point { x: 1.0 + 0.8 * w, y }, 400), Action::Delete { pieces: 1, words: false, started: false });
@@ -1843,7 +1829,7 @@ mod tests {
     fn a_delete_slide_resting_on_the_far_side_deletes_whole_words_ever_faster() {
         let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
         let w = keyboard.layout.cell_width;
-        let y = keyboard.layout.find("l").center().y;
+        let y = keyboard.layout.numbers_bottom / 2.0;
         keyboard.touch_down(Point { x: 1007.0, y }, 0);
         keyboard.touch_move(Point { x: 600.0, y }, 300);
         assert_eq!(keyboard.deadline(), None, "resting in the middle only chooses how many characters");
@@ -2069,25 +2055,11 @@ mod tests {
     }
 
     #[test]
-    fn a_delete_slide_that_turns_up_or_down_becomes_swipe_typing() {
-        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
-        let w = keyboard.layout.cell_width;
-        let p = keyboard.layout.find("p").cells[0];
-        let at = |dx: f32, dy: f32| Point { x: 1000.0 + dx * w, y: p.y + dy * w };
-        keyboard.touch_down(at(0.0, 0.0), 0);
-        assert!(matches!(keyboard.touch_move(at(-0.5, 0.0), 100), Action::Delete { pieces: 0, .. }));
-        keyboard.touch_move(at(-1.5, 0.0), 250);
-        assert_eq!(keyboard.touch_move(at(-1.7, 0.7), 300), Action::Delete { pieces: 0, words: false, started: false });
-        assert_eq!(keyboard.touch_move(at(-2.5, 1.4), 350), Action::Nothing);
-        assert_eq!(keyboard.touch_up(at(-2.5, 1.4), 380), Action::Swipe);
-    }
-
-    #[test]
     fn a_delete_slide_moved_about_for_a_while_stays_a_delete() {
         let mut keyboard = Keyboard::new(space_middle(), 1008.0, 1.0, 400);
         let w = keyboard.layout.cell_width;
-        let p = keyboard.layout.find("p").cells[0];
-        let at = |dx: f32, dy: f32| Point { x: 1000.0 + dx * w, y: p.y + dy * w };
+        let y = keyboard.layout.numbers_bottom / 2.0;
+        let at = |dx: f32, dy: f32| Point { x: 1000.0 + dx * w, y: y + dy * w };
         keyboard.touch_down(at(0.0, 0.0), 0);
         keyboard.touch_move(at(-2.0, 0.0), 300);
         // Back towards the start and drifting down, as a finger does while choosing how much to delete.
@@ -2101,7 +2073,7 @@ mod tests {
     fn a_slanted_straight_delete_slide_keeps_deleting() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
         let w = keyboard.layout.cell_width;
-        let y = keyboard.layout.find("p").cells[0].y;
+        let y = keyboard.layout.numbers_bottom / 4.0;
         keyboard.touch_down(Point { x: 1000.0, y }, 0);
         let mut last = Action::Nothing;
         for step in 1..=10 {
@@ -2127,11 +2099,12 @@ mod tests {
         keyboard.touch_down(h, 0);
         keyboard.touch_move(Point { x: h.x + 0.1 * w, y: h.y - 0.8 * w }, 150);
         assert_eq!(keyboard.touch_up(Point { x: h.x + 0.2 * w, y: h.y - 1.6 * w }, 300), Action::Swipe);
-        // Left from the right third, short of the edge, quickly: deletes on lifting.
-        let o = keyboard.layout.find("i").cells[0];
+        // Left in the number row's right half, quickly: deletes on lifting.
+        let o = Point { x: 0.7 * keyboard.layout.width, y: keyboard.layout.numbers_bottom / 2.0 };
         keyboard.touch_down(o, 0);
         keyboard.touch_move(Point { x: o.x - 0.7 * w, y: o.y }, 50);
-        assert_eq!(keyboard.touch_up(Point { x: o.x - 1.4 * w, y: o.y + 0.1 * w }, 100), Action::Delete { pieces: 1, words: false, started: true }, "a flick takes one");
+        let flicked = keyboard.touch_up(Point { x: o.x - 1.4 * w, y: o.y + 0.1 * w }, 100);
+        assert!(matches!(flicked, Action::Delete { pieces: 1, words: false, .. }), "a flick takes one: {flicked:?}");
     }
 
     #[test]

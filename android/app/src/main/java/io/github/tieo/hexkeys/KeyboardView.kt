@@ -280,7 +280,7 @@ class KeyboardView(
     }
 
     /**
-     * The keys along the delete edge are kept from the system's back
+     * The number row along the delete edge is kept from the system's back
      * gesture, so a slide in from that edge reaches the keyboard. Android
      * honours this for at most 200 dp of an edge's height.
      */
@@ -290,7 +290,9 @@ class KeyboardView(
         val band = (EXCLUSION_WIDTH * density).toInt()
         val fromLeft = Dictionaries.preferences(context).getBoolean(DELETE_FROM_LEFT, false)
         val x = if (fromLeft) 0 else width - band
-        systemGestureExclusionRects = listOf(Rect(x, keysTop, x + band, height - navigationBar))
+        // Delete slides start in the number row, so only its edge is kept.
+        val numbers = if (handle != 0L) Core.numbersBottom(handle).toInt() else 0
+        systemGestureExclusionRects = listOf(Rect(x, keysTop, x + band, keysTop + numbers))
     }
 
     /**
