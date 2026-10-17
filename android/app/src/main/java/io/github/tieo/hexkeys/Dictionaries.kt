@@ -24,7 +24,7 @@ object Dictionaries {
     private const val BASE = "https://codeberg.org/Helium314/aosp-dictionaries/raw/commit/$COMMIT/dictionaries/"
 
     /** The release holding every language's context counts but English's, gzipped. */
-    private const val CONTEXTS = "https://github.com/tieo/hexkeys/releases/download/contexts-1/"
+    private const val CONTEXTS = "https://github.com/nanbiz/hexkeys/releases/download/contexts-1/"
 
     const val ENABLED = "dictionaries"
     /** Before there were modes: on meant correcting everything. */
