@@ -285,6 +285,8 @@ pub struct Lexicon {
     guess: Option<usize>,
     /// The dictionary the user picked for the language, over the guess.
     pub pinned: Option<usize>,
+    /// The dictionary of the language the text is surely in, if it surely is in one.
+    sure: Option<usize>,
     /// The counts telling apart spellings of one word, each with the
     /// dictionary of its language.
     pub(crate) contexts: Vec<(usize, crate::context::Contexts)>,
@@ -295,6 +297,9 @@ pub struct Lexicon {
 /// (116) beats German "im" (229) in an English sentence, as the user
 /// expects, and replays of the phone's swipes kept their words otherwise.
 const LANGUAGE_BOOST: f32 = 120.0;
+
+/// How many of the last words only one language has make it sure.
+const SURE_WORDS: f32 = 3.0;
 
 /// How many of the last words written tell the language.
 const CONTEXT_WORDS: usize = 6;
@@ -328,14 +333,23 @@ impl Lexicon {
         if let Some(pinned) = self.pinned.filter(|&d| d < self.dictionaries.len()) {
             self.boosts = (0..self.dictionaries.len()).map(|d| if d == pinned { LANGUAGE_BOOST } else { 0.0 }).collect();
             self.guess = Some(pinned);
+            self.sure = Some(pinned);
             return;
         }
         let total: f32 = counts.iter().sum();
         self.boosts = counts.iter().map(|count| if total > 0.0 { LANGUAGE_BOOST * count / total } else { 0.0 }).collect();
+        self.sure = (0..counts.len()).find(|&d| counts[d] >= SURE_WORDS && counts[d] >= 3.0 * (total - counts[d]));
         // A new guess needs words for it; without any the last one stands.
         if total > 0.0 {
             self.guess = (0..counts.len()).max_by(|&a, &b| counts[a].total_cmp(&counts[b]));
         }
+    }
+
+    /// The dictionary of the language the text is surely in: picked, or with
+    /// at least [`SURE_WORDS`] of the last words only it has and three times
+    /// as many as all others together.
+    pub fn sure_language(&self) -> Option<usize> {
+        self.sure
     }
 
     /// The dictionary the language is taken from: picked, or else guessed.
@@ -617,7 +631,19 @@ pub fn strip(lexicon: &Lexicon, before: &str, substitution: Substitution) -> Res
     let found = suggest(lexicon, typed, previous, substitution, 3)?;
     let known = spelled(lexicon, typed)?;
     let correction = found.first().filter(|best| !known && !best.completion).map(|best| best.word.clone());
-    let fix = if known { None } else { obvious_fix(lexicon, typed, found.iter().map(|s| s.word.as_str()))? };
+    // A word some language has is fixed only when the text is surely in another
+    // that has a spelling of it, as "im" is "I'm" in a surely English text.
+    let fix = if known {
+        let lower = typed.to_lowercase();
+        let plainly = typed == lower || typed == capitalise(&lower);
+        lexicon
+            .sure_language()
+            .filter(|_| plainly)
+            .and_then(|language| lexicon.respell_in(language, &lower))
+            .map(|word| if typed != lower { capitalise(&word) } else { word })
+    } else {
+        obvious_fix(lexicon, typed, found.iter().map(|s| s.word.as_str()))?
+    };
     let mut words: Vec<String> = found.into_iter().map(|s| s.word).filter(|word| word != typed).collect();
     if known {
         words.insert(0, typed.to_owned());

@@ -156,56 +156,69 @@ fn last_tokens(text: &str, count: usize) -> Vec<Token> {
 /// after it. A word ending `kept` UTF-16 units before the end is left as
 /// it is, having been put back by hand.
 pub fn amend(lexicon: &Lexicon, before: &str, kept: Option<usize>) -> Option<(usize, String)> {
-    let tokens = last_tokens(before, 4);
-    let mut text = before.to_owned();
-    let mut from = before.len();
+    let tokens = last_tokens(before, LOOK_BACK);
     let at_start = |token: &Token| before[..token.start].trim().is_empty();
-    for i in (0..tokens.len().saturating_sub(1)).rev().take(2) {
+    let is_kept = |token: &Token| kept == Some(before[token.end..].encode_utf16().count());
+    // The word as typed and its plain form, unless it is spelled on purpose:
+    // with a capital, apart from one starting a sentence.
+    let plain = |i: usize| -> Option<(String, bool)> {
         let token = &tokens[i];
-        if !token.word {
-            continue;
+        if !token.word || is_kept(token) {
+            return None;
         }
         let typed = &before[token.start..token.end];
-        if kept == Some(before[token.end..].encode_utf16().count()) {
-            continue;
-        }
-        let context = |token: &Token| {
-            let word = before[token.start..token.end].to_lowercase();
-            if matches!(word.as_str(), "." | "!" | "?") { START.to_owned() } else { word.replace('’', "'") }
-        };
+        let lower = typed.to_lowercase();
+        let starts = i.checked_sub(1).map_or(at_start(token), |j| {
+            matches!(&before[tokens[j].start..tokens[j].end], "." | "!" | "?")
+        });
+        if typed == lower || (typed == capitalise(&lower) && starts) { Some((lower, typed != typed.to_lowercase())) } else { None }
+    };
+    let mut changes: Vec<(usize, String)> = Vec::new();
+    let context = |token: &Token| {
+        let word = before[token.start..token.end].to_lowercase();
+        if matches!(word.as_str(), "." | "!" | "?") { START.to_owned() } else { word.replace('’', "'") }
+    };
+    for i in (0..tokens.len().saturating_sub(1)).rev().take(2) {
+        let Some((lower, capital)) = plain(i) else { continue };
         let left = match i.checked_sub(1) {
             Some(j) => context(&tokens[j]),
-            None if at_start(token) => START.to_owned(),
+            None if at_start(&tokens[i]) => START.to_owned(),
             None => continue,
         };
         let right = context(&tokens[i + 1]);
-        let lower = typed.to_lowercase();
-        // A capital the plain word got at a sentence's start is kept.
-        if typed != lower && typed != capitalise(&lower) {
-            continue;
-        }
-        if typed != lower && left != START {
-            continue;
-        }
         if let Some(word) = lexicon.respell(&lower, &left, &right) {
-            let word = if typed != lower { capitalise(&word) } else { word };
-            text.replace_range(token.start..token.end, &word);
-            from = token.start;
+            changes.push((i, if capital { capitalise(&word) } else { word }));
         }
     }
-    if from == before.len() {
-        return None;
+    // Once the text is surely in one language, the words further back that
+    // its dictionary does not have but has another spelling of are slips for
+    // it: an "im" typed before it was clear the text is English.
+    if let Some(language) = lexicon.sure_language() {
+        for i in 0..tokens.len() {
+            if changes.iter().any(|(j, _)| *j == i) {
+                continue;
+            }
+            let Some((lower, capital)) = plain(i) else { continue };
+            if let Some(word) = lexicon.respell_in(language, &lower) {
+                changes.push((i, if capital { capitalise(&word) } else { word }));
+            }
+        }
     }
-    let tail_start = from;
-    let replaced = before[tail_start..].encode_utf16().count();
-    let new_tail = text[tail_start..].to_owned();
-    Some((replaced, new_tail))
+    let from = changes.iter().map(|(i, _)| tokens[*i].start).min()?;
+    changes.sort_by_key(|(i, _)| std::cmp::Reverse(*i));
+    let mut text = before.to_owned();
+    for (i, word) in &changes {
+        text.replace_range(tokens[*i].start..tokens[*i].end, word);
+    }
+    let replaced = before[from..].encode_utf16().count();
+    Some((replaced, text[from..].to_owned()))
 }
 
+/// How many words and marks back from the cursor amending looks once the
+/// language is sure.
+const LOOK_BACK: usize = 12;
+
 impl Lexicon {
-    /// The spelling of `plain` its context calls for, from the counts of
-    /// the language the text is in first, then any other's; only spellings
-    /// that language's dictionary has are used.
     /// Whether `word` is in dictionary `index` and in no other, as it is
     /// written or capitalised.
     fn only_in(&self, index: usize, word: &str) -> bool {
@@ -215,6 +228,21 @@ impl Lexicon {
         self.dictionaries.iter().enumerate().all(|(i, d)| has(d) == (i == index))
     }
 
+    /// The spelling of `plain` in dictionary `index`'s language when that
+    /// dictionary does not have it as it is but has another spelling of it.
+    pub(crate) fn respell_in(&self, index: usize, plain: &str) -> Option<String> {
+        let dictionary = self.dictionaries.get(index)?;
+        let known = |word: &str| dictionary.find(word).ok().flatten().is_some_and(|node| !node.hidden);
+        if known(plain) {
+            return None;
+        }
+        let (_, contexts) = self.contexts.iter().find(|(d, _)| *d == index)?;
+        contexts.likeliest(plain, known).map(str::to_owned)
+    }
+
+    /// The spelling of `plain` its context calls for, from the counts of
+    /// the language the text is in first, then any other's; only spellings
+    /// that language's dictionary has are used.
     fn respell(&self, plain: &str, before: &str, after: &str) -> Option<String> {
         let mut order: Vec<&(usize, Contexts)> = self.contexts.iter().collect();
         order.sort_by_key(|(index, _)| Some(*index) != self.language());
@@ -288,6 +316,22 @@ mod tests {
         lexicon.add_contexts(0, Contexts::parse("im\tim\t100\t\thappy:30\nim\tI'm\t1000\t\thappy:100\n"));
         assert_eq!(amend(&lexicon, "ok im happy ", None).map(|(_, text)| text), Some("I'm happy ".into()));
         assert_eq!(amend(&lexicon, "im Haus ", None), None, "German stays German");
+    }
+
+    #[test]
+    fn once_the_language_is_sure_words_further_back_are_respelled() {
+        let english = Dictionary::new(crate::dictionary::tests::encode(
+            &[("I'm", 150), ("happy", 160), ("now", 200), ("also", 200), ("why", 200), ("ok", 150)],
+            &[],
+        ))
+        .unwrap();
+        let german = Dictionary::new(crate::dictionary::tests::encode(&[("im", 200), ("ok", 150)], &[])).unwrap();
+        let mut lexicon = Lexicon::new(vec![english, german]);
+        lexicon.add_contexts(0, Contexts::parse("im\tim\t100\t\t\nim\tI'm\t1000\t\t\n"));
+        let text = "ok im glad now also why ";
+        lexicon.set_context(text);
+        assert_eq!(lexicon.sure_language(), Some(0));
+        assert_eq!(amend(&lexicon, text, None).map(|(_, text)| text), Some("I'm glad now also why ".into()));
     }
 
     #[test]

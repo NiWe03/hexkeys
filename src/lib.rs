@@ -1005,6 +1005,8 @@ struct Cursor {
     origin: Point,
     dx: i32,
     dy: i32,
+    /// Characters stepped while resting at a side, which speed the next up.
+    edge_steps: u32,
 }
 
 /// How far the finger moves for the cursor to move one character, in key
@@ -1016,6 +1018,17 @@ const CURSOR_STEP: f32 = 0.3;
 /// does not send the cursor to another line, which in a short text is the
 /// start or the end.
 const CURSOR_LINE: f32 = 1.5;
+
+/// How near a side of the keyboard the finger moving the cursor has to rest,
+/// in key widths, for the cursor to step on by itself towards that side,
+/// where the finger can go no further.
+const CURSOR_EDGE: f32 = 0.5;
+
+/// How long the finger rests at a side before the first step, the pause
+/// after it, and the shortest pause the steps speed up to, in ms.
+const CURSOR_EDGE_START_MS: u64 = 150;
+const CURSOR_EDGE_REPEAT_MS: f32 = 120.0;
+const CURSOR_EDGE_FASTEST_MS: f32 = 25.0;
 
 /// A finished swipe across the letters.
 #[derive(Clone, Debug, PartialEq)]
@@ -1154,6 +1167,20 @@ impl Keyboard {
         at.y < self.layout.numbers_bottom && if self.gestures.delete_from_left { at.x < third } else { at.x > 2.0 * third }
     }
 
+    /// Which way the cursor steps on by itself while the finger moving it
+    /// rests at a side of the keyboard: -1 left, 1 right, none elsewhere.
+    fn cursor_edge(&self, touch: &Touch) -> Option<i32> {
+        touch.cursor.as_ref()?;
+        let reach = CURSOR_EDGE * self.layout.cell_width;
+        if touch.at.x < reach {
+            Some(-1)
+        } else if touch.at.x > self.layout.width - reach {
+            Some(1)
+        } else {
+            None
+        }
+    }
+
     /// Whether a touch starts where a sideways slide moves the cursor: the
     /// number row's middle third.
     fn in_cursor_zone(&self, at: Point) -> bool {
@@ -1242,6 +1269,13 @@ impl Keyboard {
         touch.at = at;
         touch.last_time = time;
         if let Some(cursor) = &mut touch.cursor {
+            if distance(at, touch.anchor) > STILL * w {
+                touch.anchor = at;
+                touch.anchor_time = time;
+                touch.repeat_at = None;
+                cursor.edge_steps = 0;
+            }
+            touch.at = at;
             let dx = ((at.x - cursor.origin.x) / (CURSOR_STEP * w)).trunc() as i32;
             let dy = ((at.y - cursor.origin.y) / (self.layout.cell_height * CURSOR_LINE)).trunc() as i32;
             let moved = Action::Cursor { dx: dx - cursor.dx, dy: dy - cursor.dy };
@@ -1256,7 +1290,7 @@ impl Keyboard {
             && (at.x - touch.start.x).abs() >= (at.y - touch.start.y).abs()
         {
             touch.capital_typed = true;
-            touch.cursor = Some(Cursor { origin: touch.start, dx: 0, dy: 0 });
+            touch.cursor = Some(Cursor { origin: touch.start, dx: 0, dy: 0, edge_steps: 0 });
             self.touch = Some(touch);
             return self.touch_move(at, time);
         }
@@ -1369,6 +1403,9 @@ impl Keyboard {
             return None;
         }
         let touch = self.touch.as_ref()?;
+        if touch.cursor.is_some() {
+            return self.cursor_edge(touch).map(|_| touch.repeat_at.unwrap_or(touch.anchor_time + CURSOR_EDGE_START_MS));
+        }
         match self.gesture(touch) {
             Gesture::Delete if self.on_far_side(touch) => Some(touch.repeat_at.unwrap_or(touch.anchor_time + FAR_LETTER_START_MS)),
             Gesture::Delete => None,
@@ -1392,6 +1429,19 @@ impl Keyboard {
         let Some(touch) = self.touch.clone() else { return Action::Nothing };
         if self.popup.is_some() || self.deadline().is_none_or(|due| time < due) {
             return Action::Nothing;
+        }
+        if let Some(step) = self.cursor_edge(&touch) {
+            let w = self.layout.cell_width;
+            let touch = self.touch.as_mut().expect("touch");
+            let cursor = touch.cursor.as_mut().expect("cursor");
+            // The finger stays put while the cursor goes on: the point it counts
+            // from moves the other way, so sliding back still steps back.
+            cursor.origin.x -= step as f32 * CURSOR_STEP * w;
+            cursor.dx += step;
+            cursor.edge_steps += 1;
+            let pause = (CURSOR_EDGE_REPEAT_MS * 0.85f32.powi(cursor.edge_steps as i32)).max(CURSOR_EDGE_FASTEST_MS);
+            touch.repeat_at = Some(time + pause as u64);
+            return Action::Cursor { dx: step, dy: 0 };
         }
         match self.gesture(&touch) {
             Gesture::Delete if time < touch.anchor_time + FAR_HOLD_MS => {
@@ -1441,7 +1491,7 @@ impl Keyboard {
             Gesture::Tap if self.layout.keys[touch.key].label == "space" || self.in_cursor_zone(touch.start) => {
                 let touch = self.touch.as_mut().expect("touch");
                 touch.capital_typed = true;
-                touch.cursor = Some(Cursor { origin: touch.at, dx: 0, dy: 0 });
+                touch.cursor = Some(Cursor { origin: touch.at, dx: 0, dy: 0, edge_steps: 0 });
                 Action::Redraw
             }
             Gesture::Tap if self.long_press(touch.key) => Action::Redraw,
@@ -2217,6 +2267,29 @@ mod tests {
         assert_eq!(keyboard.touch_up(enter, 1080), Action::Enter);
         assert_eq!(gesture(&mut keyboard, "⏎", &[(0.0, -0.6)]), Action::EnterAction, "a flick up does it too");
         assert_eq!(gesture(&mut keyboard, SYMBOLS_KEY, &[(0.0, -0.6)]), Action::Emoji, "a flick up on the symbols key opens the emoji");
+    }
+
+    #[test]
+    fn resting_at_a_side_moves_the_cursor_on_ever_faster() {
+        let mut keyboard = Keyboard::new(space_bottom(), 1008.0, 1.0, 400);
+        let space = near(&keyboard, "space", 0.0, 0.0);
+        keyboard.touch_down(space, 0);
+        keyboard.tick(400);
+        let edge = Point { x: 5.0, y: space.y };
+        assert!(matches!(keyboard.touch_move(edge, 500), Action::Cursor { dx, .. } if dx < 0));
+        let first = keyboard.deadline().expect("steps on at the side");
+        assert_eq!(keyboard.tick(first), Action::Cursor { dx: -1, dy: 0 });
+        let pauses: Vec<u64> = (0..5)
+            .map(|_| {
+                let due = keyboard.deadline().unwrap();
+                assert_eq!(keyboard.tick(due), Action::Cursor { dx: -1, dy: 0 });
+                keyboard.deadline().unwrap() - due
+            })
+            .collect();
+        assert!(pauses.windows(2).all(|p| p[1] <= p[0]), "{pauses:?}");
+        // Back in the middle it stops, and sliding right steps right again.
+        assert!(matches!(keyboard.touch_move(space, 2000), Action::Cursor { dx, .. } if dx > 0));
+        assert_eq!(keyboard.deadline(), None);
     }
 
     #[test]

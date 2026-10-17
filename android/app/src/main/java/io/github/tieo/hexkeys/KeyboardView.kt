@@ -978,7 +978,9 @@ class KeyboardView(
                 fingerY = keysY(event.getY(at))
                 addPoint(fingerX, fingerY, time)
                 val action = Core.touchMove(handle, fingerX, fingerY, time)
-                if (action[0] != "nothing") act(action)
+                // A move that does nothing yet can still start something timed, as
+                // resting at a side does for the cursor.
+                if (action[0] != "nothing") act(action) else schedule()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val x = event.getX(index)
