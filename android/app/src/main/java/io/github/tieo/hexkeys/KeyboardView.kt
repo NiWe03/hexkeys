@@ -306,6 +306,8 @@ class KeyboardView(
             // The number row shrinks into the bar and grows back rather than jumping.
             barAnimator?.cancel()
             barAnimator = android.animation.ValueAnimator.ofFloat(barProgress, if (value) 1f else 0f).apply {
+                // From the next frame on, after the panel opening with it is laid out.
+                startDelay = 16
                 duration = BAR_MS
                 interpolator = android.view.animation.DecelerateInterpolator()
                 addUpdateListener {
@@ -486,9 +488,10 @@ class KeyboardView(
         spaceKeys = paths.indices.count { Core.label(handle, it) == "space" }
         spacesDrawn = 0
         for ((index, path) in paths.withIndex()) {
-            val onBar = barProgress > 0f && Core.inNumberRow(handle, index)
+            val digits = Core.inNumberRow(handle, index)
+            val onBar = barProgress > 0f && digits
             // Under a panel the letters are covered.
-            if (gestureBar && !onBar && !barAboveLetters) continue
+            if (gestureBar && !digits && !barAboveLetters) continue
             if (onBar) {
                 canvas.save()
                 canvas.translate(0f, barTop.toFloat())
@@ -511,7 +514,8 @@ class KeyboardView(
                 val alpha = labelPaint.alpha
                 labelPaint.alpha = (alpha * (1f - barProgress)).toInt()
                 val at = Core.labelPosition(handle, index)
-                drawLabel(canvas, label, floatArrayOf(at[0], barTop + at[1] * barScale), cellWidth)
+                // Smaller as the row shrinks, as if the row were seen from further off.
+                drawLabel(canvas, label, floatArrayOf(at[0], barTop + at[1] * barScale), cellWidth * barScale)
                 labelPaint.alpha = alpha
                 continue
             }

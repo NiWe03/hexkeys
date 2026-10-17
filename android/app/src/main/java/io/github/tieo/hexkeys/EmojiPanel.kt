@@ -89,18 +89,23 @@ class EmojiPanel(
         apply(theme)
     }
 
-    /** Follows the keyboard's theme. */
+    /** Follows the keyboard's theme; the same theme again changes nothing. */
     fun apply(theme: Theme) {
+        if (theme == this.theme && rows.isNotEmpty()) return
         this.theme = theme
+        builtRecent = null
         setBackgroundColor(theme.background)
         bottom.apply(theme)
         buildBar()
         open()
     }
 
+    /** The recently used the rows were built with; the rows are built again only when they changed. */
+    private var builtRecent: List<String>? = null
+
     /** Opens at the top: the recently used, or the first group when there are none. */
     fun open() {
-        buildRows()
+        if (recent() != builtRecent) buildRows()
         list.setSelection(0)
         marked = rows.firstOrNull()?.group ?: 0
         markBar()
@@ -117,7 +122,8 @@ class EmojiPanel(
     }
 
     private fun buildRows() {
-        val all = listOf("Recently used" to recent()) + groups
+        builtRecent = recent()
+        val all = listOf("Recently used" to builtRecent.orEmpty()) + groups
         val built = mutableListOf<Row>()
         val at = mutableListOf<Int>()
         for ((group, entry) in all.withIndex()) {
