@@ -117,10 +117,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
             searchBackspace.setColorFilter(theme.label)
             searchBack.setOnClickListener { back() }
             query.setTextColor(theme.label)
-            query.background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(theme.other)
-                cornerRadius = 100 * density
-            }
+            query.background = pill(context, theme.other)
             val magnifier = context.getDrawable(R.drawable.icon_search)!!.mutate()
             magnifier.setTint(theme.label)
             val size = (20 * density).toInt()

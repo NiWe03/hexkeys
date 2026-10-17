@@ -59,11 +59,7 @@ class EmojiPanel(
         isVerticalScrollBarEnabled = false
         selector = GradientDrawable()
     }
-    private val bottom = LinearLayout(context).apply { orientation = HORIZONTAL }
-    private val backspace = ImageView(context).apply {
-        setImageResource(R.drawable.icon_backspace)
-        scaleType = ImageView.ScaleType.CENTER_INSIDE
-    }
+    private val bottom = PanelKeys(context, onClose, onSpace, onBackspace)
     private var theme = Theme.current(context)
 
     init {
@@ -76,10 +72,10 @@ class EmojiPanel(
             name to emoji.split(' ').filter { paint.hasGlyph(it) }
         }
         // One inset and one gap throughout, circles and pills for the controls.
-        setPadding(dp(INSET), dp(INSET), dp(INSET), dp(INSET))
-        addView(bar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL)))
-        addView(list, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(INSET / 2) })
-        addView(bottom, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL)).apply { topMargin = dp(INSET / 2) })
+        setPadding(dp(PANEL_INSET), dp(PANEL_INSET), dp(PANEL_INSET), dp(PANEL_INSET))
+        addView(bar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(PANEL_CONTROL)))
+        addView(list, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(PANEL_INSET / 2) })
+        addView(bottom, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(PANEL_CONTROL)).apply { topMargin = dp(PANEL_INSET / 2) })
         list.setOnScrollListener(object : AbsListView.OnScrollListener {
             override fun onScrollStateChanged(view: AbsListView, state: Int) {}
             override fun onScroll(view: AbsListView, first: Int, visible: Int, total: Int) {
@@ -90,15 +86,6 @@ class EmojiPanel(
                 }
             }
         })
-        // Space is the long key, unnamed as on the keyboard.
-        val keys = listOf<Pair<View, Float>>(label("ABC", onClose) to 1f, label("", onSpace) to 3f, backspace to 1f)
-        repeatWhileHeld(backspace, onBackspace)
-        for ((index, entry) in keys.withIndex()) {
-            val (view, weight) = entry
-            bottom.addView(view, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight).apply {
-                if (index > 0) marginStart = dp(INSET)
-            })
-        }
         apply(theme)
     }
 
@@ -106,12 +93,7 @@ class EmojiPanel(
     fun apply(theme: Theme) {
         this.theme = theme
         setBackgroundColor(theme.background)
-        backspace.setColorFilter(theme.label)
-        for (i in 0 until bottom.childCount) {
-            val view = bottom.getChildAt(i)
-            (view as? TextView)?.setTextColor(theme.label)
-            view.background = pill(theme.other)
-        }
+        bottom.apply(theme)
         buildBar()
         open()
     }
@@ -160,7 +142,7 @@ class EmojiPanel(
             background = pill(theme.other)
             setOnClickListener { onSearch() }
         }
-        bar.addView(search, LayoutParams(dp(CONTROL * 2), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = dp(INSET / 2) })
+        bar.addView(search, LayoutParams(dp(PANEL_CONTROL * 2), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = dp(PANEL_INSET / 2) })
         for ((group, icon) in GROUP_ICONS.withIndex()) {
             val mark = ImageView(context).apply {
                 setImageResource(icon)
@@ -168,7 +150,7 @@ class EmojiPanel(
                 setPadding(dp(9), dp(9), dp(9), dp(9))
             }
             val cell = FrameLayout(context)
-            cell.addView(mark, FrameLayout.LayoutParams(dp(CONTROL - 4), dp(CONTROL - 4), Gravity.CENTER))
+            cell.addView(mark, FrameLayout.LayoutParams(dp(PANEL_CONTROL - 4), dp(PANEL_CONTROL - 4), Gravity.CENTER))
             cell.setOnClickListener {
                 // A group with no emoji, the recently used before any, has none to show.
                 val start = starts.getOrNull(group) ?: return@setOnClickListener
@@ -194,17 +176,7 @@ class EmojiPanel(
         }
     }
 
-    private fun pill(color: Int) = GradientDrawable().apply {
-        setColor(color)
-        cornerRadius = dp(CONTROL).toFloat()
-    }
-
-    private fun label(text: String, action: () -> Unit) = TextView(context).apply {
-        this.text = text
-        textSize = 16f
-        gravity = Gravity.CENTER
-        setOnClickListener { action() }
-    }
+    private fun pill(color: Int) = pill(context, color)
 
     private inner class Rows : BaseAdapter() {
         override fun getCount() = rows.size
@@ -217,7 +189,7 @@ class EmojiPanel(
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View = when (val row = rows[position]) {
             is Row.Name -> (convertView as? TextView ?: TextView(context).apply {
                 textSize = 13f
-                setPadding(dp(INSET / 2), dp(10), 0, dp(4))
+                setPadding(dp(PANEL_INSET / 2), dp(10), 0, dp(4))
             }).apply {
                 text = row.name
                 setTextColor(theme.label)
@@ -254,9 +226,6 @@ class EmojiPanel(
         const val RECENT = "recent_emoji"
         const val RECENT_COUNT = 32
 
-        /** The panel's inset and the gap between its parts, and the height of its controls, in dp. */
-        const val INSET = 8
-        const val CONTROL = 40
 
         /** An icon for the recently used and for each group of emoji.tsv, in its order. */
         val GROUP_ICONS = listOf(

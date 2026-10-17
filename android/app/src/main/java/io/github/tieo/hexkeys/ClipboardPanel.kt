@@ -45,31 +45,19 @@ class ClipboardPanel(
         scaleType = ImageView.ScaleType.CENTER_INSIDE
         alpha = 0.25f
     }
-    private val bottom = LinearLayout(context).apply { orientation = HORIZONTAL }
-    private val backspace = ImageView(context).apply {
-        setImageResource(R.drawable.icon_backspace)
-        scaleType = ImageView.ScaleType.CENTER_INSIDE
-    }
+    private val bottom = PanelKeys(context, onClose, onSpace, onBackspace)
     private var theme = Theme.current(context)
 
     init {
         orientation = VERTICAL
         // Touches between the panel's controls must not reach the keys underneath.
         isClickable = true
-        setPadding(dp(INSET), dp(INSET), dp(INSET), dp(INSET))
+        setPadding(dp(PANEL_INSET), dp(PANEL_INSET), dp(PANEL_INSET), dp(PANEL_INSET))
         val room = FrameLayout(context)
         room.addView(list, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         room.addView(empty, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER))
         addView(room, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        addView(bottom, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL)).apply { topMargin = dp(INSET) })
-        repeatWhileHeld(backspace, onBackspace)
-        val keys = listOf<Pair<View, Float>>(label("ABC", onClose) to 1f, label("", onSpace) to 3f, backspace to 1f)
-        for ((index, entry) in keys.withIndex()) {
-            val (view, weight) = entry
-            bottom.addView(view, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight).apply {
-                if (index > 0) marginStart = dp(INSET)
-            })
-        }
+        addView(bottom, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(PANEL_CONTROL)).apply { topMargin = dp(PANEL_INSET) })
         apply(theme)
     }
 
@@ -77,13 +65,8 @@ class ClipboardPanel(
     fun apply(theme: Theme) {
         this.theme = theme
         setBackgroundColor(theme.background)
-        backspace.setColorFilter(theme.label)
+        bottom.apply(theme)
         empty.setColorFilter(theme.label)
-        for (i in 0 until bottom.childCount) {
-            val view = bottom.getChildAt(i)
-            (view as? TextView)?.setTextColor(theme.label)
-            view.background = pill(theme.other)
-        }
         open()
     }
 
@@ -94,17 +77,7 @@ class ClipboardPanel(
         list.adapter = Rows()
     }
 
-    private fun pill(color: Int) = GradientDrawable().apply {
-        setColor(color)
-        cornerRadius = dp(CONTROL).toFloat()
-    }
-
-    private fun label(text: String, action: () -> Unit) = TextView(context).apply {
-        this.text = text
-        textSize = 16f
-        gravity = Gravity.CENTER
-        setOnClickListener { action() }
-    }
+    private fun pill(color: Int) = pill(context, color)
 
     private fun icon(id: Int) = ImageView(context).apply {
         setImageResource(id)
@@ -125,7 +98,7 @@ class ClipboardPanel(
                 gravity = Gravity.CENTER_VERTICAL
                 background = GradientDrawable().apply {
                     setColor(theme.other)
-                    cornerRadius = dp(CONTROL / 2).toFloat()
+                    cornerRadius = dp(PANEL_CONTROL / 2).toFloat()
                 }
                 setPadding(dp(16), dp(4), dp(4), dp(4))
                 setOnClickListener { onPaste(clip.text) }
@@ -145,7 +118,7 @@ class ClipboardPanel(
                     clips.pin(clip, !clip.pinned)
                     open()
                 }
-            }, LayoutParams(dp(CONTROL), dp(CONTROL)))
+            }, LayoutParams(dp(PANEL_CONTROL), dp(PANEL_CONTROL)))
             row.addView(icon(R.drawable.icon_close).apply {
                 setColorFilter(theme.label)
                 alpha = 0.5f
@@ -153,17 +126,12 @@ class ClipboardPanel(
                     clips.remove(clip)
                     open()
                 }
-            }, LayoutParams(dp(CONTROL), dp(CONTROL)))
-            row.minimumHeight = dp(CONTROL + 8)
+            }, LayoutParams(dp(PANEL_CONTROL), dp(PANEL_CONTROL)))
+            row.minimumHeight = dp(PANEL_CONTROL + 8)
             return FrameLayout(context).apply {
-                setPadding(0, 0, 0, dp(INSET / 2))
+                setPadding(0, 0, 0, dp(PANEL_INSET / 2))
                 addView(row, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
         }
-    }
-
-    private companion object {
-        const val INSET = 8
-        const val CONTROL = 40
     }
 }

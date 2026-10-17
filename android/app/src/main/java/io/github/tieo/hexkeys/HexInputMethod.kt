@@ -211,6 +211,82 @@ class HexInputMethod : InputMethodService() {
         lastCorrection = Correction(typed.substring(same), after.substring(same), unknown)
     }
 
+    /**
+     * One step of a delete slide, on the field or on the emoji search's
+     * query alike: `text` is the slide's pieces so far, whether they are
+     * words, and whether it just started. `undo` is a correction made right
+     * before, which the first piece takes back, and `justSwiped` a word just
+     * swiped, which goes whole.
+     */
+    private fun slide(target: TextTarget, text: String, undo: Correction?, justSwiped: String?) {
+        val (slid, words, started) = text.split(" ").map { it.toInt() }
+        var before = target.textBefore()
+        if (started == 1) {
+            deleted.clear()
+            swipedBeforeDelete = justSwiped?.takeIf { before.endsWith(it) }
+            slideUndo = undo?.takeIf { before.endsWith(it.inserted) }
+            slideUndone = false
+            slidePeak = 0
+            slidePeakDeleted = 0
+        }
+        val word = swipedBeforeDelete
+        target.beginBatch()
+        // Right after a correction the first piece is the correction itself:
+        // what was typed comes back, as backspace brings it back, and sliding
+        // back to the start puts the correction in again.
+        val undoing = slideUndo
+        val asked = if (undoing == null) slid else slid - 1
+        // The core counts on past the end of the text; coming back from there
+        // puts back what was really deleted in the same proportion.
+        val pieces = when {
+            asked >= slidePeak || slidePeak == 0 -> asked
+            else -> (asked.toLong() * slidePeakDeleted / slidePeak).toInt()
+        }
+        if (undoing != null && asked >= 0 && !slideUndone) {
+            undoCorrection(undoing)
+            slideUndone = true
+            before = target.textBefore()
+        }
+        // A selection goes first, as one piece, as backspace takes it; so
+        // does a word just swiped.
+        val selected = if (deleted.isEmpty() && pieces > 0) target.selectedText() else ""
+        if (selected.isNotEmpty()) {
+            target.commit("")
+            deleted.addLast(selected)
+        } else if (deleted.isEmpty() && pieces > 0 && word != null && before.endsWith(word)) {
+            target.deleteBefore(word.length)
+            before = before.dropLast(word.length)
+            deleted.addLast(word)
+        }
+        while (deleted.size < pieces && before.isNotEmpty()) {
+            // A word goes with the spaces after it, as ctrl and backspace take it.
+            val piece = if (words == 1) {
+                WORD_AT_END.find(before)?.value?.takeIf { it.isNotEmpty() } ?: before.takeLast(1)
+            } else {
+                lastCharacter(before)
+            }
+            target.deleteBefore(piece.length)
+            before = before.dropLast(piece.length)
+            // The copy ran short of the field's text: read on.
+            if (before.isEmpty()) before = target.textBefore()
+            deleted.addLast(piece)
+        }
+        while (deleted.size > maxOf(pieces, 0)) target.commit(deleted.removeLast())
+        if (asked >= slidePeak) {
+            slidePeak = asked
+            slidePeakDeleted = deleted.size
+        }
+        if (undoing != null && asked < 0 && slideUndone) {
+            target.deleteBefore(undoing.typed.length)
+            target.commit(undoing.inserted)
+            keptEnd = -1
+            slideUndone = false
+        }
+        target.endBatch()
+        val undone = if (slideUndone) undoing?.inserted?.trimEnd().orEmpty() else ""
+        keyboard?.deletedText = undone + deleted.reversed().joinToString("")
+    }
+
     /** The correction the delete slide under way started right after, and whether it has undone it. */
     private var slideUndo: Correction? = null
     private var slideUndone = false
@@ -243,6 +319,7 @@ class HexInputMethod : InputMethodService() {
 
     /** The emoji search's query, which the keys type while it is open. */
     private val query = StringBuilder()
+    private val queryText = QueryText(query)
 
     /**
      * The emoji names to search, read in the background when the search
@@ -295,9 +372,10 @@ class HexInputMethod : InputMethodService() {
     /** Keys while searching emoji go to the query; enter or the emoji found end it. */
     private fun searchKey(kind: String, text: String) {
         when (kind) {
-            "commit" -> query.append(text)
-            "backspace" -> if (query.isNotEmpty()) query.setLength(query.length - 1)
-            "delete" -> query.setLength(maxOf(0, query.length - (text.substringBefore(' ').toIntOrNull() ?: 1)))
+            "commit" -> queryText.commit(text)
+            // Deleting in the query works as it does in a field.
+            "backspace" -> deleteCharacter(queryText)
+            "delete" -> slide(queryText, text, null, null)
             "enter", "enter_action" -> {
                 closeSearch()
                 return
@@ -361,74 +439,7 @@ class HexInputMethod : InputMethodService() {
         val justSwiped = swiped
         swiped = null
         when (kind) {
-            "delete" -> {
-                val (slid, words, started) = text.split(" ").map { it.toInt() }
-                var before = connection.textBefore()
-                if (started == 1) {
-                    deleted.clear()
-                    swipedBeforeDelete = justSwiped?.takeIf { before.endsWith(it) }
-                    slideUndo = undo?.takeIf { before.endsWith(it.inserted) }
-                    slideUndone = false
-                    slidePeak = 0
-                    slidePeakDeleted = 0
-                }
-                val word = swipedBeforeDelete
-                connection.beginBatch()
-                // Right after a correction the first piece is the correction itself:
-                // what was typed comes back, as backspace brings it back, and sliding
-                // back to the start puts the correction in again.
-                val undoing = slideUndo
-                val asked = if (undoing == null) slid else slid - 1
-                // The core counts on past the end of the text; coming back from there
-                // puts back what was really deleted in the same proportion.
-                val pieces = when {
-                    asked >= slidePeak || slidePeak == 0 -> asked
-                    else -> (asked.toLong() * slidePeakDeleted / slidePeak).toInt()
-                }
-                if (undoing != null && asked >= 0 && !slideUndone) {
-                    undoCorrection(undoing)
-                    slideUndone = true
-                    before = connection.textBefore()
-                }
-                // A selection goes first, as one piece, as backspace takes it; so
-                // does a word just swiped.
-                val selected = if (deleted.isEmpty() && pieces > 0) connection.selectedText() else ""
-                if (selected.isNotEmpty()) {
-                    connection.commit("")
-                    deleted.addLast(selected)
-                } else if (deleted.isEmpty() && pieces > 0 && word != null && before.endsWith(word)) {
-                    connection.deleteBefore(word.length)
-                    before = before.dropLast(word.length)
-                    deleted.addLast(word)
-                }
-                while (deleted.size < pieces && before.isNotEmpty()) {
-                    // A word goes with the spaces after it, as ctrl and backspace take it.
-                    val piece = if (words == 1) {
-                        WORD_AT_END.find(before)?.value?.takeIf { it.isNotEmpty() } ?: before.takeLast(1)
-                    } else {
-                        lastCharacter(before)
-                    }
-                    connection.deleteBefore(piece.length)
-                    before = before.dropLast(piece.length)
-                    // The copy ran short of the field's text: read on.
-                    if (before.isEmpty()) before = connection.textBefore()
-                    deleted.addLast(piece)
-                }
-                while (deleted.size > maxOf(pieces, 0)) connection.commit(deleted.removeLast())
-                if (asked >= slidePeak) {
-                    slidePeak = asked
-                    slidePeakDeleted = deleted.size
-                }
-                if (undoing != null && asked < 0 && slideUndone) {
-                    connection.deleteBefore(undoing.typed.length)
-                    connection.commit(undoing.inserted)
-                    keptEnd = -1
-                    slideUndone = false
-                }
-                connection.endBatch()
-                val undone = if (slideUndone) undoing?.inserted?.trimEnd().orEmpty() else ""
-                keyboard?.deletedText = undone + deleted.reversed().joinToString("")
-            }
+            "delete" -> slide(connection, text, undo, justSwiped)
             "swipe" -> {
                 val view = keyboard ?: return
                 if (!suggesting) return
@@ -738,15 +749,15 @@ class HexInputMethod : InputMethodService() {
      * Deletes the character before the cursor as the reader sees it: a whole
      * emoji, flag or letter with its marks, however many code points it is.
      */
-    private fun deleteCharacter() {
+    private fun deleteCharacter(target: TextTarget = editor) {
         if (currentInputConnection == null) return
-        editor.finishComposing()
-        if (editor.hasSelection) {
-            editor.commit("")
+        if (target === editor) editor.finishComposing()
+        if (target.hasSelection) {
+            target.commit("")
             return
         }
-        val before = editor.textBefore()
-        if (before.isNotEmpty()) editor.deleteBefore(lastCharacter(before).length)
+        val before = target.textBefore()
+        if (before.isNotEmpty()) target.deleteBefore(lastCharacter(before).length)
     }
 
     /**

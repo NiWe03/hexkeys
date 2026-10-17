@@ -617,13 +617,6 @@ fn bottom_row(switch: &str) -> RowSpec {
 /// and the question mark it used to name are on the letter page already.
 const SYMBOLS_KEY: &str = "@#€";
 
-/// Symbols for the first symbol page.
-const SYMBOLS: &str = "@#€&-+()/*\"':;!_%=$<>[]{}\\|~^°";
-
-/// Rarer symbols for the second page; the quotes, dashes and backtick are
-/// also offered by holding the plain mark.
-const MORE_SYMBOLS: &str = "§¢£¥₹©®™✓•π√÷×±≈≠≤≥‰«»„“”–—`";
-
 /// The key that turns to the second symbol page, and on it back to the first.
 const MORE: &str = "=\\<";
 
@@ -1895,6 +1888,10 @@ mod tests {
             }
         }
     }
+
+    /// The symbols the pages offer, which a test keeps reachable.
+    const SYMBOLS: &str = "@#€&-+()/*\"':;!_%=$<>[]{}\\|~^°";
+    const MORE_SYMBOLS: &str = "§¢£¥₹©®™✓•π√÷×±≈≠≤≥‰«»„“”–—`";
 
     #[test]
     fn every_symbol_is_on_a_page() {

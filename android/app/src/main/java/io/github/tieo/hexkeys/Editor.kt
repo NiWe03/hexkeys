@@ -3,6 +3,33 @@ package io.github.tieo.hexkeys
 import android.inputmethodservice.InputMethodService
 import android.view.KeyEvent
 
+/** Text that typing and deleting work on: the field typed in, or the emoji search's query. */
+interface TextTarget {
+    /** The text before the cursor, or before the selection when there is one. */
+    fun textBefore(): String
+    val hasSelection: Boolean
+    fun selectedText(): String
+    /** Puts `text` in place of the selection or at the cursor. */
+    fun commit(text: String)
+    /** Deletes `length` UTF-16 characters before the cursor. */
+    fun deleteBefore(length: Int)
+    fun beginBatch() {}
+    fun endBatch() {}
+}
+
+/** The emoji search's query, typed at its end. */
+class QueryText(private val query: StringBuilder) : TextTarget {
+    override fun textBefore() = query.toString()
+    override val hasSelection get() = false
+    override fun selectedText() = ""
+    override fun commit(text: String) {
+        query.append(text)
+    }
+    override fun deleteBefore(length: Int) {
+        query.setLength(maxOf(0, query.length - length))
+    }
+}
+
 /**
  * The field being typed in, through the service's input connection, with a
  * copy of the text before the cursor kept up to date by every edit made
@@ -11,7 +38,7 @@ import android.view.KeyEvent
  * read again only when the cursor moves for some other reason, such as the
  * user tapping elsewhere in the text or the app changing it.
  */
-class Editor(private val service: InputMethodService) {
+class Editor(private val service: InputMethodService) : TextTarget {
 
     private val connection get() = service.currentInputConnection
 
@@ -27,7 +54,7 @@ class Editor(private val service: InputMethodService) {
     var selectionEnd = -1
         private set
 
-    val hasSelection get() = selectionStart != selectionEnd
+    override val hasSelection get() = selectionStart != selectionEnd
 
     /** A new field, or the same one started over. */
     fun reset(start: Int, end: Int) {
@@ -47,7 +74,7 @@ class Editor(private val service: InputMethodService) {
     }
 
     /** The text before the cursor, or before the selection when there is one. */
-    fun textBefore(): String {
+    override fun textBefore(): String {
         before?.let { return it }
         val read = connection?.getTextBeforeCursor(CONTEXT, 0)?.toString().orEmpty()
         before = read
@@ -56,11 +83,11 @@ class Editor(private val service: InputMethodService) {
     }
 
     /** The selected text; empty without a selection, which needs no read. */
-    fun selectedText(): String =
+    override fun selectedText(): String =
         if (hasSelection) connection?.getSelectedText(0)?.toString().orEmpty() else ""
 
     /** Puts `text` in place of the selection or at the cursor. */
-    fun commit(text: String) {
+    override fun commit(text: String) {
         val known = before
         connection?.commitText(text, 1)
         val start = minOf(selectionStart, selectionEnd)
@@ -70,7 +97,7 @@ class Editor(private val service: InputMethodService) {
     }
 
     /** Deletes `length` UTF-16 characters before the cursor. */
-    fun deleteBefore(length: Int) {
+    override fun deleteBefore(length: Int) {
         if (length <= 0) return
         connection?.deleteSurroundingText(length, 0)
         selectionStart = maxOf(0, selectionStart - length)
@@ -96,11 +123,11 @@ class Editor(private val service: InputMethodService) {
         connection?.setComposingRegion(start, end)
     }
 
-    fun beginBatch() {
+    override fun beginBatch() {
         connection?.beginBatchEdit()
     }
 
-    fun endBatch() {
+    override fun endBatch() {
         connection?.endBatchEdit()
     }
 
