@@ -21,7 +21,7 @@ import sys
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
 RES = pathlib.Path(__file__).resolve().parent.parent / "android/app/src/main/res"
@@ -35,10 +35,11 @@ BACKGROUND = "#FF1B1B1F"
 FLOW = ["#FF5F72D9", "#FF3FA393", "#FFA465B8"]
 
 # Adaptive icons are 108 units across, of which a launcher's mask shows the
-# middle 72 at most and a circle of 66 for sure; the keys fill most of that
-# circle, so as little backdrop as the mask allows shows around them.
+# middle 72 at most and a circle of 66 for sure. The keys' outline reaches 30
+# units from the middle, where the three keys meet, so its three outer
+# corners sit equally far inside that circle with the stroke.
 VIEW = 108
-SIZE = 56
+REACH = 30
 
 # In key widths: the outline's corner radius and stroke, the seams' stroke,
 # and the letters' size.
@@ -125,11 +126,13 @@ def main() -> None:
     polys = [shapes[key] for key, _, _, _ in KEYS]
     whole = unary_union(polys)
     minx, miny, maxx, maxy = whole.bounds
-    scale = SIZE / max(maxx - minx, maxy - miny)
-    ox = VIEW / 2 - (minx + maxx) / 2 * scale
-    oy = VIEW / 2 - (miny + maxy) / 2 * scale
     radius = cell * CORNER
     rounded = whole.buffer(1).buffer(-(1 + radius), join_style=2).buffer(radius, join_style=1, resolution=16)
+    middle = rounded.centroid
+    farthest = max(middle.distance(Point(c)) for c in rounded.exterior.coords)
+    scale = REACH / farthest
+    ox = VIEW / 2 - middle.x * scale
+    oy = VIEW / 2 - middle.y * scale
     outline = path_data(rounded.exterior.coords, scale, ox, oy)
     seams = []
     for i in range(len(polys)):
