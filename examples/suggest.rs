@@ -1,6 +1,7 @@
 //! Suggestions from `.dict` files for typed words, timed, and with `PREVIOUS:`
-//! alone what is predicted after it:
-//! `cargo run --release --example suggest -- FILE[,FILE...] [PREVIOUS:]WORD...`.
+//! alone what is predicted after it, and with `=` the strip for that text
+//! before the cursor:
+//! `cargo run --release --example suggest -- FILE[,FILE...] [PREVIOUS:]WORD... [=TEXT]...`.
 
 use hexkeys::dictionary::Dictionary;
 use hexkeys::{Layout, honeycomb, suggest};
@@ -14,6 +15,11 @@ fn main() {
     let layout = Layout::fit(&honeycomb(), 1080.0, 1.0);
     let substitution = |typed: char, meant: char| layout.substitution(typed, meant);
     for arg in args {
+        if let Some(before) = arg.strip_prefix('=') {
+            let strip = suggest::strip(&lexicon, before, &substitution).expect("read");
+            println!("{before}\t{}\t{}\t{}", strip.slots.join("|"), strip.correction.unwrap_or_default(), strip.unknown.unwrap_or_default());
+            continue;
+        }
         let (previous, typed) = match arg.split_once(':') {
             Some((previous, typed)) => (Some(previous), typed),
             None => (None, arg.as_str()),
