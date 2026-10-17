@@ -46,6 +46,10 @@ class EmojiPanel(
         setImageResource(R.drawable.icon_search)
         scaleType = android.widget.ImageView.ScaleType.FIT_START
     }
+    private val backspace = android.widget.ImageView(context).apply {
+        setImageResource(R.drawable.icon_backspace)
+        scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+    }
     private var theme = Theme.current(context)
 
     init {
@@ -57,27 +61,27 @@ class EmojiPanel(
             val (name, emoji) = line.split('\t').takeIf { it.size == 2 } ?: return@mapNotNull null
             name to emoji.split(' ').filter { paint.hasGlyph(it) }
         }
-        // Searching by name: a search field across the top, as the search field it opens.
-        addView(searchField, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply {
-            setMargins(dp(8), dp(6), dp(8), dp(2))
-        })
+        // One inset and one gap throughout, and pills for every control: the
+        // search field across the top, as the search field it opens, the tabs,
+        // the grid, and the way back, space and backspace at the bottom.
+        setPadding(dp(INSET), dp(INSET), dp(INSET), dp(INSET))
+        addView(searchField, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL)))
         searchField.setOnClickListener { onSearch() }
-        addView(tabs, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
-        addView(grid, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        addView(bottom, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        addView(tabs, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL)).apply { topMargin = dp(INSET) })
+        addView(grid, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(INSET / 2) })
+        addView(bottom, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CONTROL)).apply { topMargin = dp(INSET / 2) })
         grid.setOnItemClickListener { _, _, position, _ ->
             val emoji = current()[position]
             remember(emoji)
             onEmoji(emoji)
         }
-        for ((label, weight, action) in listOf(
-            Triple("ABC", 1f, onClose),
-            // Space is the long key, unnamed as on the keyboard.
-            Triple("", 3f, onSpace),
-            Triple("", 1f, onBackspace),
-        )) {
-            bottom.addView(bar(label, action), LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight).apply {
-                setMargins(dp(3), dp(4), dp(3), dp(4))
+        // Space is the long key, unnamed as on the keyboard.
+        val keys = listOf<Pair<View, Float>>(bar("ABC", onClose) to 1f, bar("", onSpace) to 3f, backspace to 1f)
+        backspace.setOnClickListener { onBackspace() }
+        for ((index, entry) in keys.withIndex()) {
+            val (view, weight) = entry
+            bottom.addView(view, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight).apply {
+                if (index > 0) marginStart = dp(INSET)
             })
         }
         shown = if (recent().isEmpty()) 1 else 0
@@ -90,25 +94,13 @@ class EmojiPanel(
         this.theme = theme
         setBackgroundColor(theme.background)
         searchField.setColorFilter(theme.label)
-        searchField.setPadding(dp(14), dp(9), 0, dp(9))
-        searchField.background = GradientDrawable().apply {
-            setColor(theme.other)
-            cornerRadius = dp(20).toFloat()
-        }
+        searchField.setPadding(dp(14), dp(10), 0, dp(10))
+        searchField.background = pill(theme.other)
+        backspace.setColorFilter(theme.label)
         for (i in 0 until bottom.childCount) {
-            val view = bottom.getChildAt(i) as TextView
-            view.setTextColor(theme.label)
-            if (i == bottom.childCount - 1) {
-                val backspace = context.getDrawable(R.drawable.icon_backspace)!!.mutate()
-                backspace.setTint(theme.label)
-                backspace.setBounds(0, 0, dp(24), dp(24))
-                view.setCompoundDrawables(backspace, null, null, null)
-                view.setPadding(dp(24), 0, 0, 0)
-            }
-            view.background = GradientDrawable().apply {
-                setColor(theme.other)
-                cornerRadius = dp(10).toFloat()
-            }
+            val view = bottom.getChildAt(i)
+            (view as? TextView)?.setTextColor(theme.label)
+            view.background = pill(theme.other)
         }
         rebuildTabs()
     }
@@ -135,30 +127,42 @@ class EmojiPanel(
         tabs.removeAllViews()
         val icons = listOf("") + groups.map { it.second.firstOrNull() ?: "" }
         for ((index, icon) in icons.withIndex()) {
-            tabs.addView(TextView(context).apply {
-                text = icon
-                textSize = 20f
-                gravity = Gravity.CENTER
-                // The recently used have a clock for their tab.
-                if (index == 0) {
-                    val clock = context.getDrawable(R.drawable.icon_schedule)!!.mutate()
-                    clock.setTint(theme.label)
-                    clock.setBounds(0, 0, dp(24), dp(24))
-                    setCompoundDrawables(clock, null, null, null)
-                    setPadding(dp(8), 0, 0, 0)
+            // Each tab a circle centred in its share of the row, filled while chosen;
+            // the recently used have a clock for theirs.
+            val mark: View = if (index == 0) {
+                android.widget.ImageView(context).apply {
+                    setImageResource(R.drawable.icon_schedule)
+                    setColorFilter(theme.label)
+                    scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
                 }
-                alpha = if (index == shown) 1f else 0.45f
-                background = if (index == shown) GradientDrawable().apply {
-                    setColor(theme.other)
-                    cornerRadius = dp(10).toFloat()
-                } else null
-                setOnClickListener {
-                    shown = index
-                    rebuildTabs()
+            } else {
+                TextView(context).apply {
+                    text = icon
+                    textSize = 20f
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
                 }
-            }, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            }
+            mark.alpha = if (index == shown) 1f else 0.5f
+            mark.background = if (index == shown) GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(theme.other)
+            } else null
+            val cell = android.widget.FrameLayout(context)
+            cell.addView(mark, android.widget.FrameLayout.LayoutParams(dp(CONTROL), dp(CONTROL), Gravity.CENTER))
+            cell.setOnClickListener {
+                shown = index
+                rebuildTabs()
+            }
+            tabs.addView(cell, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
         grid.adapter = Cells(current())
+    }
+
+    private fun pill(color: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(CONTROL).toFloat()
     }
 
     private fun bar(label: String, action: () -> Unit) = TextView(context).apply {
@@ -185,6 +189,10 @@ class EmojiPanel(
 
     private companion object {
         const val COLUMNS = 8
+
+        /** The panel's inset and the gap between its parts, and the height of its controls, in dp. */
+        const val INSET = 8
+        const val CONTROL = 40
         const val RECENT = "recent_emoji"
         const val RECENT_COUNT = 32
     }
