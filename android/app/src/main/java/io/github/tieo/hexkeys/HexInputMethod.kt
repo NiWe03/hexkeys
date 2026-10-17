@@ -602,7 +602,14 @@ class HexInputMethod : InputMethodService() {
         // A language picked by hand holds for the field it was picked in.
         if (pinned != null) pinLanguage(null)
         frame?.show(emptyList())
+        closePanels()
+    }
+
+    /** Back to the keys: the emoji, their search and the clipboard closed. */
+    private fun closePanels() {
+        frame?.showSearch(false)
         frame?.showEmoji(false)
+        frame?.showClipboard(false)
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
@@ -619,6 +626,8 @@ class HexInputMethod : InputMethodService() {
         swiped = null
         // Device colours follow the wallpaper and dark mode, which may have changed.
         keyboard?.startInput()
+        // The keyboard opens on its keys however it was closed.
+        if (!restarting) closePanels()
         keyboard?.theme = Theme.current(this)
         keyboard?.passwordsAvailable = passwordManager() != null
         keyboard?.passwordIcon = passwordManagerPackage()?.let { runCatching { packageManager.getApplicationIcon(it) }.getOrNull() }

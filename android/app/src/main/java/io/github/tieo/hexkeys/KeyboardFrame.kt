@@ -212,10 +212,14 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         keyboard.measure(widthMeasureSpec, heightMeasureSpec)
         val keysTop = keyboard.headroom + keyboard.stripTall
+        // The panels take the letters' place and leave the number row, where the
+        // digits, the cursor and deleting are, as it is.
         for (panel in listOf(emoji, clipboard)) {
             panel.measure(
                 MeasureSpec.makeMeasureSpec(keyboard.measuredWidth, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(keyboard.measuredHeight - keysTop - keyboard.navigationBar, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(
+                    keyboard.measuredHeight - keysTop - keyboard.numbersHeight - keyboard.navigationBar, MeasureSpec.EXACTLY,
+                ),
             )
         }
         val width = keyboard.measuredWidth
@@ -241,8 +245,9 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         pinned.layout(width - pinned.measuredWidth, stripTop, width, stripTop + pinned.measuredHeight)
         val start = 2 * keyboard.stripSide
         val keysTop = keyboard.headroom + keyboard.stripTall
-        emoji.layout(0, keysTop, width, keysTop + emoji.measuredHeight)
-        clipboard.layout(0, keysTop, width, keysTop + clipboard.measuredHeight)
+        val panelTop = keysTop + keyboard.numbersHeight
+        emoji.layout(0, panelTop, width, panelTop + emoji.measuredHeight)
+        clipboard.layout(0, panelTop, width, panelTop + clipboard.measuredHeight)
         scroller.layout(start, stripTop, start + scroller.measuredWidth, stripTop + scroller.measuredHeight)
         search.layout(0, keyboard.headroom, width, keyboard.headroom + search.measuredHeight)
         resultScroller.layout(0, keysTop, width, keysTop + resultScroller.measuredHeight)
