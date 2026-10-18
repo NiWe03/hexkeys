@@ -296,6 +296,12 @@ const LANGUAGE_BOOST: f32 = 120.0;
 /// How many of the last words only one language has make it sure.
 const SURE_WORDS: f32 = 3.0;
 
+/// The least share of a language's text an accented letter is in for the
+/// language to put it first while it is written: German ä is in 3% of
+/// German, Dutch ë in 0.5% of Dutch, and English's most used, the é of
+/// loanwords, in 0.03% of English.
+const OWN_ACCENT: f64 = 0.001;
+
 /// How many of the last words written tell the language.
 const CONTEXT_WORDS: usize = 6;
 
@@ -410,20 +416,22 @@ impl Lexicon {
 
     /// [`Lexicon::accents`] with the accents dictionary `first` uses ranked
     /// ahead of the others, by how much that language uses them: with
-    /// German being written ä ö ü come first, with French é è à.
+    /// German being written ä ö ü come first, with French é è à. Only
+    /// accents a language really writes count as its own, [`OWN_ACCENT`] of
+    /// its text or more: English's loanword á stays behind German's ä.
     pub fn accents_for(&self, first: Option<usize>) -> Result<HashMap<char, Vec<char>>, Error> {
         let uses = self.accent_uses()?;
         let mut total: HashMap<char, f64> = HashMap::new();
-        for counts in uses {
-            for (&c, &used) in counts {
-                *total.entry(c).or_insert(0.0) += used;
+        for shares in uses {
+            for (&c, &share) in shares {
+                *total.entry(c).or_insert(0.0) += share;
             }
         }
         let preferred = first.and_then(|d| uses.get(d));
         let mut accents: HashMap<char, Vec<(char, f64, f64)>> = HashMap::new();
         for (&c, &used) in &total {
             if let Some(base) = plain(c) {
-                let own = preferred.and_then(|counts| counts.get(&c)).copied().unwrap_or(0.0);
+                let own = preferred.and_then(|shares| shares.get(&c)).copied().filter(|&share| share >= OWN_ACCENT).unwrap_or(0.0);
                 accents.entry(base).or_default().push((c, own, used));
             }
         }
@@ -436,8 +444,10 @@ impl Lexicon {
             .collect())
     }
 
-    /// How much each dictionary uses each accented letter, counted over all
-    /// its words once and kept.
+    /// The share of each dictionary's text each accented letter is in,
+    /// counted over all its words once and kept: a language's letters are
+    /// weighed against its own text, so a large dictionary does not drown a
+    /// small one's.
     fn accent_uses(&self) -> Result<&Vec<HashMap<char, f64>>, Error> {
         if let Some(uses) = self.accent_uses.get() {
             return Ok(uses);
@@ -445,16 +455,21 @@ impl Lexicon {
         let mut all = Vec::new();
         for dictionary in &self.dictionaries {
             let mut uses: HashMap<char, f64> = HashMap::new();
+            let mut text = 0.0;
             dictionary.for_each_word(|word: &str, frequency: u8| {
                 // Frequencies are logarithmic; 12 steps for a doubling fits how often
                 // short common words such as French à occur in text.
                 let weight = 2f64.powf(frequency as f64 / 12.0);
+                text += weight;
                 for c in word.chars().flat_map(char::to_lowercase) {
                     if c.is_alphabetic() && !c.is_ascii() && plain(c).is_some() {
                         *uses.entry(c).or_insert(0.0) += weight;
                     }
                 }
             })?;
+            if text > 0.0 {
+                uses.values_mut().for_each(|used| *used /= text);
+            }
             all.push(uses);
         }
         Ok(self.accent_uses.get_or_init(|| all))
@@ -641,7 +656,8 @@ pub fn strip(lexicon: &Lexicon, before: &str, substitution: Substitution) -> Res
     }
     let found = suggest(lexicon, typed, previous, substitution, 3)?;
     let known = spelled(lexicon, typed)?;
-    let correction = found.first().filter(|best| !known && !best.completion).map(|best| best.word.clone());
+    let correction =
+        found.first().filter(|best| !known && !best.completion && !drops_accents(typed, &best.word)).map(|best| best.word.clone());
     // A word some language has is fixed only when the text is surely in another
     // that has a spelling of it, as "im" is "I'm" in a surely English text.
     let fix = if known {
@@ -702,8 +718,10 @@ fn obvious_fix<'a>(lexicon: &Lexicon, typed: &str, candidates: impl Iterator<Ite
             .unwrap_or(0);
         !(capital && marked) || frequency >= COMMON
     };
-    let mut found =
-        candidates.filter(|word| *word != typed).find(|word| folded(word) == target && likely(word)).map(str::to_owned);
+    let mut found = candidates
+        .filter(|word| *word != typed)
+        .find(|word| folded(word) == target && likely(word) && !drops_accents(typed, word))
+        .map(str::to_owned);
     if found.is_none() {
         for form in [capitalise(&typed.to_lowercase()), typed.to_uppercase()] {
             if form != typed && lexicon.dictionaries.iter().any(|d| d.find(&form).ok().flatten().is_some_and(|node| !node.hidden)) {
@@ -714,6 +732,14 @@ fn obvious_fix<'a>(lexicon: &Lexicon, typed: &str, candidates: impl Iterator<Ite
     }
     let starts_upper = typed.chars().next().is_some_and(char::is_uppercase);
     Ok(found.map(|word| if starts_upper { capitalise(&word) } else { word }))
+}
+
+/// Whether `word` lacks an accented letter `typed` has. An accent takes
+/// holding its letter, so it is never a slip: "ä" typed alone stays rather
+/// than becoming English "a", which matching, blind to accents, finds free.
+fn drops_accents(typed: &str, word: &str) -> bool {
+    let word: Vec<char> = word.chars().flat_map(char::to_lowercase).collect();
+    typed.chars().flat_map(char::to_lowercase).filter(|&c| plain(c).is_some()).any(|c| !word.contains(&c))
 }
 
 /// The last word in `before`, which the next word follows.
@@ -858,6 +884,31 @@ mod tests {
         lexicon.pinned = Some(1);
         lexicon.set_context("and also ");
         assert_eq!((words(&lexicon, "im", None)[0].as_str(), lexicon.language()), ("im", Some(1)), "a picked language wins");
+    }
+
+    #[test]
+    fn a_language_writing_an_accent_only_in_loanwords_does_not_put_it_first() {
+        let mut english_words: Vec<(String, u8)> = (0..2000).map(|i| (format!("w{i}"), 200)).collect();
+        english_words.push(("señor".into(), 60));
+        english_words.push(("pásame".into(), 60));
+        let english_refs: Vec<(&str, u8)> = english_words.iter().map(|(w, f)| (w.as_str(), *f)).collect();
+        let english = Dictionary::new(encode(&english_refs, &[])).unwrap();
+        let german = Dictionary::new(encode(&[("und", 255), ("für", 230), ("März", 180)], &[])).unwrap();
+        let lexicon = Lexicon::new(vec![english, german]);
+        assert_eq!(lexicon.accents_for(Some(0)).unwrap()[&'a'][0], 'ä', "while English is written");
+        assert_eq!(lexicon.accents_for(Some(1)).unwrap()[&'a'][0], 'ä');
+    }
+
+    #[test]
+    fn a_typed_accent_is_never_corrected_away() {
+        let english = Dictionary::new(encode(&[("a", 255), ("the", 255)], &[])).unwrap();
+        let german = Dictionary::new(encode(&[("auf", 240), ("für", 230)], &[])).unwrap();
+        let lexicon = Lexicon::new(vec![english, german]);
+        let strip = strip(&lexicon, "ä", &|a, b| if a == b { 0.0 } else { 1.0 }).unwrap();
+        assert_eq!(strip.correction, None);
+        assert_eq!(strip.fix, None);
+        let strip = super::strip(&lexicon, "fur", &|a, b| if a == b { 0.0 } else { 1.0 }).unwrap();
+        assert_eq!(strip.fix.as_deref(), Some("für"), "an accent left out is still put in");
     }
 
     #[test]
