@@ -581,9 +581,13 @@ class HexInputMethod : InputMethodService() {
         val height = ((KeyboardView.STRIP_DP - 8) * resources.displayMetrics.density).toInt()
         // A suggestion shows its title and subtitle side by side, the title first and
         // taking what it needs. A password manager's logins for one site share the
-        // title, the site, and differ in the subtitle, the account: the title is kept
-        // small so the account still fits.
-        val title = androidx.autofill.inline.common.TextViewStyle.Builder().setTextSize(INLINE_TITLE_SP).build()
+        // title, the site, which is on screen anyway, and differ in the subtitle, the
+        // account: the title is left out, sized to nothing, so the account shows.
+        val title = androidx.autofill.inline.common.TextViewStyle.Builder()
+            .setTextSize(0f)
+            .setPadding(0, 0, 0, 0)
+            .setLayoutMargin(0, 0, 0, 0)
+            .build()
         val subtitle = androidx.autofill.inline.common.TextViewStyle.Builder().setTextSize(INLINE_SUBTITLE_SP).build()
         val styles = UiVersions.newStylesBuilder()
             .addStyle(InlineSuggestionUi.newStyleBuilder().setTitleStyle(title).setSubtitleStyle(subtitle).build())
@@ -1072,8 +1076,7 @@ class HexInputMethod : InputMethodService() {
         /** The last word before the cursor with the spaces after it. */
         val WORD_AT_END = Regex("\\S*\\s*$")
 
-        /** Text sizes of an autofill suggestion's title, such as a login's site, and its subtitle, such as the account, in sp. */
-        const val INLINE_TITLE_SP = 11f
+        /** Text size of an autofill suggestion's subtitle, such as a login's account, in sp. */
         const val INLINE_SUBTITLE_SP = 14f
 
         /** How long after the window is shown its place is written down again, past the slide in, in ms. */
