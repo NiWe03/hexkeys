@@ -39,7 +39,7 @@ FIRST_BAR = 16
 CHORUS_BAR = 32
 END_BAR = 36
 # What each bar of the full beat shows, one thing hexkeys does per bar.
-FEATURES = {16: "arrival", 17: "swipe", 18: "flick", 19: "suggestions", 20: "glide", 21: "hold", 22: "clipboard", 23: "speak",
+FEATURES = {16: "arrival", 17: "flick", 18: "swipe", 19: "suggestions", 20: "glide", 21: "hold", 22: "clipboard", 23: "speak",
             24: "speak", 25: "slide", 26: "languages", 27: "emoji_search", 28: "send", 29: "themes", 30: "themes", 31: "source"}
 # Where each bar's gesture happens, for the camera: centre and zoom.
 FOCUS = {16: (960, 560, 1.0), 17: (960, 520, 1.04), 18: (960, 500, 1.06), 19: (960, 420, 1.1), 20: (960, 380, 1.14),
@@ -277,18 +277,21 @@ class Cut(render.Film):
         def put(t, text, caret=None):
             states.append((t, text, len(text) if caret is None else caret))
 
-        # 17 swipe
+        # 17 flick: the sentence starts with a capital, flicked up off s, then e, e
+        self.flick_at = h(17)[0]
+        text = "S"
+        put(self.flick_at + 0.55, text)
+        self.flick_taps = [(o(17)[3], "e"), (o(17)[4], "e")]
+        for at, c in self.flick_taps:
+            text += c
+            put(at, text)
+        # 18 swipe: the rest of the sentence, a stroke a word
         self.swiped = []
-        text = ""
-        for i, word in enumerate("see you at the hive".split()):
-            s0 = o(17)[0] + i * 0.19
+        for i, word in enumerate("you at the hive".split()):
+            s0 = o(18)[0] + i * 0.19
             self.swiped.append((word, s0, s0 + 0.16))
-            text = (text + " " + word).strip()
+            text = text + " " + word
             put(s0 + 0.16, text)
-        # 18 flick: the capital S
-        self.flick_at = h(18)[0]
-        text = "S" + text[1:]
-        put(self.flick_at + 0.05, text)
         # 19 suggestions: " tomor", then tomorrow from the strip
         sixteenth = (o(19)[1] - o(19)[0]) / 2
         self.suggest_taps = [(o(19)[0] + i * sixteenth, c) for i, c in enumerate(" tomor")]
@@ -321,16 +324,17 @@ class Cut(render.Film):
         self.paste_at = h(22)[1]
         text += "\nWabengasse 6"
         put(self.paste_at, text)
-        # 23, 24 speak: the next line dictated, a stretch at a time, on beats
-        self.stretches = [("Bring the", b[92]), ("board game", b[94]), ("and snacks", b[96]), ("for later.", b[98])]
-        line = ""
-        for words, at in self.stretches:
-            line = (line + " " + words).strip()
-            put(at, text + "\n" + line)
-        text += "\n" + line
-        # 25 slide: " and snacks for later." goes, faster as the finger goes on
-        cut = " and snacks for later."
-        counts = [1, 2, 4, 7, 11, 16, 22, len(cut)]
+        # 23, 24 speak: two lines dictated, a word on each sung word's onset
+        self.dictated = []
+        for bar, line in ((23, "Bring the board game, I'll bring the honey."), (24, "And maybe grab some snacks for us later?")):
+            text += "\n"
+            for at, word in zip(o(bar), line.split()):
+                text += ("" if text.endswith("\n") else " ") + word
+                self.dictated.append(at)
+                put(at, text)
+        # 25 slide: the second line goes again, faster as the finger goes on
+        cut = "\nAnd maybe grab some snacks for us later?"
+        counts = [1, 3, 6, 10, 16, 23, 31, len(cut)]
         self.slide_cuts = []
         for at, n in zip(o(25), counts):
             self.slide_cuts.append((at, n))
@@ -450,20 +454,29 @@ class Cut(render.Film):
         self.feature_word(ctx, t, "swipe", 960, 405, 64, o[0], end - 0.15)
 
     def flick(self, ctx, t, h, o, end, place):
-        """Flick up on s: its capital, big over the key, then in the text."""
+        """Flick up on s: its capital pops up off the key and flies into the
+        sentence, landing on its first letter."""
         at = self.flick_at
-        self.hex_keyboard(ctx, place, t, self.press_map(t, [(at, "s")]))
+        self.hex_keyboard(ctx, place, t, self.press_map(t, [(at, "s")] + self.flick_taps))
         self.composer(ctx, t)
         x, y = self.key_xy("s", place)
         rise = out_expo(span(t, at - 0.08, at + 0.08))
         if t < at + 0.4:
             self.trail(ctx, [(x, y), (x, y - rise * 70)], GREEN, 18, 1 - span(t, at + 0.2, at + 0.4), fade=False)
             self.finger(ctx, x, y - rise * 70, 1, 1 - span(t, at + 0.15, at + 0.3))
-        p = out_back(span(t, at, at + 0.25), 2.4)
-        q = span(t, end - 0.3, end - 0.1)
-        if p > 0 and q < 1:
-            self.heavy.text(ctx, "S", x, y - 120 - 120 * p, 280 * max(p, 0.01), GREEN, align=0.5, alpha=1 - q)
-        self.feature_word(ctx, t, "flick", 960, 405, 64, at, end - 0.15, colour=GREEN)
+        # Where the sentence's first letter sits.
+        rows, _ = self.message_layout("S", 1)
+        line, lx, ly, size, _ = rows[0]
+        pop = out_back(span(t, at, at + 0.18), 2.4)
+        fly = in_out_cubic(span(t, at + 0.2, at + 0.55))
+        if pop > 0 and fly < 1:
+            sx, sy, ss = x, y - 150, 220
+            tx, ty, ts = lx + self.sans_bold.advance("S", size) / 2, ly, size
+            cx, cy = lerp(sx, tx, fly), lerp(sy, ty, fly)
+            sz = lerp(ss, ts, fly) * max(pop, 0.01)
+            font = self.heavy if fly < 0.6 else self.sans_bold
+            font.text(ctx, "S", cx, cy, sz, mix(GREEN, PAPER, fly), align=0.5)
+        self.feature_word(ctx, t, "flick up to capitalize", 960, 405, 56, at - 0.05, end - 0.15, colour=GREEN)
 
     def suggestions(self, ctx, t, h, o, end, place):
         """Suggestions: the strip answers each letter, as the app's strip() does; tomorrow is tapped."""
@@ -563,7 +576,7 @@ class Cut(render.Film):
 
     def speak(self, ctx, t, h, o, end, place):
         """Speak, over two bars: the mic rises out of the strip and rings with
-        the voice; the line comes in as the app writes it, a stretch at a time."""
+        the voice, a word landing in the text on each sung word."""
         first, second = self.song.eighths(23), self.song.eighths(24)
         rise = out_expo(span(t, first[0] - 0.15, first[0] + 0.3))
         sink = in_out_expo(span(t, first[0] - 0.2, first[0] + 0.25))
@@ -572,7 +585,7 @@ class Cut(render.Film):
         self.composer(ctx, t)
         hx, hy, r = 960, lerp(330, 640, rise), lerp(30, 120, rise)
         lv = 0.0
-        for at in first[:7] + second[:7]:
+        for at in self.dictated:
             if at <= t:
                 lv = max(lv, math.exp(-(t - at) * 9))
         n = 72
@@ -654,7 +667,7 @@ class Cut(render.Film):
         p = out_back(span(t, at, at + 0.2), 2.4)
         sx, sy = self.key_xy("space", place)
         if p > 0:
-            self.heavy.text(ctx, "Deutsch", sx, sy - 330, 110 * max(p, 0.01), (0.29, 0.36, 0.78), align=0.5, alpha=1 - span(t, end - 0.3, end - 0.1))
+            self.heavy.text(ctx, "Deutsch", 960, 450, 90 * max(p, 0.01), (0.29, 0.36, 0.78), align=0.5, alpha=1 - span(t, end - 0.3, end - 0.1))
 
     def emoji_search(self, ctx, t, h, o, end, place):
         """Emoji: a flick up on @#€ opens them as a honeycomb; "bee" finds the bee; it goes in."""
@@ -744,18 +757,20 @@ class Cut(render.Film):
             self.sans.text(ctx, "Sam", 530, ry - 12, 22, ink, alpha=0.6 * min(1, rk))
 
     def themes(self, ctx, t, h, o, end, place):
-        """Themes, over two bars: the whole chat flips to the next on each half bar, keys in a wave from the left."""
+        """Themes, over two bars: the whole chat flips to the next on every main word, keys in a wave from the left."""
         themes = [("Dusk", (0.106, 0.106, 0.122), DUSK_ROWS, DUSK_OTHER, DUSK_LABEL, (0.424, 0.482, 0.847)),
                   ("Paper", (0.894, 0.894, 0.918), [(0.780, 0.843, 0.965), (0.769, 0.910, 0.831), (0.957, 0.812, 0.855)], (0.984, 0.984, 0.992), (0.106, 0.106, 0.122), (0.29, 0.36, 0.78)),
                   ("Ember", (0.118, 0.102, 0.094), [(0.353, 0.227, 0.133), (0.306, 0.165, 0.165), (0.247, 0.227, 0.133)], (0.227, 0.204, 0.192), (0.953, 0.925, 0.902), (0.88, 0.54, 0.29)),
-                  ("Plain", (0.106, 0.106, 0.122), [(0.227, 0.227, 0.259)] * 3, (0.227, 0.227, 0.259), (0.910, 0.910, 0.933), (0.424, 0.482, 0.847))]
-        flips = [self.song.hits(29)[0], self.song.hits(29)[2], self.song.hits(30)[0], self.song.hits(30)[2]]
+                  ("Plain dark", (0.106, 0.106, 0.122), [(0.227, 0.227, 0.259)] * 3, (0.227, 0.227, 0.259), (0.910, 0.910, 0.933), (0.424, 0.482, 0.847)),
+                  ("Plain light", (0.894, 0.894, 0.918), [(0.984, 0.984, 0.992)] * 3, (0.984, 0.984, 0.992), (0.106, 0.106, 0.122), (0.29, 0.36, 0.78))]
+        # A new theme on every main word of both bars.
+        flips = self.song.hits(29) + self.song.hits(30)
         i = max(0, sum(1 for at in flips if at <= t) - 1)
-        theme = themes[i]
+        theme = themes[i % len(themes)]
         ctx.set_source_rgb(*mix(theme[1], PAPER if luminance(theme[1]) < 0.5 else INK, 0.06))
         ctx.paint()
         at = flips[i]
-        prev = themes[max(0, i - 1)]
+        prev = themes[(i - 1) % len(themes)] if i > 0 else theme
         cx, cy, width = place
         kb = self.kb
         k = width / kb.width
@@ -837,11 +852,12 @@ class Cut(render.Film):
         return cache[key["label"]]
 
     def finale_hits(self):
-        """When each chorus bar's sung word comes: half a beat after its third
-        beat, where the vocal's onset measures 1.16 to 1.23 s into every
-        chorus bar; the forced alignment put these words 0.3 s early."""
+        """When each chorus bar's sung word starts: on its third beat, where
+        the word's first syllable begins (the forced alignment puts it 0.88 s
+        into the bar); the louder onset measured half a beat later is the
+        word's second syllable."""
         b = self.song.beats
-        return [b[4 * bar + 2] + (b[4 * bar + 3] - b[4 * bar + 2]) / 2 - 0.03 for bar in range(CHORUS_BAR, CHORUS_BAR + 4)]
+        return [b[4 * bar + 2] - 0.04 for bar in range(CHORUS_BAR, CHORUS_BAR + 4)]
 
     def finale(self, ctx, t):
         """The chorus, its four sung words four hits: the three keys lock into
@@ -931,7 +947,10 @@ class Cut(render.Film):
                 ctx.stroke()
         # Everything shown before, a word per beat, in cells round the icon.
         recap = ["FLICK", "SLIDE", "GLIDE", "SWIPE", "HOLD", "47 LANGUAGES", "SPEAK", "PASSWORDS", "CLIPBOARD", "EMOJI", "THEMES", "OPEN SOURCE"]
-        spots = [(-560, -260), (560, -260), (-700, 20), (700, 20), (-560, 300), (560, 300), (-330, -420), (330, -420), (-330, 430), (330, 430), (-800, -150), (800, -150)]
+        # Two columns at the sides and two spots at the top, clear of the name,
+        # the tagline and the address under the icon.
+        spots = [(-700, -330), (700, -330), (-700, -170), (700, -170), (-700, -10), (700, -10), (-700, 150), (700, 150),
+                 (-700, 310), (700, 310), (-300, -430), (300, -430)]
         after = [bt for bt in beats if bt >= hits[0] + 0.2]
         for i, (word, (dx, dy)) in enumerate(zip(recap, spots)):
             if i >= len(after) or t < after[i]:
