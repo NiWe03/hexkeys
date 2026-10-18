@@ -579,10 +579,17 @@ class HexInputMethod : InputMethodService() {
     override fun onCreateInlineSuggestionsRequest(uiExtras: Bundle): InlineSuggestionsRequest? {
         // Asked before the keyboard view exists, so sized from the strip's dp height.
         val height = ((KeyboardView.STRIP_DP - 8) * resources.displayMetrics.density).toInt()
-        // A suggestion shows its title and subtitle side by side, the title first and
-        // taking what it needs. A password manager's logins for one site share the
-        // title, the site, which is on screen anyway, and differ in the subtitle, the
-        // account: the title is left out, sized to nothing, so the account shows.
+        // A suggestion shows its icon, title and subtitle side by side, the title
+        // before the subtitle and taking what it needs. A password manager's logins
+        // for one site share the icon and the title, the site, which is on screen
+        // anyway, and differ in the subtitle, the account: icon and title are left
+        // out, sized to nothing, so the account shows.
+        val icon = androidx.autofill.inline.common.ImageViewStyle.Builder()
+            .setMaxWidth(0)
+            .setMaxHeight(0)
+            .setPadding(0, 0, 0, 0)
+            .setLayoutMargin(0, 0, 0, 0)
+            .build()
         val title = androidx.autofill.inline.common.TextViewStyle.Builder()
             .setTextSize(0f)
             .setPadding(0, 0, 0, 0)
@@ -590,13 +597,11 @@ class HexInputMethod : InputMethodService() {
             .build()
         val subtitle = androidx.autofill.inline.common.TextViewStyle.Builder().setTextSize(INLINE_SUBTITLE_SP).build()
         val styles = UiVersions.newStylesBuilder()
-            .addStyle(InlineSuggestionUi.newStyleBuilder().setTitleStyle(title).setSubtitleStyle(subtitle).build())
+            .addStyle(InlineSuggestionUi.newStyleBuilder().setStartIconStyle(icon).setTitleStyle(title).setSubtitleStyle(subtitle).build())
             .build()
         // At most as wide as the room left of the right end slot, so the service
         // shortens a long suggestion's text rather than the strip cutting it off.
         val widest = maxOf(height, KeyboardFrame.chipRoom(resources.displayMetrics.widthPixels, resources.displayMetrics.density))
-        inlineNarrowest = height
-        inlineWidest = widest
         val spec = InlinePresentationSpec.Builder(Size(height, height), Size(widest, height))
             .setStyle(styles)
             .build()
@@ -604,10 +609,6 @@ class HexInputMethod : InputMethodService() {
             .setMaxSuggestionCount(InlineSuggestionsRequest.SUGGESTION_COUNT_UNLIMITED)
             .build()
     }
-
-    /** The narrowest and widest a suggestion may be drawn, as the last request announced. */
-    private var inlineNarrowest = 0
-    private var inlineWidest = 0
 
     /** Counts the autofill service's answers, so only the newest one is shown. */
     private var inlineAnswer = 0
@@ -633,18 +634,15 @@ class HexInputMethod : InputMethodService() {
             frame.show(emptyList())
             return true
         }
-        // A suggestion is drawn once, at its final size: the one taking the right
-        // end slot without the service pinning it, its button, exactly as wide as
-        // the slot; the others as wide as the service likes, at most the room
-        // the request allowed.
+        // A suggestion is drawn once, at its final size: as wide as its content,
+        // at most the room the request allowed, so a button that is only an icon
+        // stays a small square.
         val views = arrayOfNulls<View>(suggestions.size)
         val marks = suggestions.map { it.info.isPinned }
         var pending = suggestions.size
         for ((index, suggestion) in suggestions.withIndex()) {
-            val slotted = frame.takesSlot(marks, index) && !marks[index]
-            // Android refuses a size outside the range the request announced.
-            val width = if (slotted) frame.pinnedRoom.coerceIn(inlineNarrowest, inlineWidest) else ViewGroup.LayoutParams.WRAP_CONTENT
-            suggestion.inflate(this, Size(width, ViewGroup.LayoutParams.WRAP_CONTENT), mainExecutor) { view ->
+            val size = Size(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            suggestion.inflate(this, size, mainExecutor) { view ->
                 views[index] = view
                 pending -= 1
                 if (pending == 0 && answer == inlineAnswer) {
