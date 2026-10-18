@@ -549,6 +549,8 @@ class HexInputMethod : InputMethodService() {
     ).let { view ->
         keyboard = view
         view.accents = accents
+        // A view made anew, as on rotating, shows the languages before any suggestion does.
+        showLanguage(language)
         view.logContext = { if (suggesting && currentInputConnection != null) editor.textBefore() else null }
         val emoji = EmojiPanel(
             this,
