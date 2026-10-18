@@ -52,7 +52,11 @@ class KeyboardView(
         private set
 
     private val density = resources.displayMetrics.density
-    private val stripHeight = (STRIP_DP * density).toInt()
+    private val fullStrip = (STRIP_DP * density).toInt()
+
+    /** Landscape leaves the strip out for the keys' height, as it does the number row. */
+    private val landscape get() = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    private val stripHeight get() = if (landscape) 0 else fullStrip
     private var slots = arrayOf("", "", "")
     private var replaces = 0
 
@@ -67,7 +71,7 @@ class KeyboardView(
     var unknown: String? = null
         private set
     /** Width of the strip's end slots: the settings button left, the autofill service's button right. */
-    val stripSide get() = stripHeight + (4 * density).toInt()
+    val stripSide get() = fullStrip + (4 * density).toInt()
 
     /** Height of the suggestion strip. */
     val stripTall get() = stripHeight
@@ -415,16 +419,16 @@ class KeyboardView(
         // The keys are laid out again only when what they depend on changed: every
         // panel shown over them measures the keyboard too, and building it anew
         // each time held up opening the emoji and their search.
-        // Landscape is short: the number row goes, deleting is the backspace key's,
-        // and the keys flatten to fit [LANDSCAPE_KEYS] of the height.
-        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        // Landscape is short: the number row and the strip go, deleting is the backspace
+        // key's, and the keys flatten to fit [LANDSCAPE_KEYS] of the height and the strip's.
         val shape = "$width/$spaceMiddle/$editKeys/$landscape"
         if (handle == 0L || shape != builtFor) {
             if (handle != 0L) Core.destroy(handle)
             stretch = STRETCH
             if (landscape) {
                 val regular = Core.create(width.toFloat(), STRETCH, 0, spaceMiddle, editKeys, true)
-                stretch = minOf(STRETCH, STRETCH * resources.displayMetrics.heightPixels * LANDSCAPE_KEYS / Core.height(regular))
+                val room = resources.displayMetrics.heightPixels * LANDSCAPE_KEYS + fullStrip
+                stretch = minOf(STRETCH, STRETCH * room / Core.height(regular))
                 Core.destroy(regular)
             }
             handle = Core.create(width.toFloat(), stretch, ViewConfiguration.getLongPressTimeout().toLong(), spaceMiddle, editKeys, landscape)
@@ -525,7 +529,7 @@ class KeyboardView(
     override fun onDraw(canvas: Canvas) {
         if (handle == 0L) return
         canvas.drawRect(0f, headroom.toFloat(), width.toFloat(), height.toFloat(), backgroundPaint)
-        drawStrip(canvas)
+        if (stripHeight > 0) drawStrip(canvas)
         canvas.save()
         canvas.translate(0f, keysTop.toFloat())
         // Labels fit the key's height as well as its width, which flatter keys have less of.
@@ -1156,7 +1160,7 @@ class KeyboardView(
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f
 
-        /** The share of the screen's height the keys take in landscape, the strip and navigation bar aside. */
+        /** The share of the screen's height the keys take in landscape, besides the strip's height they take over there and the navigation bar. */
         private const val LANDSCAPE_KEYS = 0.55f
 
         /** How much flatter keys may get before their labels shrink with them. */

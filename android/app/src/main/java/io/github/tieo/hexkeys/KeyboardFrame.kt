@@ -257,7 +257,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
             )
         }
         val width = keyboard.measuredWidth
-        val strip = MeasureSpec.makeMeasureSpec(keyboard.stripTall - 2 * gap, MeasureSpec.EXACTLY)
+        val strip = MeasureSpec.makeMeasureSpec(maxOf(0, keyboard.stripTall - 2 * gap), MeasureSpec.EXACTLY)
         pinned.measure(MeasureSpec.makeMeasureSpec(width / 3, MeasureSpec.AT_MOST), strip)
         val pinnedWidth = maxOf(pinned.measuredWidth, keyboard.stripSide)
         scroller.measure(MeasureSpec.makeMeasureSpec(width - 2 * keyboard.stripSide - pinnedWidth, MeasureSpec.EXACTLY), strip)
