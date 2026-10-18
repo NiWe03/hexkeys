@@ -639,9 +639,17 @@ class HexInputMethod : InputMethodService() {
         // stays a small square. Each is shown as soon as it is drawn, so one the
         // service never finishes drawing cannot keep the others away.
         val views = arrayOfNulls<View>(suggestions.size)
-        // Only what the service pins takes the right end slot: Bitwarden marks its
-        // logins as actions too, so the type tells a button from a login nowhere.
-        val slotted = suggestions.map { it.info.isPinned }
+        // The right end slot holds the service's button: what it pins, or where it
+        // pins nothing, its last suggestion while the field is empty. Bitwarden
+        // adds its vault button last and pins nothing, and marks its logins as
+        // actions too, so the type tells a button from a login nowhere; once
+        // something is typed, Android leaves only the suggestions matching it,
+        // which drops the button, and every suggestion lines up in the row.
+        val empty = editor.textBefore().isEmpty() && editor.textAfter(1).isEmpty()
+        val nonePinned = suggestions.none { it.info.isPinned }
+        val slotted = suggestions.mapIndexed { index, suggestion ->
+            suggestion.info.isPinned || (nonePinned && empty && index == suggestions.lastIndex)
+        }
         for ((index, suggestion) in suggestions.withIndex()) {
             val size = Size(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             suggestion.inflate(this, size, mainExecutor) { view ->

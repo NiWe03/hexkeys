@@ -257,7 +257,8 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         val width = keyboard.measuredWidth
         val strip = MeasureSpec.makeMeasureSpec(maxOf(0, keyboard.stripTall - 2 * gap), MeasureSpec.EXACTLY)
         pinned.measure(MeasureSpec.makeMeasureSpec(width / 3, MeasureSpec.AT_MOST), strip)
-        val pinnedWidth = maxOf(pinned.measuredWidth, keyboard.stripSide)
+        // Without a pinned entry the row runs to the right end.
+        val pinnedWidth = if (pinned.childCount > 0) maxOf(pinned.measuredWidth, keyboard.stripSide) else gap
         scroller.measure(MeasureSpec.makeMeasureSpec(width - chipsStart - pinnedWidth, MeasureSpec.EXACTLY), strip)
         search.measure(
             MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),

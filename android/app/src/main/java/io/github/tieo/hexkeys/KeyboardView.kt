@@ -638,8 +638,8 @@ class KeyboardView(
     private fun drawStrip(canvas: Canvas) {
         val middle = headroom + stripHeight / 2f
         val iconSize = stripHeight * 0.55f
-        // Autofill's entries take the settings and clipboard buttons' place, room
-        // for both a login's site and its account.
+        // Autofill's entries take the place of the settings, clipboard and voice
+        // buttons, the whole strip being theirs to line up in.
         if (!chipsShown) {
             drawIcon(canvas, R.drawable.icon_settings, stripSide / 2f, middle, iconSize, theme.label)
             drawIcon(canvas, R.drawable.icon_content_paste, stripSide * 1.5f, middle, iconSize, theme.label)
@@ -658,7 +658,7 @@ class KeyboardView(
         val micX = width - stripSide * 1.5f
         if (listening) {
             drawIcon(canvas, R.drawable.icon_stop_circle, micX, middle, iconSize * 1.15f, theme.accent)
-        } else {
+        } else if (!chipsShown) {
             drawIcon(canvas, R.drawable.icon_mic, micX, middle, iconSize, theme.label)
         }
         if (listening || recognising > 0) {
@@ -1040,7 +1040,7 @@ class KeyboardView(
                     val touched = stripTouch - 2
                     stripTouch = -1
                     if (slot != touched || y >= 0) return true
-                    if (slot < 0 && chipsShown) return true
+                    if (chipsShown && (slot < 0 || slot == 4)) return true
                     if (slot == -2) {
                         onSettings()
                         return true
