@@ -1098,16 +1098,19 @@ impl Keyboard {
             return Gesture::Delete;
         }
         let w = self.layout.cell_width;
+        let (dx, dy) = (touch.at.x - touch.start.x, touch.at.y - touch.start.y);
+        // Space starts no swiped word, so a flick sideways on it of any length
+        // picks the language: one key width is short for a thumb flicking.
+        if dx.hypot(dy) >= FLICK * w && dx.abs() >= dy.abs() && self.layout.keys[touch.key].label == "space" {
+            return Gesture::Sideways;
+        }
         if touch.extent >= w {
             return self.quick(touch).unwrap_or(Gesture::Path);
         }
-        let (dx, dy) = (touch.at.x - touch.start.x, touch.at.y - touch.start.y);
         if dx.hypot(dy) < FLICK * w {
             Gesture::Tap
         } else if dy < 0.0 && dy.abs() > dx.abs() {
             Gesture::Up
-        } else if dx.abs() >= dy.abs() && self.layout.keys[touch.key].label == "space" {
-            Gesture::Sideways
         } else {
             Gesture::Tap
         }
@@ -2079,6 +2082,8 @@ mod tests {
         assert_eq!(gesture(&mut keyboard, "g", &[(0.0, 0.8)]), Action::Commit("g".into()), "down");
         assert_eq!(gesture(&mut keyboard, "g", &[(0.0, -0.6), (0.0, -0.1)]), Action::Commit("g".into()), "a flick up pulled back");
         assert_eq!(gesture(&mut keyboard, "space", &[(-0.5, 0.0)]), Action::Language { forward: false }, "space's sideways flick picks the language");
+        // As in the phone's log, flicks on space run up to almost three key widths.
+        assert_eq!(gesture(&mut keyboard, "space", &[(1.0, -0.1), (2.67, -0.35)]), Action::Language { forward: true });
     }
 
     #[test]
@@ -2095,7 +2100,7 @@ mod tests {
         let swiped = keyboard.swiped.clone().unwrap();
         assert_eq!(swiped.path.len(), 4);
         assert!(!swiped.capital);
-        assert_eq!(gesture(&mut keyboard, "space", &[(1.5, 0.0)]), Action::Nothing, "not from a letter");
+        assert_eq!(gesture(&mut keyboard, "space", &[(0.5, 0.1), (1.5, 0.3)]), Action::Language { forward: true }, "not from a letter: space picks the language");
     }
 
     #[test]
