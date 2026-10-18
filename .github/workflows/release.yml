@@ -1,6 +1,6 @@
 # Builds the signed APK for a version tag (v1.2.3) and publishes it as that
 # tag's release, with its SHA-256 next to it. Run by hand it builds and
-# checks the APK as version 0.0.0 and publishes nothing.
+# checks the APK as version 0.0.1 and publishes nothing.
 name: Release
 
 on:
@@ -50,7 +50,7 @@ jobs:
           export HEXKEYS_KEYSTORE="$RUNNER_TEMP/release.jks"
           echo "$KEYSTORE_BASE64" | base64 -d > "$HEXKEYS_KEYSTORE"
           version="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = tag ] || version=0.0.0
+          [ "$GITHUB_REF_TYPE" = tag ] || version=0.0.1
           gradle -p android assembleRelease -Phexkeys.version="$version"
           mkdir -p dist
           cp android/app/build/outputs/apk/release/app-release.apk "dist/hexkeys-$version.apk"
