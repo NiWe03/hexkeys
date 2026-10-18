@@ -297,6 +297,28 @@ class KeyboardView(
     }
 
     /**
+     * Writes down in the debug log where the keyboard's window is against the
+     * screen, with the heights that place it, so a keyboard sitting too low
+     * on the phone shows in the log with what it was laid out for.
+     */
+    fun logPlacement(event: String) {
+        if (!logging) return
+        val location = IntArray(2)
+        getLocationOnScreen(location)
+        val metrics = resources.displayMetrics
+        GestureLog.write(context, JSONObject()
+            .put("time", System.currentTimeMillis())
+            .put("placement", event)
+            .put("top", location[1])
+            .put("height", height)
+            .put("measured", measuredHeight)
+            .put("window", rootView.height)
+            .put("navigationBar", navigationBar)
+            .put("screen", "${metrics.widthPixels}x${metrics.heightPixels}")
+            .put("orientation", resources.configuration.orientation))
+    }
+
+    /**
      * A new field: the letters with shift off, as the keyboard opens on them.
      * The room for the navigation bar is fitted to the window's insets as
      * they are now, not only when they change.

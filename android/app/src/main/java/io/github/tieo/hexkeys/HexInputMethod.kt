@@ -660,6 +660,18 @@ class HexInputMethod : InputMethodService() {
         frame?.show(emptyList())
     }
 
+    override fun onWindowShown() {
+        super.onWindowShown()
+        keyboard?.logPlacement("shown")
+        // Where the window ends up once the system's slide in is over.
+        keyboard?.postDelayed({ keyboard?.logPlacement("settled") }, PLACEMENT_SETTLED_MS)
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        keyboard?.logPlacement("configuration")
+    }
+
     /** Closed, the keyboard opens next time on its keys, whichever field it is. */
     override fun onWindowHidden() {
         super.onWindowHidden()
@@ -1044,6 +1056,9 @@ class HexInputMethod : InputMethodService() {
 
         /** The last word before the cursor with the spaces after it. */
         val WORD_AT_END = Regex("\\S*\\s*$")
+
+        /** How long after the window is shown its place is written down again, past the slide in, in ms. */
+        const val PLACEMENT_SETTLED_MS = 600L
 
         const val DICTATION_TEST = "io.github.tieo.hexkeys.DICTATION_TEST"
 
