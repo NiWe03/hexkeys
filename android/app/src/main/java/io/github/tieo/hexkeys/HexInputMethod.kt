@@ -7,7 +7,6 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.util.Size
 import android.view.ViewGroup
-import android.view.inputmethod.InlineSuggestionInfo
 import android.view.inputmethod.InlineSuggestionsRequest
 import android.view.inputmethod.InlineSuggestionsResponse
 import android.widget.inline.InlinePresentationSpec
@@ -640,7 +639,9 @@ class HexInputMethod : InputMethodService() {
         // stays a small square. Each is shown as soon as it is drawn, so one the
         // service never finishes drawing cannot keep the others away.
         val views = arrayOfNulls<View>(suggestions.size)
-        val slotted = suggestions.map { it.info.isPinned || it.info.type == InlineSuggestionInfo.TYPE_ACTION }
+        // Only what the service pins takes the right end slot: Bitwarden marks its
+        // logins as actions too, so the type tells a button from a login nowhere.
+        val slotted = suggestions.map { it.info.isPinned }
         for ((index, suggestion) in suggestions.withIndex()) {
             val size = Size(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             suggestion.inflate(this, size, mainExecutor) { view ->

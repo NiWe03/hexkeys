@@ -159,10 +159,9 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
     val pinnedRoom get() = pinnedRoom(keyboard.measuredWidth)
 
     /**
-     * Shows autofill suggestion views, each with whether it takes the right
-     * end slot, as the service's pinned suggestions and its actions do, such
-     * as opening its vault; the logins line up left of it and scroll. None
-     * hides them.
+     * Shows autofill suggestion views, each with whether the service pinned
+     * it, which puts it in the right end slot; the rest line up from the left
+     * and scroll. None hides them.
      */
     fun show(suggestions: List<Pair<View, Boolean>>) {
         chips.removeAllViews()
