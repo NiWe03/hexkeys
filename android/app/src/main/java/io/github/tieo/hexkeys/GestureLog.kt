@@ -1,7 +1,6 @@
 package io.github.tieo.hexkeys
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import org.json.JSONObject
 import java.io.File
 
@@ -10,7 +9,9 @@ import java.io.File
  * per line in `files/gestures.jsonl`: where the finger went and when, what
  * the core made of it, and what was typed in the end. With it, what was
  * meant can be held against what happened. The file is cut to its newer
- * half once it passes [LIMIT]. Release builds write nothing.
+ * half once it passes [LIMIT]. Release builds neither write nor contain it:
+ * every write hangs on [BuildConfig.DEBUG], whose dead branches the release
+ * build's shrinking removes.
  */
 object GestureLog {
     private const val LIMIT = 4L shl 20
@@ -18,7 +19,7 @@ object GestureLog {
     /** Writes happen here, off the main thread, so the log never holds up a touch. */
     private val writer = java.util.concurrent.Executors.newSingleThreadExecutor()
 
-    fun enabled(context: Context) = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    fun enabled() = BuildConfig.DEBUG
 
     fun write(context: Context, record: JSONObject) {
         val line = record.toString()

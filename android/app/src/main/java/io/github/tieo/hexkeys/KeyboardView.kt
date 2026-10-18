@@ -927,7 +927,7 @@ class KeyboardView(
     private var recordPoints = JSONArray()
     private var recordActions = JSONArray()
     private var recordDown = 0L
-    private val logging = GestureLog.enabled(context)
+    private val logging = GestureLog.enabled()
 
     /**
      * Writes down a step that held up the main thread for [SLOW_MS] or

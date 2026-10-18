@@ -97,7 +97,7 @@ class HexInputMethod : InputMethodService() {
         loader.execute { Voice.cleanUp(this) }
         clips.listen()
         Dictionaries.preferences(this).registerOnSharedPreferenceChangeListener(settingsChanged)
-        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+        if (BuildConfig.DEBUG) {
             registerReceiver(dictationTest, android.content.IntentFilter(DICTATION_TEST), RECEIVER_EXPORTED)
         }
     }
@@ -610,7 +610,7 @@ class HexInputMethod : InputMethodService() {
         val frame = frame ?: return false
         val suggestions = response.inlineSuggestions
         val answer = ++inlineAnswer
-        if (GestureLog.enabled(this)) {
+        if (GestureLog.enabled()) {
             GestureLog.write(this, org.json.JSONObject()
                 .put("time", System.currentTimeMillis())
                 .put("inline", suggestions.size)
@@ -637,7 +637,7 @@ class HexInputMethod : InputMethodService() {
                 pending -= 1
                 if (pending == 0 && answer == inlineAnswer) {
                     frame.show(views.withIndex().mapNotNull { (i, it) -> it?.let { v -> v to marks[i] } })
-                    if (GestureLog.enabled(this)) {
+                    if (GestureLog.enabled()) {
                         GestureLog.write(this, org.json.JSONObject()
                             .put("time", System.currentTimeMillis())
                             .put("chips", org.json.JSONArray(views.map { it?.layoutParams?.width ?: -1 }))
@@ -728,7 +728,7 @@ class HexInputMethod : InputMethodService() {
             else -> (info.imeOptions and EditorInfo.IME_MASK_ACTION).takeIf { it in ACTION_ICONS }
         }
         multiLine = info.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE != 0
-        if (GestureLog.enabled(this)) {
+        if (GestureLog.enabled()) {
             GestureLog.write(this, org.json.JSONObject()
                 .put("time", System.currentTimeMillis())
                 .put("field", info.packageName)
