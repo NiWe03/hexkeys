@@ -149,13 +149,8 @@ class KeyboardView(
             invalidate()
         }
 
-    /** Enter's icon, and the small one for what holding it does, from the field's action. */
+    /** Enter's icon, from the field's action. */
     var enterIcon = R.drawable.icon_keyboard_return
-        set(value) {
-            field = value
-            invalidate()
-        }
-    var enterHint: Int? = null
         set(value) {
             field = value
             invalidate()
@@ -267,29 +262,48 @@ class KeyboardView(
     init {
         applyTheme()
         setOnApplyWindowInsetsListener { _, insets ->
-            // Below Android 11 the input method window ends above the navigation bar.
-            val bottom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                // The navigation bar inset covers only the gesture handle; the
-                // back and keyboard switch buttons the system draws for an
-                // input method need the taller tappable inset.
-                maxOf(
-                    insets.getInsets(WindowInsets.Type.navigationBars()).bottom,
-                    insets.getInsets(WindowInsets.Type.tappableElement()).bottom,
-                )
-            } else {
-                0
-            }
-            if (bottom != navigationBar) {
-                navigationBar = bottom
-                requestLayout()
-            }
+            fitNavigationBar(insets)
             insets
         }
     }
 
-    /** A new field: the letters with shift off, as the keyboard opens on them. */
+    /**
+     * Keeps room below the keys for the navigation bar. Below Android 11 the
+     * input method window ends above it. From 11 on the navigation bar inset
+     * covers only the gesture handle; the back and keyboard switch buttons the
+     * system draws for an input method need the taller tappable inset. Both
+     * count even while the app typed in hides the navigation bar: the system
+     * draws the bar over the keyboard all the same.
+     */
+    private fun fitNavigationBar(insets: WindowInsets) {
+        val bottom = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bars = WindowInsets.Type.navigationBars()
+            val tappable = WindowInsets.Type.tappableElement()
+            val sizes = listOf(
+                insets.getInsets(bars).bottom,
+                insets.getInsets(tappable).bottom,
+                insets.getInsetsIgnoringVisibility(bars).bottom,
+                insets.getInsetsIgnoringVisibility(tappable).bottom,
+            )
+            if (logging) GestureLog.write(context, JSONObject().put("time", System.currentTimeMillis()).put("insets", sizes.joinToString(" ")))
+            sizes.max()
+        } else {
+            0
+        }
+        if (bottom != navigationBar) {
+            navigationBar = bottom
+            requestLayout()
+        }
+    }
+
+    /**
+     * A new field: the letters with shift off, as the keyboard opens on them.
+     * The room for the navigation bar is fitted to the window's insets as
+     * they are now, not only when they change.
+     */
     fun startInput() {
         if (handle != 0L) Core.reset(handle)
+        rootWindowInsets?.let { fitNavigationBar(it) }
         invalidate()
     }
 
@@ -525,12 +539,7 @@ class KeyboardView(
             }
             val position = Core.labelPosition(handle, index)
             val hint = Core.keyHint(handle, index)
-            val enterSmall = enterHint
-            if (label == "⏎" && enterSmall != null) {
-                // What holding enter does, small above the return arrow.
-                drawIcon(canvas, enterIcon, position[0], position[1] + cellWidth * 0.12f, cellWidth * 0.32f, labelPaint.color)
-                drawIcon(canvas, enterSmall, position[0], position[1] - cellWidth * 0.24f, cellWidth * 0.22f, hintPaint.color)
-            } else if (label == SYMBOLS_KEY) {
+            if (label == SYMBOLS_KEY) {
                 // The emoji a flick up opens, small above the symbols, as flick hints sit.
                 drawLabel(canvas, label, floatArrayOf(position[0], position[1] + cellWidth * HINT_BELOW), cellWidth)
                 drawIcon(canvas, R.drawable.icon_mood, position[0], position[1] - cellWidth * HINT_ABOVE, cellWidth * 0.22f, hintPaint.color)

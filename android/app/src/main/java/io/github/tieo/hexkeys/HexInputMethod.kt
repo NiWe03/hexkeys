@@ -343,10 +343,10 @@ class HexInputMethod : InputMethodService() {
         }
     }
 
-    /** Enter shows what it does in the field: a new line, or the field's action. */
+    /** Enter shows what it does in the field: the field's action, or a new line or enter key where it has none. */
     private fun showEnter() {
-        keyboard?.enterIcon = if (multiLine) R.drawable.icon_keyboard_return else actionIcon()
-        keyboard?.enterHint = if (multiLine) action?.let { actionIcon() } else null
+        // An action the app names by its own label has no icon of its own here; send stands for it.
+        keyboard?.enterIcon = action?.let { ACTION_ICONS[it] ?: R.drawable.icon_send } ?: R.drawable.icon_keyboard_return
     }
 
     /** Ends the emoji search; enter does the field's own thing again. */
@@ -365,7 +365,6 @@ class HexInputMethod : InputMethodService() {
         }, backspace = { searchKey("backspace", "") })
         // While searching, enter ends the search.
         keyboard?.enterIcon = R.drawable.icon_check
-        keyboard?.enterHint = null
         showEmojiResults()
     }
 
@@ -497,9 +496,10 @@ class HexInputMethod : InputMethodService() {
                     else -> deleteCharacter()
                 }
             }
-            // In a field of several lines enter starts a new one, written as text so an
-            // app that sends on the enter key does not; holding it does the field's action.
-            "enter" -> if (multiLine) connection.commit("\n") else performAction()
+            // Enter does the field's action wherever the field names one, as the
+            // field asks. Without one, a field of several lines gets a new line,
+            // written as text so an app that sends on the enter key does not.
+            "enter" -> if (action == null && multiLine) connection.commit("\n") else performAction()
             "enter_action" -> performAction()
             "emoji" -> frame?.let {
                 it.showEmoji(!it.emojiShown)
@@ -729,8 +729,6 @@ class HexInputMethod : InputMethodService() {
     /** The field's action for enter, if it has one, and whether enter starts a new line in it. */
     private var action: Int? = null
     private var multiLine = false
-
-    private fun actionIcon() = action?.let { ACTION_ICONS[it] } ?: R.drawable.icon_send
 
     /** Performs the field's action, or where it has none sends the enter key, which apps take as their own. */
     private fun performAction() {
