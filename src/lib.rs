@@ -827,16 +827,12 @@ pub struct Popup {
 /// whose long-press choices are smaller than the keys.
 const POPUP_SCALE: f32 = 0.72;
 
-/// Below this distance from where it went down, a finger is tapping, in key
-/// widths. Above it the touch is a flick, up to one key width; anything
-/// longer is a path over several keys, which belongs to swipe typing.
+/// How far a finger moves up from where it went down, in key widths, for a
+/// flick up. Within one key width every other movement types the key: a
+/// finger drifts as it taps, down and sideways, and only a flick up and
+/// space's sideways flick mean something else. Anything longer is a path over
+/// several keys, which belongs to swipe typing.
 const FLICK: f32 = 0.35;
-
-/// How far a finger may slide down from a key, in key widths, and still
-/// tap it: quick taps drift downwards. In the phone's log, taps meant for
-/// u, m and space slid down 0.5 to 0.58 key widths in 59 to 89 ms; the
-/// user's deliberate flicks run 1.1 to 2.
-const DOWN_TAP: f32 = 0.7;
 
 /// How far a finger may drift and still count as holding still, in key widths.
 const STILL: f32 = 0.25;
@@ -924,10 +920,10 @@ enum Gesture {
     Tap,
     /// A short flick up.
     Up,
-    /// A short flick down.
+    /// A quick straight stroke down, longer than a key: nothing.
     Down,
-    /// A flick another way, or one pulled back to where it started: nothing.
-    Aborted,
+    /// A sideways flick on space.
+    Sideways,
     /// Movement longer than a key: a swipe-typing path.
     Path,
     /// A slide in from the delete edge: deleting as it goes.
@@ -1105,21 +1101,15 @@ impl Keyboard {
         if touch.extent >= w {
             return self.quick(touch).unwrap_or(Gesture::Path);
         }
-        if touch.extent < FLICK * w {
-            return Gesture::Tap;
-        }
         let (dx, dy) = (touch.at.x - touch.start.x, touch.at.y - touch.start.y);
         if dx.hypot(dy) < FLICK * w {
-            // Pulled back: nothing.
-            Gesture::Aborted
-        } else if dx.abs() >= dy.abs() {
-            Gesture::Aborted
-        } else if dy < 0.0 {
-            Gesture::Up
-        } else if touch.extent < DOWN_TAP * w {
             Gesture::Tap
+        } else if dy < 0.0 && dy.abs() > dx.abs() {
+            Gesture::Up
+        } else if dx.abs() >= dy.abs() && self.layout.keys[touch.key].label == "space" {
+            Gesture::Sideways
         } else {
-            Gesture::Down
+            Gesture::Tap
         }
     }
 
@@ -1352,7 +1342,7 @@ impl Keyboard {
             }
             Gesture::Tap => self.press(touch.key),
             // A flick sideways on space steps through the languages.
-            Gesture::Aborted if label == "space" && (touch.at.x - touch.start.x).abs() > (touch.at.y - touch.start.y).abs() => {
+            Gesture::Sideways => {
                 Action::Language { forward: touch.at.x > touch.start.x }
             }
             // A flick up on enter, towards the action drawn above its arrow, does the field's action.
@@ -1364,6 +1354,8 @@ impl Keyboard {
             }
             // On punctuation a flick up types the key's first alternative.
             Gesture::Up if flicked(&label).is_some() => Action::Commit(flicked(&label).unwrap_or_default().to_owned()),
+            // Where a flick up means nothing, the key is typed.
+            Gesture::Up => self.press(touch.key),
             Gesture::Path if self.is_swipe(&touch) => {
                 self.swiped = Some(Swiped { path: touch.path, capital: self.shift != Shift::Off });
                 self.letter_typed();
@@ -2035,7 +2027,7 @@ mod tests {
         assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.1, -0.6), 40), Action::Commit("G".into()));
         assert_eq!(keyboard.label(g), "g");
         assert_eq!(gesture(&mut keyboard, ",", &[(0.0, -0.6)]), Action::Commit(":".into()), "punctuation gives its first alternative");
-        assert_eq!(gesture(&mut keyboard, "space", &[(0.0, -0.6)]), Action::Nothing);
+        assert_eq!(gesture(&mut keyboard, "space", &[(0.0, -0.6)]), Action::Commit(" ".into()), "where a flick up means nothing the key is typed");
     }
 
     #[test]
@@ -2054,8 +2046,8 @@ mod tests {
         assert_eq!(keyboard.touch_move(at(1007.0 - 1.2 * w), 800), Action::Delete { pieces: 2, words: false, started: false });
         assert_eq!(keyboard.pressed(), None);
         assert_eq!(keyboard.touch_up(at(1007.0 - 1.2 * w), 900), Action::Nothing);
-        // On the letters the same slide is a flick that does nothing, even from the edge.
-        assert_eq!(gesture(&mut keyboard, "g", &[(-0.3, 0.0), (-0.6, 0.1)]), Action::Nothing);
+        // On the letters the same slide stays on its key and types it, even from the edge.
+        assert_eq!(gesture(&mut keyboard, "g", &[(-0.3, 0.0), (-0.6, 0.1)]), Action::Commit("g".into()));
         let p = keyboard.layout.find("p").cells[0];
         keyboard.touch_down(Point { x: 1007.0, y: p.y }, 1000);
         assert_eq!(keyboard.touch_move(Point { x: 1007.0 - 1.4 * w, y: p.y }, 1200), Action::Nothing);
@@ -2074,11 +2066,19 @@ mod tests {
     }
 
     #[test]
-    fn other_flicks_type_nothing() {
+    fn moving_within_the_key_types_it() {
         let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
-        assert_eq!(gesture(&mut keyboard, "g", &[(0.6, 0.0)]), Action::Nothing);
-        assert_eq!(gesture(&mut keyboard, "g", &[(0.0, 0.8)]), Action::Nothing);
-        assert_eq!(gesture(&mut keyboard, "g", &[(-0.6, 0.0), (0.0, 0.1)]), Action::Nothing, "pulled back");
+        // As o in "phone" in the phone's log: 0.35 key widths left in 46 ms.
+        keyboard.touch_down(near(&keyboard, "o", 0.0, 0.0), 0);
+        keyboard.touch_move(near(&keyboard, "o", -0.08, 0.04), 34);
+        assert_eq!(keyboard.touch_up(near(&keyboard, "o", -0.33, 0.11), 46), Action::Commit("o".into()));
+        keyboard.touch_down(near(&keyboard, "g", 0.0, 0.0), 0);
+        keyboard.touch_move(near(&keyboard, "g", 0.3, 0.0), 100);
+        assert_eq!(keyboard.touch_up(near(&keyboard, "g", 0.6, 0.0), 185), Action::Commit("g".into()), "slowly sideways");
+        assert_eq!(gesture(&mut keyboard, "g", &[(0.8, 0.0)]), Action::Commit("g".into()));
+        assert_eq!(gesture(&mut keyboard, "g", &[(0.0, 0.8)]), Action::Commit("g".into()), "down");
+        assert_eq!(gesture(&mut keyboard, "g", &[(0.0, -0.6), (0.0, -0.1)]), Action::Commit("g".into()), "a flick up pulled back");
+        assert_eq!(gesture(&mut keyboard, "space", &[(-0.5, 0.0)]), Action::Language { forward: false }, "space's sideways flick picks the language");
     }
 
     #[test]
