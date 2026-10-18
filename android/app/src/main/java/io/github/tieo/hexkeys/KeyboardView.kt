@@ -1157,7 +1157,7 @@ class KeyboardView(
         private const val STRETCH = 1.0f
 
         /** The share of the screen's height the keys take in landscape, the strip and navigation bar aside. */
-        private const val LANDSCAPE_KEYS = 0.42f
+        private const val LANDSCAPE_KEYS = 0.55f
 
         /** How much flatter keys may get before their labels shrink with them. */
         private const val LABEL_FLATTENING = 1.25f
