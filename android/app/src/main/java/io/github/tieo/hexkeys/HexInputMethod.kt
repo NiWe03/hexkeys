@@ -579,7 +579,15 @@ class HexInputMethod : InputMethodService() {
     override fun onCreateInlineSuggestionsRequest(uiExtras: Bundle): InlineSuggestionsRequest? {
         // Asked before the keyboard view exists, so sized from the strip's dp height.
         val height = ((KeyboardView.STRIP_DP - 8) * resources.displayMetrics.density).toInt()
-        val styles = UiVersions.newStylesBuilder().addStyle(InlineSuggestionUi.newStyleBuilder().build()).build()
+        // A suggestion shows its title and subtitle side by side, the title first and
+        // taking what it needs. A password manager's logins for one site share the
+        // title, the site, and differ in the subtitle, the account: the title is kept
+        // small so the account still fits.
+        val title = androidx.autofill.inline.common.TextViewStyle.Builder().setTextSize(INLINE_TITLE_SP).build()
+        val subtitle = androidx.autofill.inline.common.TextViewStyle.Builder().setTextSize(INLINE_SUBTITLE_SP).build()
+        val styles = UiVersions.newStylesBuilder()
+            .addStyle(InlineSuggestionUi.newStyleBuilder().setTitleStyle(title).setSubtitleStyle(subtitle).build())
+            .build()
         // At most as wide as the room left of the right end slot, so the service
         // shortens a long suggestion's text rather than the strip cutting it off.
         val widest = maxOf(height, KeyboardFrame.chipRoom(resources.displayMetrics.widthPixels, resources.displayMetrics.density))
@@ -699,6 +707,10 @@ class HexInputMethod : InputMethodService() {
         ) || info.inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_NUMBER &&
             variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
         val noSuggestions = info.inputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0
+        // Nothing typed into a password or PIN is written to the debug log.
+        val pin = info.inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_NUMBER &&
+            variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        keyboard?.secret = password || pin
         suggesting = !password && !noSuggestions
         swiped = null
         // Device colours follow the wallpaper and dark mode, which may have changed.
@@ -1059,6 +1071,10 @@ class HexInputMethod : InputMethodService() {
 
         /** The last word before the cursor with the spaces after it. */
         val WORD_AT_END = Regex("\\S*\\s*$")
+
+        /** Text sizes of an autofill suggestion's title, such as a login's site, and its subtitle, such as the account, in sp. */
+        const val INLINE_TITLE_SP = 11f
+        const val INLINE_SUBTITLE_SP = 14f
 
         /** How long after the window is shown its place is written down again, past the slide in, in ms. */
         const val PLACEMENT_SETTLED_MS = 600L

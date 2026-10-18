@@ -243,6 +243,9 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         }
     }
 
+    /** Where autofill's entries start: at the left end, over the settings and clipboard buttons, which give way to them. */
+    private val chipsStart get() = gap
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         keyboard.measure(widthMeasureSpec, heightMeasureSpec)
         val keysTop = keyboard.headroom + keyboard.stripTall
@@ -260,7 +263,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         val strip = MeasureSpec.makeMeasureSpec(maxOf(0, keyboard.stripTall - 2 * gap), MeasureSpec.EXACTLY)
         pinned.measure(MeasureSpec.makeMeasureSpec(width / 3, MeasureSpec.AT_MOST), strip)
         val pinnedWidth = maxOf(pinned.measuredWidth, keyboard.stripSide)
-        scroller.measure(MeasureSpec.makeMeasureSpec(width - 2 * keyboard.stripSide - pinnedWidth, MeasureSpec.EXACTLY), strip)
+        scroller.measure(MeasureSpec.makeMeasureSpec(width - chipsStart - pinnedWidth, MeasureSpec.EXACTLY), strip)
         search.measure(
             MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(keyboard.stripTall, MeasureSpec.EXACTLY),
@@ -277,7 +280,7 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         val stripTop = keyboard.headroom + gap
         val width = keyboard.measuredWidth
         pinned.layout(width - pinned.measuredWidth, stripTop, width, stripTop + pinned.measuredHeight)
-        val start = 2 * keyboard.stripSide
+        val start = chipsStart
         val keysTop = keyboard.headroom + keyboard.stripTall
         val panelTop = keysTop + keyboard.gestureBarHeight
         emoji.layout(0, panelTop, width, panelTop + emoji.measuredHeight)
@@ -308,13 +311,10 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
 
         /**
          * How wide one suggestion left of that slot can be, on a keyboard
-         * `width` wide: all the room between the settings and clipboard
-         * buttons and the slot, so none is cut.
+         * `width` wide: all the room from the left end, where the settings
+         * and clipboard buttons give way, to the slot, so none is cut.
          */
-        fun chipRoom(width: Int, density: Float): Int {
-            val side = ((KeyboardView.STRIP_DP + 4) * density).toInt()
-            return width - 2 * side - pinnedRoom(width) - (4 * density).toInt()
-        }
+        fun chipRoom(width: Int, density: Float): Int = width - pinnedRoom(width) - (8 * density).toInt()
 
         /** How long a panel takes to fade in or out, in ms. */
         const val PANEL_MS = 120L

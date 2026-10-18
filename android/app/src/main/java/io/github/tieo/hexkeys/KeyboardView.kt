@@ -638,8 +638,12 @@ class KeyboardView(
     private fun drawStrip(canvas: Canvas) {
         val middle = headroom + stripHeight / 2f
         val iconSize = stripHeight * 0.55f
-        drawIcon(canvas, R.drawable.icon_settings, stripSide / 2f, middle, iconSize, theme.label)
-        drawIcon(canvas, R.drawable.icon_content_paste, stripSide * 1.5f, middle, iconSize, theme.label)
+        // Autofill's entries take the settings and clipboard buttons' place, room
+        // for both a login's site and its account.
+        if (!chipsShown) {
+            drawIcon(canvas, R.drawable.icon_settings, stripSide / 2f, middle, iconSize, theme.label)
+            drawIcon(canvas, R.drawable.icon_content_paste, stripSide * 1.5f, middle, iconSize, theme.label)
+        }
         if (passwordsAvailable && !chipsShown) {
             val icon = passwordIcon
             if (icon != null) {
@@ -944,8 +948,11 @@ class KeyboardView(
         if (record != null) recordActions.put(JSONObject().put("kind", kind).put("text", text))
     }
 
+    /** The field takes a password or PIN, whose touches the debug log leaves out. */
+    var secret = false
+
     private fun startRecord(x: Float, y: Float, time: Long) {
-        if (!logging) return
+        if (!logging || secret) return
         recordPoints = JSONArray()
         recordActions = JSONArray()
         recordDown = time
@@ -1033,6 +1040,7 @@ class KeyboardView(
                     val touched = stripTouch - 2
                     stripTouch = -1
                     if (slot != touched || y >= 0) return true
+                    if (slot < 0 && chipsShown) return true
                     if (slot == -2) {
                         onSettings()
                         return true
