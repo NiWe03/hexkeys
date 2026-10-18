@@ -557,7 +557,7 @@ private class LayoutPreview(context: Context, private val spaceMiddle: Boolean) 
         val width = MeasureSpec.getSize(widthMeasureSpec)
         if (handle != 0L) Core.destroy(handle)
         val editKeys = Dictionaries.preferences(context).getBoolean(KeyboardView.EDIT_KEYS, false)
-        handle = Core.create(width.toFloat(), 1f, 400, spaceMiddle, editKeys)
+        handle = Core.create(width.toFloat(), 1f, 400, spaceMiddle, editKeys, false)
         theme = Theme.current(context)
         setMeasuredDimension(width, Core.height(handle).toInt())
     }

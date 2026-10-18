@@ -8,7 +8,7 @@
 
 use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::Lexicon;
-use hexkeys::{Action, Keyboard, Point, suggest, swipe, space_middle, space_bottom, with_shift_and_backspace};
+use hexkeys::{Action, Keyboard, Point, suggest, swipe, space_middle, space_bottom, with_shift_and_backspace, without_numbers};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JFloatArray, JString};
 use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
@@ -28,9 +28,12 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_create(
     long_press_ms: jlong,
     space_in_middle: jboolean,
     edit_keys: jboolean,
+    without_number_row: jboolean,
 ) -> jlong {
     let mut letters = if space_in_middle != 0 { space_middle() } else { space_bottom() };
-    if edit_keys != 0 {
+    if without_number_row != 0 {
+        letters = without_numbers(letters);
+    } else if edit_keys != 0 {
         letters = with_shift_and_backspace(letters);
     }
     Box::into_raw(Box::new(Keyboard::new(letters, width, stretch, long_press_ms as u64))) as jlong

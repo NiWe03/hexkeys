@@ -668,6 +668,13 @@ pub fn with_shift_and_backspace(mut spec: LayoutSpec) -> LayoutSpec {
     spec
 }
 
+/// `spec` for landscape: no number row, so the letters keep more of the
+/// little height there is, and backspace and shift as keys, since deleting
+/// slides in along the number row.
+pub fn without_numbers(spec: LayoutSpec) -> LayoutSpec {
+    LayoutSpec { numbers: None, ..with_shift_and_backspace(spec) }
+}
+
 /// The letters with two spaces and the marks between them, plus a number
 /// row along the top. A gesture types capitals and a slide in from the edge
 /// deletes.
@@ -715,6 +722,23 @@ const SYMBOL_ROWS: &[(&str, [&str; 2])] = &[
     ("xcvb", [":;!", "™✓•"]),
 ];
 
+/// The symbol pages of a layout without a number row, which landscape
+/// leaves out for the letters' height: the digits take the first page's top
+/// two rows, the round brackets stay on u and l, and what the digits moved
+/// goes to the second page, whose rarest marks are held instead (see
+/// [`alternates`]).
+const SYMBOL_ROWS_WITHOUT_NUMBERS: &[(&str, [&str; 2])] = &[
+    ("wetzio", ["123456", "@#€$%&"]),
+    ("qargulp", ["7890()_", "[]{}<>\\"]),
+    // Space at the bottom.
+    ("sdfhjk", ["\"':;!~", "|°§√π©"]),
+    ("yxcvbnm", ["+-*/=^", "®™✓•‰÷×"]),
+    // Space in the middle.
+    ("fh", ["\"'", "^~"]),
+    ("ysdnmjk", ["+-*/=<>", "|°§√π‰©"]),
+    ("xcvb", [":;!", "®™✓•"]),
+];
+
 /// For a letter cell no row names a symbol for, as the last letter is where
 /// shift takes over turning the page: the marks otherwise only held.
 const SPARE_SYMBOLS: &str = "«»„“”–—`";
@@ -738,7 +762,8 @@ pub fn symbol_layer(letters: &LayoutSpec, page: usize) -> LayoutSpec {
         .last();
     for (r, row) in spec.rows.iter_mut().enumerate() {
         let letters: String = row.keys.iter().filter(|key| is_letter(&key.label)).map(|key| key.label.as_str()).collect();
-        let mut symbols = SYMBOL_ROWS
+        let table = if spec.numbers.is_some() { SYMBOL_ROWS } else { SYMBOL_ROWS_WITHOUT_NUMBERS };
+        let mut symbols = table
             .iter()
             .find(|(name, _)| *name == letters)
             .map_or("", |(_, pages)| pages[page])
@@ -1696,8 +1721,15 @@ fn alternates(label: &str) -> &'static [&'static str] {
         "1" => &["½", "⅓", "¼", "⅕", "⅙", "⅛"],
         "2" => &["⅔", "⅖"],
         "3" => &["¾", "⅗", "⅜"],
-        // On the symbol pages: the typographic kinds of a mark.
+        // On the symbol pages: the typographic kinds of a mark, and the rarer
+        // signs of its kind.
         "-" => &["–", "—"],
+        "€" => &["£", "¥", "¢", "₹"],
+        "=" => &["≈", "≠", "±"],
+        "<" => &["≤", "«"],
+        ">" => &["≥", "»"],
+        "*" => &["×"],
+        "/" => &["÷"],
         "\"" => &["„", "“", "”", "«", "»"],
         "'" => &["`", "‘", "’", "‚"],
         _ => &[],
@@ -1971,7 +2003,14 @@ mod tests {
 
     #[test]
     fn every_symbol_is_on_a_page() {
-        for letters in [space_middle(), space_bottom(), with_shift_and_backspace(space_middle()), with_shift_and_backspace(space_bottom())] {
+        for letters in [
+            space_middle(),
+            space_bottom(),
+            with_shift_and_backspace(space_middle()),
+            with_shift_and_backspace(space_bottom()),
+            without_numbers(space_middle()),
+            without_numbers(space_bottom()),
+        ] {
             let labels: Vec<String> = [symbol_layer(&letters, 0), symbol_layer(&letters, 1), letters.clone()]
                 .iter()
                 .flat_map(|spec| spec.rows.iter().flat_map(|row| row.keys.iter().map(|key| key.label.clone())).collect::<Vec<_>>())
@@ -1983,6 +2022,23 @@ mod tests {
                 .filter(|c| !labels.contains(&c.to_string()) && !held.contains(&c.to_string()))
                 .collect();
             assert!(missing.is_empty(), "missing {missing}");
+        }
+    }
+
+    #[test]
+    fn without_a_number_row_the_first_symbol_page_has_the_digits() {
+        for letters in [without_numbers(space_middle()), without_numbers(space_bottom())] {
+            let keyboard = Keyboard::new(letters, 2244.0, 0.4, 400);
+            assert_eq!(keyboard.layout.numbers_bottom, 0.0);
+            assert!(keyboard.layout.keys.iter().any(|key| key.label == "⌫"));
+            let labels: Vec<&str> = keyboard.layers[1].keys.iter().map(|key| key.label.as_str()).collect();
+            for digit in "1234567890".chars() {
+                assert!(labels.contains(&digit.to_string().as_str()), "{digit} missing");
+            }
+            for (letter, bracket) in [("u", "("), ("l", ")")] {
+                let cell = keyboard.layers[0].find(letter).cells[0];
+                assert_eq!(keyboard.layers[1].key_at(cell).unwrap().label, bracket);
+            }
         }
     }
 

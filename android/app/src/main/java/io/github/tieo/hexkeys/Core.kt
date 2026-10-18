@@ -28,9 +28,10 @@ object Core {
      * A keyboard fitted to [width] pixels; [stretch] makes cells taller than
      * regular hexagons, and a finger held still for [longPressMs] is a long press.
      * [spaceMiddle] puts space and the marks between the letters instead of
-     * below them; [editKeys] adds shift and backspace keys.
+     * below them; [editKeys] adds shift and backspace keys; [withoutNumbers]
+     * leaves out the number row and adds those keys, as in landscape.
      */
-    external fun create(width: Float, stretch: Float, longPressMs: Long, spaceMiddle: Boolean, editKeys: Boolean): Long
+    external fun create(width: Float, stretch: Float, longPressMs: Long, spaceMiddle: Boolean, editKeys: Boolean, withoutNumbers: Boolean): Long
     external fun destroy(handle: Long)
     external fun height(handle: Long): Float
     external fun keyCount(handle: Long): Int

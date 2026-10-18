@@ -138,9 +138,14 @@ class EmojiPanel(
         list.adapter = Rows()
     }
 
-    /** The search button, then a button per group with its icon. */
+    /**
+     * The search button, then a button per group with its icon. Landscape
+     * has no search: its results take the number row's place, which the
+     * keyboard leaves out there.
+     */
     private fun buildBar() {
         bar.removeAllViews()
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val search = ImageView(context).apply {
             setImageResource(R.drawable.icon_search)
             setColorFilter(theme.label)
@@ -148,7 +153,7 @@ class EmojiPanel(
             background = pill(theme.other)
             setOnClickListener { onSearch() }
         }
-        bar.addView(search, LayoutParams(dp(PANEL_CONTROL * 2), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = dp(PANEL_INSET / 2) })
+        if (!landscape) bar.addView(search, LayoutParams(dp(PANEL_CONTROL * 2), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = dp(PANEL_INSET / 2) })
         for ((group, icon) in GROUP_ICONS.withIndex()) {
             val mark = ImageView(context).apply {
                 setImageResource(icon)

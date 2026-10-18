@@ -660,6 +660,9 @@ class HexInputMethod : InputMethodService() {
         frame?.show(emptyList())
     }
 
+    /** The app stays in view in landscape too, above the keyboard, rather than a full screen editor. */
+    override fun onEvaluateFullscreenMode() = false
+
     override fun onWindowShown() {
         super.onWindowShown()
         keyboard?.logPlacement("shown")

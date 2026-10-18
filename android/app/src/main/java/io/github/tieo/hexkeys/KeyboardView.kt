@@ -404,6 +404,9 @@ class KeyboardView(
     /** The width and layout settings the keys were last laid out for. */
     private var builtFor = ""
 
+    /** How tall the keys are against regular hexagons: flatter in landscape. */
+    private var stretch = STRETCH
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val preferences = Dictionaries.preferences(context)
@@ -412,10 +415,19 @@ class KeyboardView(
         // The keys are laid out again only when what they depend on changed: every
         // panel shown over them measures the keyboard too, and building it anew
         // each time held up opening the emoji and their search.
-        val shape = "$width/$spaceMiddle/$editKeys"
+        // Landscape is short: the number row goes, deleting is the backspace key's,
+        // and the keys flatten to fit [LANDSCAPE_KEYS] of the height.
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val shape = "$width/$spaceMiddle/$editKeys/$landscape"
         if (handle == 0L || shape != builtFor) {
             if (handle != 0L) Core.destroy(handle)
-            handle = Core.create(width.toFloat(), STRETCH, ViewConfiguration.getLongPressTimeout().toLong(), spaceMiddle, editKeys)
+            stretch = STRETCH
+            if (landscape) {
+                val regular = Core.create(width.toFloat(), STRETCH, 0, spaceMiddle, editKeys, true)
+                stretch = minOf(STRETCH, STRETCH * resources.displayMetrics.heightPixels * LANDSCAPE_KEYS / Core.height(regular))
+                Core.destroy(regular)
+            }
+            handle = Core.create(width.toFloat(), stretch, ViewConfiguration.getLongPressTimeout().toLong(), spaceMiddle, editKeys, landscape)
             builtFor = shape
             // Freed on the words thread after whatever it is still doing with it.
             val old = letters
@@ -516,7 +528,8 @@ class KeyboardView(
         drawStrip(canvas)
         canvas.save()
         canvas.translate(0f, keysTop.toFloat())
-        val cellWidth = Core.cellWidth(handle)
+        // Labels fit the key's height as well as its width, which flatter keys have less of.
+        val cellWidth = Core.cellWidth(handle) * minOf(1f, stretch * LABEL_FLATTENING)
         val pressed = Core.pressed(handle)
         // Holding space turns the keys into a touchpad for the cursor: their labels fade.
         labelPaint.alpha = ((if (Core.movingCursor(handle)) 0x40 else 0xFF) * pageFade).toInt()
@@ -1142,6 +1155,12 @@ class KeyboardView(
 
         /** Regular hexagons: at eight to a row they are already finger-sized. */
         private const val STRETCH = 1.0f
+
+        /** The share of the screen's height the keys take in landscape, the strip and navigation bar aside. */
+        private const val LANDSCAPE_KEYS = 0.42f
+
+        /** How much flatter keys may get before their labels shrink with them. */
+        private const val LABEL_FLATTENING = 1.25f
 
         /** Keys drawn as an icon instead of their label. */
         val KEY_ICONS = mapOf(
