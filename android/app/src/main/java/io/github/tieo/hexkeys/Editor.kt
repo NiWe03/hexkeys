@@ -127,20 +127,33 @@ class Editor(private val service: InputMethodService) : TextTarget {
     }
 
     /**
-     * Moves the cursor `dx` characters right and `dy` lines down. Sideways it
-     * is placed directly and stops at the text's ends: an arrow key pressed
-     * there moves the focus out of the field instead, which closes the
-     * keyboard. Up and down go by arrow keys, only while there is text that way.
+     * Moves the cursor `dx` characters right and `dy` lines down, a character
+     * being what the reader sees as one: a whole emoji, flag or letter with
+     * its marks, so the cursor never lands inside one, where whatever is
+     * typed next would split it. Sideways it is placed directly and stops at
+     * the text's ends: an arrow key pressed there moves the focus out of the
+     * field instead, which closes the keyboard. Up and down go by arrow keys,
+     * only while there is text that way.
      */
     fun moveCursor(dx: Int, dy: Int) {
         val connection = connection ?: return
         if (dx != 0) {
+            val breaks = java.text.BreakIterator.getCharacterInstance()
             val room = if (dx > 0) {
-                connection.getTextAfterCursor(dx, 0)?.length ?: 0
+                val after = connection.getTextAfterCursor(dx * CHARACTER_LONGEST, 0)?.toString().orEmpty()
+                breaks.setText(after)
+                var at = 0
+                repeat(dx) { at = breaks.following(at).takeIf { it != java.text.BreakIterator.DONE } ?: after.length }
+                at
             } else {
-                minOf(-dx, maxOf(selectionStart, 0))
+                val before = connection.getTextBeforeCursor(-dx * CHARACTER_LONGEST, 0)?.toString().orEmpty()
+                breaks.setText(before)
+                var at = before.length
+                repeat(-dx) { at = breaks.preceding(at).takeIf { it != java.text.BreakIterator.DONE } ?: 0 }
+                before.length - at
             }
-            val target = maxOf(0, selectionStart) + if (dx > 0) room else -room
+            // Right goes on from the selection's end and left from its start, as arrow keys do.
+            val target = if (dx > 0) maxOf(0, selectionEnd) + room else maxOf(0, selectionStart) - room
             if (room > 0) {
                 connection.setSelection(target, target)
                 selectionStart = target
@@ -173,9 +186,31 @@ class Editor(private val service: InputMethodService) : TextTarget {
         /** Enough text before the cursor for the word being typed and the one before it. */
         const val CONTEXT = 64
 
+        /**
+         * The most UTF-16 units one character takes that the cursor steps
+         * over whole: a family emoji with skin tones joined by zero width
+         * joiners runs to about 30.
+         */
+        private const val CHARACTER_LONGEST = 32
+
         /** The most kept in the copy. */
         private const val KEEP = 256
 
         val ENTER = KeyEvent.KEYCODE_ENTER
     }
+}
+
+/** `text` without its last character as the reader sees it, so an emoji is never cut in half. */
+fun withoutLastCharacter(text: String): String {
+    val breaks = java.text.BreakIterator.getCharacterInstance()
+    breaks.setText(text)
+    return text.substring(0, breaks.preceding(text.length).coerceAtLeast(0))
+}
+
+/** `text` without its first character as the reader sees it. */
+fun withoutFirstCharacter(text: String): String {
+    if (text.isEmpty()) return text
+    val breaks = java.text.BreakIterator.getCharacterInstance()
+    breaks.setText(text)
+    return text.substring(breaks.following(0).coerceAtMost(text.length))
 }

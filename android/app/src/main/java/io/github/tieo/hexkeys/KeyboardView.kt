@@ -657,7 +657,7 @@ class KeyboardView(
         val room = right - left - icon - 36 * density
         var shown = freshClip.replace('\n', ' ')
         if (stripPaint.measureText(shown) > room) {
-            while (shown.length > 1 && stripPaint.measureText("$shown…") > room) shown = shown.dropLast(1)
+            while (shown.length > 1 && stripPaint.measureText("$shown…") > room) shown = withoutLastCharacter(shown)
             shown += "…"
         }
         val width = icon + 8 * density + stripPaint.measureText(shown) + 28 * density
@@ -766,9 +766,9 @@ class KeyboardView(
         val baseline = middle - (stripPaint.descent() + stripPaint.ascent()) / 2
         val room = centre - left - 4 * density
         var shownBefore = before.replace('\n', ' ')
-        while (shownBefore.isNotEmpty() && stripPaint.measureText(shownBefore) > room) shownBefore = shownBefore.drop(1)
+        while (shownBefore.isNotEmpty() && stripPaint.measureText(shownBefore) > room) shownBefore = withoutFirstCharacter(shownBefore)
         var shownAfter = after.replace('\n', ' ')
-        while (shownAfter.isNotEmpty() && stripPaint.measureText(shownAfter) > room) shownAfter = shownAfter.dropLast(1)
+        while (shownAfter.isNotEmpty() && stripPaint.measureText(shownAfter) > room) shownAfter = withoutLastCharacter(shownAfter)
         val align = stripPaint.textAlign
         stripPaint.textAlign = Paint.Align.RIGHT
         canvas.drawText(shownBefore, centre - 3 * density, baseline, stripPaint)
