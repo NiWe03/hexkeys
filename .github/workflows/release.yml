@@ -1,17 +1,19 @@
 # Builds the signed APK for a version tag (v1.2.3) and publishes it as that
-# tag's release, with its SHA-256 next to it.
+# tag's release, with its SHA-256 next to it. Run by hand it builds and
+# checks the APK as version 0.0.0 and publishes nothing.
 name: Release
 
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       NDK: "27.0.12077973"
     steps:
@@ -22,7 +24,7 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: "platforms;android-36 build-tools;36.0.0 ndk;27.0.12077973"
 
@@ -48,6 +50,7 @@ jobs:
           export HEXKEYS_KEYSTORE="$RUNNER_TEMP/release.jks"
           echo "$KEYSTORE_BASE64" | base64 -d > "$HEXKEYS_KEYSTORE"
           version="${GITHUB_REF_NAME#v}"
+          [ "$GITHUB_REF_TYPE" = tag ] || version=0.0.0
           gradle -p android assembleRelease -Phexkeys.version="$version"
           mkdir -p dist
           cp android/app/build/outputs/apk/release/app-release.apk "dist/hexkeys-$version.apk"
@@ -59,6 +62,7 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs dist/*.apk | grep -i "SHA-256 digest"
 
       - name: Publish the release
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
