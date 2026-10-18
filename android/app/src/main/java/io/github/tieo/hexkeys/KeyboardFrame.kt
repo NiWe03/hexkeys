@@ -155,26 +155,22 @@ class KeyboardFrame(context: Context, val keyboard: KeyboardView, val emoji: Emo
         query.text = text
     }
 
-    /**
-     * Shows autofill suggestion views, each with whether the service pinned
-     * it; none hides them. Where the service pins none, its last suggestion
-     * is taken for its button: services add theirs last (Bitwarden does,
-     * unpinned), so it is the one that has to stay in reach.
-     */
     /** How wide the right end slot for the service's button can be. */
     val pinnedRoom get() = pinnedRoom(keyboard.measuredWidth)
 
-    /** Whether, among suggestions with these pinned marks, the one at `index` takes the right end slot. */
-    fun takesSlot(pinnedMarks: List<Boolean>, index: Int) =
-        pinnedMarks[index] || (pinnedMarks.none { it } && index == pinnedMarks.lastIndex)
-
+    /**
+     * Shows autofill suggestion views, each with whether it takes the right
+     * end slot, as the service's pinned suggestions and its actions do, such
+     * as opening its vault; the logins line up left of it and scroll. None
+     * hides them.
+     */
     fun show(suggestions: List<Pair<View, Boolean>>) {
         chips.removeAllViews()
         pinned.removeAllViews()
         val marks = suggestions.map { it.second }
         for ((index, entry) in suggestions.withIndex()) {
             val view = entry.first
-            val isPinned = takesSlot(marks, index)
+            val isPinned = marks[index]
             // The view comes sized to what the service rendered; keep that.
             val given = view.layoutParams
             val params = LinearLayout.LayoutParams(

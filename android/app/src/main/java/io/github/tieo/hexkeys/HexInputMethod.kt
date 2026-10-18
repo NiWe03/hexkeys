@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.util.Size
 import android.view.ViewGroup
+import android.view.inputmethod.InlineSuggestionInfo
 import android.view.inputmethod.InlineSuggestionsRequest
 import android.view.inputmethod.InlineSuggestionsResponse
 import android.widget.inline.InlinePresentationSpec
@@ -636,23 +637,22 @@ class HexInputMethod : InputMethodService() {
         }
         // A suggestion is drawn once, at its final size: as wide as its content,
         // at most the room the request allowed, so a button that is only an icon
-        // stays a small square.
+        // stays a small square. Each is shown as soon as it is drawn, so one the
+        // service never finishes drawing cannot keep the others away.
         val views = arrayOfNulls<View>(suggestions.size)
-        val marks = suggestions.map { it.info.isPinned }
-        var pending = suggestions.size
+        val slotted = suggestions.map { it.info.isPinned || it.info.type == InlineSuggestionInfo.TYPE_ACTION }
         for ((index, suggestion) in suggestions.withIndex()) {
             val size = Size(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             suggestion.inflate(this, size, mainExecutor) { view ->
+                if (answer != inlineAnswer) return@inflate
                 views[index] = view
-                pending -= 1
-                if (pending == 0 && answer == inlineAnswer) {
-                    frame.show(views.withIndex().mapNotNull { (i, it) -> it?.let { v -> v to marks[i] } })
-                    if (GestureLog.enabled()) {
-                        GestureLog.write(this, org.json.JSONObject()
-                            .put("time", System.currentTimeMillis())
-                            .put("chips", org.json.JSONArray(views.map { it?.layoutParams?.width ?: -1 }))
-                            .put("pinnedRoom", frame.pinnedRoom))
-                    }
+                frame.show(views.withIndex().mapNotNull { (i, it) -> it?.let { v -> v to slotted[i] } })
+                if (GestureLog.enabled()) {
+                    GestureLog.write(this, org.json.JSONObject()
+                        .put("time", System.currentTimeMillis())
+                        .put("chip", index)
+                        .put("type", suggestion.info.type)
+                        .put("width", view?.layoutParams?.width ?: -1))
                 }
             }
         }
