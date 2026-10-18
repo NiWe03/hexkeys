@@ -38,6 +38,8 @@ from render import (  # noqa: E402
 FIRST_BAR = 16
 CHORUS_BAR = 32
 END_BAR = 36
+# Where the icon settles in the finale.
+ICON_Y = 430
 # What each bar of the full beat shows, one thing hexkeys does per bar.
 FEATURES = {16: "arrival", 17: "flick", 18: "swipe", 19: "suggestions", 20: "glide", 21: "hold", 22: "clipboard", 23: "speak",
             24: "speak", 25: "slide", 26: "languages", 27: "emoji_search", 28: "send", 29: "themes", 30: "themes", 31: "source"}
@@ -872,7 +874,9 @@ class Cut(render.Film):
         keys = [kb.key("r"), kb.key("d"), kb.key("f")]
         mx = sum(k["centre"][0] for k in keys) / 3
         my = sum(k["centre"][1] for k in keys) / 3
-        s = 2.6
+        # The icon a little smaller and higher than the keys it grew from, so
+        # the name, the tagline and the address fit under it with room.
+        s = 2.2
         start = self.song.bar_time(CHORUS_BAR)
         place = self.PLACE
         # From the chorus's first beat every key glides into the nearest of the
@@ -883,7 +887,7 @@ class Cut(render.Film):
 
         def icon_at(k):
             sx, sy = self.key_xy(k["label"], place)
-            tx, ty = 960 + (k["centre"][0] - mx) * s, 500 + (k["centre"][1] - my) * s
+            tx, ty = 960 + (k["centre"][0] - mx) * s, ICON_Y + (k["centre"][1] - my) * s
             return lerp(sx, tx, gather), lerp(sy, ty, gather), lerp(ks, s, gather)
 
         if gather < 1:
@@ -891,7 +895,7 @@ class Cut(render.Film):
             cx, cy, width = place
             h = kb.height * ks
             box = (cx - width / 2 - 26, cy - h / 2 - 26, width + 52, h + 52)
-            target = (960 - 1.2 * kb.cell * s, 500 - 1.1 * kb.cell * s, 2.4 * kb.cell * s, 2.2 * kb.cell * s)
+            target = (960 - 1.2 * kb.cell * s, ICON_Y - 1.1 * kb.cell * s, 2.4 * kb.cell * s, 2.2 * kb.cell * s)
             bx, by, bw, bh = (lerp(a, b, gather) for a, b in zip(box, target))
             rounded_rect_path(ctx, bx, by, bw, bh, 28)
             ctx.set_source_rgba(*DUSK_BG, 1 - span(gather, 0, 0.5))
@@ -936,8 +940,8 @@ class Cut(render.Film):
         for row in range(-9, 10):
             for col in range(-11, 12):
                 cx = 960 + col * r * math.sqrt(3) + (r * math.sqrt(3) / 2 if row % 2 else 0)
-                cy = 500 + row * r * 1.5
-                d = math.hypot(cx - 960, cy - 500)
+                cy = ICON_Y + row * r * 1.5
+                d = math.hypot(cx - 960, cy - ICON_Y)
                 if d > reach or d < 230:
                     continue
                 fade = clamp((reach - d) / 250)
@@ -950,7 +954,7 @@ class Cut(render.Film):
         # Two columns at the sides and two spots at the top, clear of the name,
         # the tagline and the address under the icon.
         spots = [(-700, -330), (700, -330), (-700, -170), (700, -170), (-700, -10), (700, -10), (-700, 150), (700, 150),
-                 (-700, 310), (700, 310), (-300, -430), (300, -430)]
+                 (-700, 310), (700, 310), (-300, -360), (300, -360)]
         after = [bt for bt in beats if bt >= hits[0] + 0.2]
         for i, (word, (dx, dy)) in enumerate(zip(recap, spots)):
             if i >= len(after) or t < after[i]:
@@ -958,11 +962,11 @@ class Cut(render.Film):
             p = out_back(span(t, after[i], after[i] + 0.25), 2.2)
             dim = 1 - 0.55 * span(t, after[i] + 0.4, after[i] + 1.0)
             out = 1.0
-            self.heavy.text(ctx, word, 960 + dx, 500 + dy + 16, 40 * max(p, 0.01), mix(PAPER, flow(i / 11), 0.5), align=0.5, alpha=dim * out)
+            self.heavy.text(ctx, word, 960 + dx, ICON_Y + dy + 16, 40 * max(p, 0.01), mix(PAPER, flow(i / 11), 0.5), align=0.5, alpha=dim * out)
         breathe = 1 + 0.07 * pulse
-        ctx.translate(960, 500)
+        ctx.translate(960, ICON_Y)
         ctx.scale(breathe, breathe)
-        ctx.translate(-960, -500)
+        ctx.translate(-960, -ICON_Y)
         settle = gather
         for i, (k, letter, angle) in enumerate(zip(keys, "ehx", (0, -30, 30))):
             px, py, sc = icon_at(k)
@@ -992,7 +996,7 @@ class Cut(render.Film):
         for k in range(3):
             ring = span(t, hits[0] + k * 0.12, hits[0] + 1.2 + k * 0.12)
             if 0 < ring < 1:
-                hexagon(ctx, 960, 500, 200 + out_cubic(ring) * 1000, ring * 0.4)
+                hexagon(ctx, 960, ICON_Y, 200 + out_cubic(ring) * 1000, ring * 0.4)
                 ctx.set_source_rgba(*flow(k / 2), 0.7 * (1 - ring))
                 ctx.set_line_width(4)
                 ctx.stroke()

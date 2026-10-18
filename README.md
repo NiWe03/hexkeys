@@ -7,14 +7,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nanbiz/hexkeys/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/nanbiz/hexkeys?color=5F72D9"></a>
+  <a href="https://github.com/nanbiz/hexkeys/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/nanbiz/hexkeys?sort=semver&color=5F72D9"></a>
   <a href="https://github.com/nanbiz/hexkeys/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/nanbiz/hexkeys/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-3FA393"></a>
   <img alt="Android 9+" src="https://img.shields.io/badge/Android-9%2B-A465B8">
 </p>
 
 <p align="center">
-  <a href="https://youtu.be/4kL6td_JMsM"><img src="https://img.youtube.com/vi/4kL6td_JMsM/hqdefault.jpg" alt="The hexkeys trailer" width="560"></a>
+  <a href="https://youtu.be/4kL6td_JMsM"><img src="docs/trailer.png" alt="The hexkeys trailer" width="560"></a>
 </p>
 
 ## Why hexagons
