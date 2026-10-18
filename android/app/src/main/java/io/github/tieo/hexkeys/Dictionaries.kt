@@ -27,17 +27,13 @@ object Dictionaries {
     private const val CONTEXTS = "https://github.com/nanbiz/hexkeys/releases/download/contexts-1/"
 
     const val ENABLED = "dictionaries"
-    /** Before there were modes: on meant correcting everything. */
-    const val AUTOCORRECT = "autocorrect"
-
-    /** What autocorrect changes: [AUTOCORRECT_MODES] off, only obvious slips, or every mistake. */
+    /** What autocorrect changes: [AUTOCORRECT_MODES] off, only obvious slips, or every mistake, the default as on other keyboards. */
     const val AUTOCORRECT_MODE = "autocorrect_mode"
     val AUTOCORRECT_MODES = listOf("off", "obvious", "all")
 
     fun autocorrectMode(context: Context): String {
         val preferences = preferences(context)
-        return preferences.getString(AUTOCORRECT_MODE, null)?.takeIf { it in AUTOCORRECT_MODES }
-            ?: if (preferences.getBoolean(AUTOCORRECT, false)) "all" else "obvious"
+        return preferences.getString(AUTOCORRECT_MODE, null)?.takeIf { it in AUTOCORRECT_MODES } ?: "all"
     }
     const val LEARNING = "learning"
 

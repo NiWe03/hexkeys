@@ -9,13 +9,15 @@ use hexkeys::{Layout, honeycomb, suggest};
 fn main() {
     let mut args = std::env::args().skip(1);
     let paths = args.next().expect("usage: suggest FILE[,FILE...] [PREVIOUS:]WORD...");
-    let lexicon = suggest::Lexicon::new(
+    let mut lexicon = suggest::Lexicon::new(
         paths.split(',').map(|path| Dictionary::new(std::fs::read(path).expect("read")).expect("parse")).collect(),
     );
     let layout = Layout::fit(&honeycomb(), 1080.0, 1.0);
     let substitution = |typed: char, meant: char| layout.substitution(typed, meant);
     for arg in args {
         if let Some(before) = arg.strip_prefix('=') {
+            // As the keyboard does, the language of the words before counts.
+            lexicon.set_context(before);
             let strip = suggest::strip(&lexicon, before, &substitution).expect("read");
             println!("{before}\t{}\t{}\t{}", strip.slots.join("|"), strip.correction.unwrap_or_default(), strip.unknown.unwrap_or_default());
             continue;
