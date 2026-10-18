@@ -1,0 +1,11 @@
+name: Feature request
+description: Something hexkeys should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like
+      description: What it should do and when you would use it.
+    validations:
+      required: true

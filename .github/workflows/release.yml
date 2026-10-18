@@ -1,0 +1,71 @@
+# Builds the signed APK for a version tag (v1.2.3) and publishes it as that
+# tag's release, with its SHA-256 next to it.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      NDK: "27.0.12077973"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: "platforms;android-36 build-tools;36.0.0 ndk;27.0.12077973"
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - run: cargo install cargo-ndk --locked
+
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+        with:
+          gradle-version: "9.3.1"
+
+      - name: Build the signed APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          HEXKEYS_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          HEXKEYS_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          HEXKEYS_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          export HEXKEYS_KEYSTORE="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$HEXKEYS_KEYSTORE"
+          version="${GITHUB_REF_NAME#v}"
+          gradle -p android assembleRelease -Phexkeys.version="$version"
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/hexkeys-$version.apk"
+          (cd dist && sha256sum "hexkeys-$version.apk" > "hexkeys-$version.apk.sha256")
+          rm "$HEXKEYS_KEYSTORE"
+
+      - name: Check the signature
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs dist/*.apk | grep -i "SHA-256 digest"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "Download **hexkeys-$version.apk** below and open it on your phone, then enable hexkeys under Settings, System, Keyboard."
+            echo
+            echo "SHA-256: \`$(cut -d' ' -f1 "dist/hexkeys-$version.apk.sha256")\`"
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --title "hexkeys $version" --notes-file notes.md --generate-notes

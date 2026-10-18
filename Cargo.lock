@@ -32,7 +32,7 @@ dependencies = [
 
 [[package]]
 name = "hexkeys"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde_json",
  "unicode-normalization",
@@ -40,7 +40,7 @@ dependencies = [
 
 [[package]]
 name = "hexkeys-jni"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "hexkeys",
  "jni",

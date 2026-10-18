@@ -17,10 +17,33 @@ android {
         applicationId = "io.github.tieo.hexkeys"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // The release workflow passes the tag's version; versionCode follows
+        // it as major * 10000 + minor * 100 + patch so every release is newer.
+        val version = (findProperty("hexkeys.version") as String?) ?: "1.0.0"
+        val (major, minor, patch) = version.split(".").map { it.toInt() }
+        versionCode = major * 10000 + minor * 100 + patch
+        versionName = version
         // A phone and the emulator.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+    }
+
+    // Release builds are signed with the key the release workflow takes from
+    // its secrets; without them a release build stays unsigned.
+    val keystore = System.getenv("HEXKEYS_KEYSTORE")
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("HEXKEYS_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("HEXKEYS_KEY_ALIAS")
+                keyPassword = System.getenv("HEXKEYS_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (keystore != null) signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {
