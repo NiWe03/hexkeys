@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
 import android.os.Build
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -143,6 +144,10 @@ class KeyboardView(
     /** Space keys on the layer shown, and how many of them this frame has drawn. */
     private var spaceKeys = 0
     private var spacesDrawn = 0
+
+    /** How wide the space key is drawn, which the language codes on it must fit. */
+    private var spaceWidth = 0f
+    private val spaceBounds = RectF()
 
     /** Whether the first of [spaceLanguages] is known to be the one written. */
     var spaceInUse = false
@@ -414,24 +419,25 @@ class KeyboardView(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val preferences = Dictionaries.preferences(context)
-        val spaceMiddle = preferences.getString(LAYOUT, null) == SPACE_MIDDLE
+        val spaceMiddle = spaceMiddle(preferences)
+        val leftKey = preferences.getString(LEFT_KEY, null) ?: DEFAULT_LEFT_KEY
         val editKeys = preferences.getBoolean(EDIT_KEYS, false)
         // The keys are laid out again only when what they depend on changed: every
         // panel shown over them measures the keyboard too, and building it anew
         // each time held up opening the emoji and their search.
         // Landscape is short: the number row and the strip go, deleting is the backspace
         // key's, and the keys flatten to fit [LANDSCAPE_KEYS] of the height and the strip's.
-        val shape = "$width/$spaceMiddle/$editKeys/$landscape"
+        val shape = "$width/$spaceMiddle/$leftKey/$editKeys/$landscape"
         if (handle == 0L || shape != builtFor) {
             if (handle != 0L) Core.destroy(handle)
             stretch = STRETCH
             if (landscape) {
-                val regular = Core.create(width.toFloat(), STRETCH, 0, spaceMiddle, editKeys, true)
+                val regular = Core.create(width.toFloat(), STRETCH, 0, spaceMiddle, leftKey, editKeys, true)
                 val room = resources.displayMetrics.heightPixels * LANDSCAPE_KEYS + fullStrip
                 stretch = minOf(STRETCH, STRETCH * room / Core.height(regular))
                 Core.destroy(regular)
             }
-            handle = Core.create(width.toFloat(), stretch, ViewConfiguration.getLongPressTimeout().toLong(), spaceMiddle, editKeys, landscape)
+            handle = Core.create(width.toFloat(), stretch, ViewConfiguration.getLongPressTimeout().toLong(), spaceMiddle, leftKey, editKeys, landscape)
             builtFor = shape
             // Freed on the words thread after whatever it is still doing with it.
             val old = letters
@@ -541,6 +547,10 @@ class KeyboardView(
         // While the keys are a touchpad for the cursor, no key is pressed.
         val moving = Core.movingCursor(handle)
         spaceKeys = paths.indices.count { Core.label(handle, it) == "space" }
+        spaceWidth = paths.indices.firstOrNull { Core.label(handle, it) == "space" }?.let {
+            paths[it].computeBounds(spaceBounds, false)
+            spaceBounds.width()
+        } ?: 0f
         spacesDrawn = 0
         for ((index, path) in paths.withIndex()) {
             val digits = Core.inNumberRow(handle, index)
@@ -862,7 +872,7 @@ class KeyboardView(
         // brightest, faint while it is a guess; of two space keys the first carries
         // that one and the second the rest.
         if (label == "space") {
-            val shown = when {
+            var shown = when {
                 spaceKeys == 1 -> spaceLanguages
                 spacesDrawn == 0 -> spaceLanguages.take(1)
                 else -> spaceLanguages.drop(1)
@@ -871,7 +881,17 @@ class KeyboardView(
             spacesDrawn++
             if (shown.isEmpty()) return
             val alpha = labelPaint.alpha
+            // A narrow space shrinks its codes, then leaves out the last ones, rather than spill over its neighbours.
+            val room = spaceWidth * SPACE_LABEL_ROOM
             labelPaint.textSize = cellWidth * 0.2f
+            fun wide(codes: List<String>) = codes.sumOf { labelPaint.measureText(it).toDouble() }.toFloat() +
+                labelPaint.measureText("  ") * (codes.size - 1)
+            if (room > 0f && wide(shown) > room) {
+                labelPaint.textSize = maxOf(labelPaint.textSize * room / wide(shown), cellWidth * 0.13f)
+                var fits = shown
+                while (fits.size > 1 && wide(fits) > room) fits = fits.dropLast(1)
+                shown = fits
+            }
             val gap = labelPaint.measureText("  ")
             val widths = shown.map { labelPaint.measureText(it) }
             var x = position[0] - (widths.sum() + gap * (shown.size - 1)) / 2
@@ -959,7 +979,7 @@ class KeyboardView(
         val pressed = Core.pressed(handle)
         record = JSONObject()
             .put("time", System.currentTimeMillis())
-            .put("layout", Dictionaries.preferences(context).getString(LAYOUT, "hexkeys"))
+            .put("layout", if (spaceMiddle(Dictionaries.preferences(context))) SPACE_MIDDLE else SPACE_BOTTOM)
             .put("width", width)
             .put("cellWidth", Core.cellWidth(handle).toDouble())
             .put("key", if (pressed >= 0) Core.label(handle, pressed) else "")
@@ -1179,6 +1199,10 @@ class KeyboardView(
             "⌫" to R.drawable.icon_backspace,
             "⏎" to R.drawable.icon_keyboard_return,
             "⇧" to R.drawable.icon_shift,
+            "emoji" to R.drawable.icon_mood,
+            "clipboard" to R.drawable.icon_content_paste,
+            "voice" to R.drawable.icon_mic,
+            "hide" to R.drawable.icon_keyboard_hide,
         )
 
         /** Marks that sit high or low on the line and look misplaced unless centred on their ink. */
@@ -1204,12 +1228,26 @@ class KeyboardView(
         /** Height of the suggestion strip in dp. */
         const val STRIP_DP = 44
 
+        /** How much of the space key's width its language codes may take. */
+        private const val SPACE_LABEL_ROOM = 0.8f
+
         /** Width of the delete edge kept from the back gesture, in dp. */
         private const val EXCLUSION_WIDTH = 32
 
-        /** Preference naming the letter layout; [SPACE_MIDDLE] or anything else for space at the bottom. */
+        /** Preference naming the letter layout: [SPACE_BOTTOM] or, unless chosen, [SPACE_MIDDLE]. */
         const val LAYOUT = "layout"
         const val SPACE_MIDDLE = "space_middle"
+        const val SPACE_BOTTOM = "hexkeys"
+
+        fun spaceMiddle(preferences: android.content.SharedPreferences) = preferences.getString(LAYOUT, null) != SPACE_BOTTOM
+
+        /**
+         * Preference naming the key left of space in the middle layout, one of
+         * [LEFT_KEYS], which are the names the core's `space_middle_with` knows.
+         */
+        const val LEFT_KEY = "left_key"
+        const val DEFAULT_LEFT_KEY = "comma"
+        val LEFT_KEYS = listOf("comma", "backspace", "emoji", "clipboard", "voice", "hide", "space")
 
         /** Preference: delete swipes come in from the left edge. */
         const val DELETE_FROM_LEFT = "delete_from_left"

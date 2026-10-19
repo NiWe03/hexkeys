@@ -77,7 +77,7 @@ class HexInputMethod : InputMethodService() {
                 emojiSearch = null
             }
             Theme.KEY -> keyboard?.theme = Theme.current(this)
-            KeyboardView.LAYOUT, KeyboardView.DELETE_FROM_LEFT, KeyboardView.EDIT_KEYS ->
+            KeyboardView.LAYOUT, KeyboardView.LEFT_KEY, KeyboardView.DELETE_FROM_LEFT, KeyboardView.EDIT_KEYS ->
                 keyboard?.requestLayout()
             Dictionaries.LEARNED_RESET -> {
                 Core.words.execute { Core.lexiconForget(lexicon) }
@@ -510,6 +510,9 @@ class HexInputMethod : InputMethodService() {
                 it.showEmoji(!it.emojiShown)
                 readEmojiSearch()
             }
+            "clipboard" -> frame?.let { it.showClipboard(!it.clipboardShown) }
+            "voice" -> toggleVoice()
+            "hide" -> requestHideSelf(0)
             "language" -> {
                 // Guessing, then each language in turn, then guessing again.
                 val count = lexiconFiles.size

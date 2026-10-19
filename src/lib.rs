@@ -675,15 +675,38 @@ pub fn without_numbers(spec: LayoutSpec) -> LayoutSpec {
     LayoutSpec { numbers: None, ..with_shift_and_backspace(spec) }
 }
 
-/// The letters with two spaces and the marks between them, plus a number
-/// row along the top. A gesture types capitals and a slide in from the edge
-/// deletes.
+/// What the key left of the middle layout's space can be, by the name
+/// the settings store: the comma, backspace, the emoji, the clipboard,
+/// dictation, hiding the keyboard, or a second space.
+pub const LEFT_KEYS: &[&str] = &["comma", "backspace", "emoji", "clipboard", "voice", "hide", "space"];
+
+/// The label of the left key `id` names; the comma for an id no key has.
+fn left_key_label(id: &str) -> &'static str {
+    match id {
+        "backspace" => "⌫",
+        "emoji" => "emoji",
+        "clipboard" => "clipboard",
+        "voice" => "voice",
+        "hide" => "hide",
+        "space" => "space",
+        _ => ",",
+    }
+}
+
+/// The letters with space and the marks between them, plus a number row
+/// along the top, and the comma left of space. A gesture types capitals and
+/// a slide in from the edge deletes.
 pub fn space_middle() -> LayoutSpec {
+    space_middle_with("comma")
+}
+
+/// [`space_middle`] with the key left of space one of [`LEFT_KEYS`].
+pub fn space_middle_with(left: &str) -> LayoutSpec {
     LayoutSpec {
         rows: vec![
             row(0, letters("wetzio")),
             row(0, letters("qargulp")),
-            row(0, keys(&[(".", 1), ("space", 1), ("f", 1), ("h", 1), ("space", 1), ("?", 1)])),
+            row(0, keys(&[(".", 1), (left_key_label(left), 1), ("f", 1), ("h", 1), ("space", 1), ("?", 1)])),
             row(0, letters("ysdnmjk")),
             row(0, keys(&[("x", 1), ("c", 1), ("v", 1), ("b", 1), (SYMBOLS_KEY, 1), ("⏎", 1)])),
         ],
@@ -799,6 +822,12 @@ pub enum Action {
     /// Open the emoji, by a flick up on the key to the symbols, which are
     /// what emoji are typed among.
     Emoji,
+    /// Open the clipboard, from the key left of space.
+    Clipboard,
+    /// Start or stop dictation, from the key left of space.
+    Voice,
+    /// Hide the keyboard, from the key left of space.
+    Hide,
     /// A sideways flick on space: the next language, or the previous one
     /// when `forward` is false.
     Language { forward: bool },
@@ -1683,6 +1712,10 @@ impl Keyboard {
             "⌫" => Action::Backspace,
             "⏎" => Action::Enter,
             "space" => Action::Commit(" ".into()),
+            "emoji" => Action::Emoji,
+            "clipboard" => Action::Clipboard,
+            "voice" => Action::Voice,
+            "hide" => Action::Hide,
             "ABC" => self.show(0),
             SYMBOLS_KEY => self.show(1),
             "=\\<" => self.show(2),
@@ -2107,6 +2140,34 @@ mod tests {
         keyboard.touch_move(near(&keyboard, "π", 0.1, -0.6), 30);
         assert_eq!(keyboard.label(pi), "π", "no capital is previewed");
         assert_eq!(keyboard.touch_up(near(&keyboard, "π", 0.1, -0.6), 40), Action::Commit("π".into()));
+    }
+
+    #[test]
+    fn the_key_left_of_space_in_the_middle_layout_is_the_one_chosen() {
+        let spaces = |spec: &LayoutSpec| spec.rows.iter().flat_map(|row| &row.keys).filter(|key| key.label == "space").count();
+        assert_eq!(spaces(&space_middle()), 1, "the comma is the default, so space is only on the right");
+        assert_eq!(spaces(&space_middle_with("space")), 2);
+        let expected = [
+            ("comma", ",", Action::Commit(",".into())),
+            ("backspace", "⌫", Action::Backspace),
+            ("emoji", "emoji", Action::Emoji),
+            ("clipboard", "clipboard", Action::Clipboard),
+            ("voice", "voice", Action::Voice),
+            ("hide", "hide", Action::Hide),
+            ("space", "space", Action::Commit(" ".into())),
+            ("nonsense", ",", Action::Commit(",".into())),
+        ];
+        for (id, label, action) in expected {
+            let mut keyboard = Keyboard::new(space_middle_with(id), 1008.0, 1.0, 400);
+            assert_eq!(gesture(&mut keyboard, label, &[]), action, "{id}");
+            let counts: Vec<usize> = keyboard.layers.iter().map(|layer| layer.keys.len()).collect();
+            assert!(counts.iter().all(|&count| count == counts[0]), "{id}: every page has the key");
+        }
+        for id in LEFT_KEYS {
+            if *id != "comma" {
+                assert_ne!(left_key_label(id), ",", "{id} has a key of its own");
+            }
+        }
     }
 
     #[test]

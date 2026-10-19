@@ -86,6 +86,7 @@ class SettingsActivity : Activity() {
         column.addView(ui.card(
             ui.label("Layout"),
             layouts,
+            *leftKeyViews.toTypedArray(),
             ui.toggle("Shift and backspace keys", KeyboardView.EDIT_KEYS) { layouts.invalidateAll() },
             ui.label("Theme"),
             themePicker(),
@@ -247,11 +248,30 @@ class SettingsActivity : Activity() {
     }
 
     /** The layouts side by side as tiles with a drawing of their keys, the chosen one outlined. */
+    /** What the key left of space does, offered while space is in the middle. */
+    private val leftKeyViews by lazy {
+        val names = mapOf(
+            "comma" to ",", "backspace" to "⌫", "emoji" to "Emoji", "clipboard" to "Clipboard",
+            "voice" to "Dictation", "hide" to "Hide keyboard", "space" to "Second space",
+        )
+        listOf(
+            ui.label("Key left of space"),
+            ui.segmented(
+                KeyboardView.LEFT_KEYS.map { it to names.getValue(it) },
+                ui.preferences.getString(KeyboardView.LEFT_KEY, null) ?: KeyboardView.DEFAULT_LEFT_KEY,
+                columns = 4,
+            ) { id ->
+                ui.preferences.edit().putString(KeyboardView.LEFT_KEY, id).apply()
+                layouts.invalidateAll()
+            },
+        ).onEach { it.visibility = if (KeyboardView.spaceMiddle(ui.preferences)) View.VISIBLE else View.GONE }
+    }
+
     private fun layoutPicker(): LayoutTiles {
         val tiles = LayoutTiles(this)
-        val chosen = ui.preferences.getString(KeyboardView.LAYOUT, null) ?: "hexkeys"
+        val chosen = if (KeyboardView.spaceMiddle(ui.preferences)) KeyboardView.SPACE_MIDDLE else KeyboardView.SPACE_BOTTOM
         val views = mutableListOf<View>()
-        for ((id, name) in listOf("hexkeys" to "Space at the bottom", KeyboardView.SPACE_MIDDLE to "Space in the middle")) {
+        for ((id, name) in listOf(KeyboardView.SPACE_BOTTOM to "Space at the bottom", KeyboardView.SPACE_MIDDLE to "Space in the middle")) {
             val preview = LayoutPreview(this, id == KeyboardView.SPACE_MIDDLE)
             tiles.previews += preview
             val tile = LinearLayout(this).apply {
@@ -271,6 +291,7 @@ class SettingsActivity : Activity() {
             tile.setOnClickListener {
                 views.forEach { ui.outline(it, it === tile) }
                 ui.preferences.edit().putString(KeyboardView.LAYOUT, id).apply()
+                leftKeyViews.forEach { it.visibility = if (id == KeyboardView.SPACE_MIDDLE) View.VISIBLE else View.GONE }
             }
             ui.outline(tile, id == chosen)
             tiles.addView(tile, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -557,7 +578,8 @@ private class LayoutPreview(context: Context, private val spaceMiddle: Boolean) 
         val width = MeasureSpec.getSize(widthMeasureSpec)
         if (handle != 0L) Core.destroy(handle)
         val editKeys = Dictionaries.preferences(context).getBoolean(KeyboardView.EDIT_KEYS, false)
-        handle = Core.create(width.toFloat(), 1f, 400, spaceMiddle, editKeys, false)
+        val leftKey = Dictionaries.preferences(context).getString(KeyboardView.LEFT_KEY, null) ?: KeyboardView.DEFAULT_LEFT_KEY
+        handle = Core.create(width.toFloat(), 1f, 400, spaceMiddle, leftKey, editKeys, false)
         theme = Theme.current(context)
         setMeasuredDimension(width, Core.height(handle).toInt())
     }

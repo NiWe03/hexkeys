@@ -8,7 +8,7 @@
 
 use hexkeys::dictionary::Dictionary;
 use hexkeys::suggest::Lexicon;
-use hexkeys::{Action, Keyboard, Point, suggest, swipe, space_middle, space_bottom, with_shift_and_backspace, without_numbers};
+use hexkeys::{Action, Keyboard, Point, suggest, swipe, space_middle_with, space_bottom, with_shift_and_backspace, without_numbers};
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JFloatArray, JString};
 use jni::sys::{jboolean, jfloat, jfloatArray, jint, jlong, jobjectArray, jstring};
@@ -21,16 +21,18 @@ fn keyboard<'a>(handle: jlong) -> &'a mut Keyboard {
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_create(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     width: jfloat,
     stretch: jfloat,
     long_press_ms: jlong,
     space_in_middle: jboolean,
+    left_key: JString,
     edit_keys: jboolean,
     without_number_row: jboolean,
 ) -> jlong {
-    let mut letters = if space_in_middle != 0 { space_middle() } else { space_bottom() };
+    let left_key: String = env.get_string(&left_key).map(Into::into).unwrap_or_default();
+    let mut letters = if space_in_middle != 0 { space_middle_with(&left_key) } else { space_bottom() };
     if without_number_row != 0 {
         letters = without_numbers(letters);
     } else if edit_keys != 0 {
@@ -221,6 +223,9 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Enter => ("enter", String::new()),
         Action::EnterAction => ("enter_action", String::new()),
         Action::Emoji => ("emoji", String::new()),
+        Action::Clipboard => ("clipboard", String::new()),
+        Action::Voice => ("voice", String::new()),
+        Action::Hide => ("hide", String::new()),
         Action::Cursor { dx, dy } => ("cursor", format!("{dx} {dy}")),
         Action::Language { forward } => ("language", if forward { "1" } else { "-1" }.to_owned()),
         Action::Redraw => ("redraw", String::new()),
