@@ -231,6 +231,7 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Redraw => ("redraw", String::new()),
         Action::Nothing => ("nothing", String::new()),
         Action::Swipe => ("swipe", String::new()),
+        Action::DeleteAll => ("delete_all", String::new()),
         Action::Delete { pieces, words, started } => {
             ("delete", format!("{pieces} {} {}", words as u8, started as u8))
         }
@@ -622,15 +623,19 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_decodeSwipe(
 }
 
 /// Sets up the gestures: delete swipes from the left edge instead of the
-/// right.
+/// right, and the percent of the width in which a delete swipe deletes
+/// everything.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_configure(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
     delete_from_left: jboolean,
+    delete_all_percent: jint,
 ) {
-    keyboard(handle).gestures.delete_from_left = delete_from_left != 0;
+    let gestures = &mut keyboard(handle).gestures;
+    gestures.delete_from_left = delete_from_left != 0;
+    gestures.delete_all_percent = u32::try_from(delete_all_percent).unwrap_or(hexkeys::DELETE_ALL_PERCENT);
 }
 
 /// The accented letters of the lexicon's languages by plain letter, as

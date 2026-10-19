@@ -3,6 +3,7 @@ package io.github.tieo.hexkeys
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -21,6 +22,7 @@ import android.widget.EditText
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 
@@ -76,6 +78,14 @@ class SettingsActivity : Activity() {
                 listOf("left" to "Left edge", "right" to "Right edge"),
                 if (ui.preferences.getBoolean(KeyboardView.DELETE_FROM_LEFT, false)) "left" else "right",
             ) { id -> ui.preferences.edit().putBoolean(KeyboardView.DELETE_FROM_LEFT, id == "left").apply() },
+            ui.slider(
+                "Slide this far to delete everything",
+                KeyboardView.DELETE_ALL,
+                range = KeyboardView.DELETE_ALL_LEAST..KeyboardView.DELETE_ALL_OFF,
+                default = KeyboardView.DELETE_ALL_DEFAULT,
+                describe = { if (it == KeyboardView.DELETE_ALL_OFF) "Off" else "$it %" },
+            ),
+            ui.label("A shorter slide also deletes more characters on the way. Off keeps whole words for resting at the far side."),
         ))
 
         column.addView(ui.heading("Voice"))
@@ -408,12 +418,12 @@ class Ui(private val activity: Activity) {
         }
     }
 
-    fun toggle(label: String, key: String, changed: () -> Unit = {}) = Switch(activity).apply {
+    fun toggle(label: String, key: String, default: Boolean = false, changed: () -> Unit = {}) = Switch(activity).apply {
         text = label
         setTextColor(this@Ui.text)
         textSize = 17f
         minHeight = dp(52)
-        isChecked = preferences.getBoolean(key, false)
+        isChecked = preferences.getBoolean(key, default)
         setOnCheckedChangeListener { _, checked ->
             preferences.edit().putBoolean(key, checked).apply()
             changed()
@@ -513,6 +523,55 @@ class Ui(private val activity: Activity) {
         }
         paint(chosen)
         return grid
+    }
+
+    /**
+     * A number between the ends of `range` in steps, kept under `key` once the
+     * finger lifts; `describe` says what a value reads as beside the label.
+     */
+    fun slider(
+        title: String,
+        key: String,
+        range: IntRange,
+        default: Int,
+        step: Int = 5,
+        describe: (Int) -> String = { "$it %" },
+        changed: () -> Unit = {},
+    ): View {
+        val value = TextView(activity).apply {
+            textSize = 15f
+            setTextColor(accent)
+        }
+        val bar = SeekBar(activity).apply {
+            max = (range.last - range.first) / step
+            progress = (preferences.getInt(key, default).coerceIn(range) - range.first) / step
+            progressTintList = ColorStateList.valueOf(accent)
+            thumbTintList = ColorStateList.valueOf(accent)
+        }
+        fun now() = range.first + bar.progress * step
+        value.text = describe(now())
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, progress: Int, fromUser: Boolean) {
+                value.text = describe(now())
+            }
+
+            override fun onStartTrackingTouch(bar: SeekBar) {}
+
+            override fun onStopTrackingTouch(bar: SeekBar) {
+                preferences.edit().putInt(key, now()).apply()
+                changed()
+            }
+        })
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(label(title), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(value)
+            })
+            addView(bar)
+        }
     }
 
     /** Marks a tile as chosen with an accent outline. */

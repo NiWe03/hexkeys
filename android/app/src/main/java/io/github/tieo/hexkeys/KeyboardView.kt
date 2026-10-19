@@ -448,7 +448,7 @@ class KeyboardView(
             Core.setStrip(handle, stripHeight.toFloat())
             loadOutlines()
         }
-        Core.configure(handle, preferences.getBoolean(DELETE_FROM_LEFT, false))
+        Core.configure(handle, preferences.getBoolean(DELETE_FROM_LEFT, false), preferences.getInt(DELETE_ALL, DELETE_ALL_DEFAULT))
         setMeasuredDimension(width, keysTop + Core.height(handle).toInt() + navigationBar)
     }
 
@@ -1251,6 +1251,16 @@ class KeyboardView(
 
         /** Preference: delete swipes come in from the left edge. */
         const val DELETE_FROM_LEFT = "delete_from_left"
+
+        /**
+         * Preference: how far a delete slide reaches to delete everything, in percent of the
+         * width from the edge it comes in from; [DELETE_ALL_OFF] for never. The same numbers
+         * as the core's `DELETE_ALL_PERCENT`, `DELETE_ALL_LEAST` and `DELETE_ALL_OFF`.
+         */
+        const val DELETE_ALL = "delete_all_percent"
+        const val DELETE_ALL_DEFAULT = 80
+        const val DELETE_ALL_LEAST = 50
+        const val DELETE_ALL_OFF = 100
 
         /** Preference adding shift and backspace keys to the layout. */
         const val EDIT_KEYS = "edit_keys"

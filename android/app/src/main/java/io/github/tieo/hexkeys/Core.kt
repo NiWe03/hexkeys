@@ -74,13 +74,16 @@ object Core {
     external fun touchDown(handle: Long, x: Float, y: Float, time: Long)
     external fun touchMove(handle: Long, x: Float, y: Float, time: Long): Array<String>
 
-    /** Delete swipes from the left edge instead of the right; the capital gesture as 0 flick up, 1 hold. */
-    external fun configure(handle: Long, deleteFromLeft: Boolean)
+    /**
+     * Delete swipes from the left edge instead of the right, and how far a delete swipe
+     * reaches to delete everything, in percent of the width from that edge.
+     */
+    external fun configure(handle: Long, deleteFromLeft: Boolean, deleteAllPercent: Int)
 
     /**
      * What lifting means, as kind and text. The kinds are commit, backspace, enter,
-     * enter_action, emoji, language (text 1 or -1), cursor (text "dx dy"), redraw,
-     * nothing, swipe, and delete (text "pieces words started", the last two 0 or 1).
+     * enter_action, emoji, clipboard, voice, hide, language (text 1 or -1), cursor (text "dx dy"),
+     * redraw, nothing, swipe, delete_all, and delete (text "pieces words started", the last two 0 or 1).
      */
     external fun touchUp(handle: Long, x: Float, y: Float, time: Long): Array<String>
     external fun touchCancel(handle: Long)

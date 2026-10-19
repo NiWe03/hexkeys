@@ -77,7 +77,7 @@ class HexInputMethod : InputMethodService() {
                 emojiSearch = null
             }
             Theme.KEY -> keyboard?.theme = Theme.current(this)
-            KeyboardView.LAYOUT, KeyboardView.LEFT_KEY, KeyboardView.DELETE_FROM_LEFT, KeyboardView.EDIT_KEYS ->
+            KeyboardView.LAYOUT, KeyboardView.LEFT_KEY, KeyboardView.DELETE_FROM_LEFT, KeyboardView.DELETE_ALL, KeyboardView.EDIT_KEYS ->
                 keyboard?.requestLayout()
             Dictionaries.LEARNED_RESET -> {
                 Core.words.execute { Core.lexiconForget(lexicon) }
@@ -220,6 +220,9 @@ class HexInputMethod : InputMethodService() {
      */
     private fun slide(target: TextTarget, text: String, undo: Correction?, justSwiped: String?) {
         val (slid, words, started) = text.split(" ").map { it.toInt() }
+        if (started == 1) everything.clear()
+        // Back out of the reach for deleting everything: all of it comes back first.
+        putBackEverything(target)
         var before = target.textBefore()
         if (started == 1) {
             deleted.clear()
@@ -285,6 +288,48 @@ class HexInputMethod : InputMethodService() {
         target.endBatch()
         val undone = if (slideUndone) undoing?.inserted?.trimEnd().orEmpty() else ""
         keyboard?.deletedText = undone + deleted.reversed().joinToString("")
+    }
+
+    /**
+     * What a delete slide that reached far enough took at once, a read of the field's
+     * text at a time, the nearest the cursor first; empty while it has not.
+     */
+    private val everything = ArrayDeque<String>()
+
+    /** Deletes all the text before the cursor, and the selection with it, keeping it to put back. */
+    private fun deleteEverything(target: TextTarget) {
+        if (everything.isNotEmpty()) return
+        target.beginBatch()
+        if (deleted.isEmpty()) {
+            val selected = target.selectedText()
+            if (selected.isNotEmpty()) {
+                target.commit("")
+                everything.addLast(selected)
+            }
+        }
+        // The copy of the text is cut short at the front: delete it and read on.
+        for (read in 0 until EVERYTHING_READS) {
+            val before = target.textBefore()
+            if (before.isEmpty()) break
+            target.deleteBefore(before.length)
+            everything.addLast(before)
+        }
+        target.endBatch()
+        // The strip shows the end of what went, which is what a slide through the text would have shown last.
+        val tail = StringBuilder()
+        for (chunk in everything) {
+            tail.insert(0, chunk)
+            if (tail.length >= EVERYTHING_SHOWN) break
+        }
+        keyboard?.deletedText = tail.toString() + deleted.reversed().joinToString("")
+    }
+
+    /** Puts back what [deleteEverything] took, the text farthest from the cursor first. */
+    private fun putBackEverything(target: TextTarget) {
+        if (everything.isEmpty()) return
+        target.beginBatch()
+        while (everything.isNotEmpty()) target.commit(everything.removeLast())
+        target.endBatch()
     }
 
     /** The correction the delete slide under way started right after, and whether it has undone it. */
@@ -378,6 +423,7 @@ class HexInputMethod : InputMethodService() {
             // Deleting in the query works as it does in a field.
             "backspace" -> deleteCharacter(queryText)
             "delete" -> slide(queryText, text, null, null)
+            "delete_all" -> deleteEverything(queryText)
             "enter", "enter_action" -> {
                 closeSearch()
                 return
@@ -439,6 +485,7 @@ class HexInputMethod : InputMethodService() {
         swiped = null
         when (kind) {
             "delete" -> slide(connection, text, undo, justSwiped)
+            "delete_all" -> deleteEverything(connection)
             "swipe" -> {
                 val view = keyboard ?: return
                 if (!suggesting) return
@@ -1096,6 +1143,10 @@ class HexInputMethod : InputMethodService() {
 
         /** The last word before the cursor with the spaces after it. */
         val WORD_AT_END = Regex("\\S*\\s*$")
+
+        /** The most reads of the field's text deleting everything makes, and how much of it the strip shows. */
+        private const val EVERYTHING_READS = 1000
+        private const val EVERYTHING_SHOWN = 200
 
         /** Text size of an autofill suggestion's subtitle, such as a login's account, in sp. */
         const val INLINE_SUBTITLE_SP = 14f
