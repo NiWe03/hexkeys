@@ -856,7 +856,9 @@ pub enum Action {
     Swipe,
     /// A delete swipe reached far enough in: everything before the cursor
     /// goes. Moving back out puts it back with a [`Action::Delete`].
-    DeleteAll,
+    /// `started` marks the first action of a delete swipe, as it does there:
+    /// a swipe that reaches this far in its first move starts with this.
+    DeleteAll { started: bool },
     /// A delete swipe now has `pieces` deleted before the cursor, counted
     /// from where it started: more delete, fewer put back what was deleted
     /// last. Pieces added since the last action are whole words when
@@ -1430,7 +1432,7 @@ impl Keyboard {
                 deleting.all = all;
             }
             if deleting.all && crossed.is_some() {
-                action = Action::DeleteAll;
+                action = Action::DeleteAll { started };
             } else if !deleting.all && (started || crossed.is_some() || deleting.pieces() != before) {
                 action = Action::Delete { pieces: deleting.pieces(), words: false, started };
             }
@@ -2307,7 +2309,7 @@ mod tests {
         let actions = slide_to(&mut keyboard, &[(900.0, 100), (600.0, 400), (300.0, 500), (250.0, 600), (150.0, 700), (100.0, 800)]);
         assert!(matches!(actions[0], Action::Delete { started: true, .. }), "{:?}", actions[0]);
         assert!(actions[1..4].iter().all(|action| matches!(action, Action::Delete { .. })), "{actions:?}");
-        assert_eq!(actions[4], Action::DeleteAll);
+        assert_eq!(actions[4], Action::DeleteAll { started: false });
         assert_eq!(actions[5], Action::Nothing, "going on asks for nothing more");
         assert_eq!(keyboard.deleting().map(|(_, _, far)| far), Some(true), "the whole width is washed");
         assert_eq!(keyboard.deadline(), None, "nothing repeats once everything is gone");
@@ -2317,7 +2319,15 @@ mod tests {
         assert_eq!(keyboard.touch_move(at(202.0 + 0.1 * w), 900), Action::Nothing, "a little slack");
         assert!(matches!(keyboard.touch_move(at(300.0), 1000), Action::Delete { started: false, .. }), "back out puts it back");
         assert_eq!(keyboard.deleting().map(|(_, _, far)| far), Some(false));
-        assert_eq!(keyboard.touch_move(at(150.0), 1100), Action::DeleteAll, "and in again");
+        assert_eq!(keyboard.touch_move(at(150.0), 1100), Action::DeleteAll { started: false }, "and in again");
+    }
+
+    #[test]
+    fn a_slide_reaching_the_distance_in_its_first_move_starts_with_deleting_everything() {
+        let mut keyboard = Keyboard::new(honeycomb(), 1008.0, 1.0, 400);
+        let actions = slide_to(&mut keyboard, &[(100.0, 100), (50.0, 200)]);
+        assert_eq!(actions[0], Action::DeleteAll { started: true });
+        assert_eq!(actions[1], Action::Nothing);
     }
 
     #[test]
@@ -2328,7 +2338,7 @@ mod tests {
             keyboard.gestures.delete_all_percent = percent;
             let steps: Vec<(f32, u64)> = (1..=99).map(|i| (1008.0 - 10.0 * i as f32, 100 + 50 * i as u64)).collect();
             let actions = slide_to(&mut keyboard, &steps);
-            actions.iter().position(|action| *action == Action::DeleteAll).map(|at| 1008.0 - steps[at].0)
+            actions.iter().position(|action| matches!(action, Action::DeleteAll { .. })).map(|at| 1008.0 - steps[at].0)
         };
         let near = |found: Option<f32>, expected: f32| {
             let found = found.expect("everything goes");

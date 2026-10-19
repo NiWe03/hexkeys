@@ -298,7 +298,17 @@ class HexInputMethod : InputMethodService() {
     private val everything = ArrayDeque<String>()
 
     /** Deletes all the text before the cursor, and the selection with it, keeping it to put back. */
-    private fun deleteEverything(target: TextTarget) {
+    private fun deleteEverything(target: TextTarget, started: Boolean) {
+        // A slide that reaches this far in its first move starts here, with nothing of an earlier one left.
+        if (started) {
+            everything.clear()
+            deleted.clear()
+            swipedBeforeDelete = null
+            slideUndo = null
+            slideUndone = false
+            slidePeak = 0
+            slidePeakDeleted = 0
+        }
         if (everything.isNotEmpty()) return
         target.beginBatch()
         if (deleted.isEmpty()) {
@@ -424,7 +434,7 @@ class HexInputMethod : InputMethodService() {
             // Deleting in the query works as it does in a field.
             "backspace" -> deleteCharacter(queryText)
             "delete" -> slide(queryText, text, null, null)
-            "delete_all" -> deleteEverything(queryText)
+            "delete_all" -> deleteEverything(queryText, text == "1")
             "enter", "enter_action" -> {
                 closeSearch()
                 return
@@ -486,7 +496,7 @@ class HexInputMethod : InputMethodService() {
         swiped = null
         when (kind) {
             "delete" -> slide(connection, text, undo, justSwiped)
-            "delete_all" -> deleteEverything(connection)
+            "delete_all" -> deleteEverything(connection, text == "1")
             "swipe" -> {
                 val view = keyboard ?: return
                 if (!suggesting) return

@@ -233,7 +233,7 @@ fn action(env: &mut JNIEnv, action: Action) -> jobjectArray {
         Action::Redraw => ("redraw", String::new()),
         Action::Nothing => ("nothing", String::new()),
         Action::Swipe => ("swipe", String::new()),
-        Action::DeleteAll => ("delete_all", String::new()),
+        Action::DeleteAll { started } => ("delete_all", (started as u8).to_string()),
         Action::Delete { pieces, words, started } => {
             ("delete", format!("{pieces} {} {}", words as u8, started as u8))
         }
