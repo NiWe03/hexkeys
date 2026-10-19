@@ -145,8 +145,8 @@ class KeyboardView(
     private var spaceKeys = 0
     private var spacesDrawn = 0
 
-    /** How wide the space key is drawn, which the language codes on it must fit. */
-    private var spaceWidth = 0f
+    /** How wide each space key is drawn, left to right, which the language codes on it must fit. */
+    private var spaceWidths = FloatArray(0)
     private val spaceBounds = RectF()
 
     /** Whether the first of [spaceLanguages] is known to be the one written. */
@@ -553,10 +553,10 @@ class KeyboardView(
         // While the keys are a touchpad for the cursor, no key is pressed.
         val moving = Core.movingCursor(handle)
         spaceKeys = paths.indices.count { Core.label(handle, it) == "space" }
-        spaceWidth = paths.indices.firstOrNull { Core.label(handle, it) == "space" }?.let {
+        spaceWidths = paths.indices.filter { Core.label(handle, it) == "space" }.map {
             paths[it].computeBounds(spaceBounds, false)
             spaceBounds.width()
-        } ?: 0f
+        }.toFloatArray()
         spacesDrawn = 0
         for ((index, path) in paths.withIndex()) {
             val digits = Core.inNumberRow(handle, index)
@@ -888,7 +888,7 @@ class KeyboardView(
             if (shown.isEmpty()) return
             val alpha = labelPaint.alpha
             // A narrow space shrinks its codes, then leaves out the last ones, rather than spill over its neighbours.
-            val room = spaceWidth * SPACE_LABEL_ROOM
+            val room = (spaceWidths.getOrNull(spacesDrawn - 1) ?: 0f) * SPACE_LABEL_ROOM
             labelPaint.textSize = cellWidth * 0.2f
             fun wide(codes: List<String>) = codes.sumOf { labelPaint.measureText(it).toDouble() }.toFloat() +
                 labelPaint.measureText("  ") * (codes.size - 1)
