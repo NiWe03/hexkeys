@@ -38,7 +38,7 @@
     <string name="left_key_comma">,</string>
     <string name="left_key_backspace">⌫</string>
     <string name="left_key_emoji">Emoji</string>
-    <string name="left_key_clipboard">Zwischenablage</string>
+    <string name="left_key_clipboard">Ablage</string>
     <string name="left_key_voice">Diktat</string>
     <string name="left_key_hide">Tastatur ausblenden</string>
     <string name="left_key_space">Zweite Leertaste</string>
