@@ -32,7 +32,7 @@ import android.widget.TextView
  * one, a field to try it in, typing, gestures, looks, and the languages,
  * which have a page of their own.
  */
-class SettingsActivity : Activity() {
+class SettingsActivity : LocalizedActivity() {
 
     companion object {
         /** Extra naming the part of the settings to show, such as [VOICE]. */
@@ -55,75 +55,94 @@ class SettingsActivity : Activity() {
         column.addView(setup)
 
         column.addView(ui.card(EditText(this).apply {
-            hint = "Try the keyboard"
+            hint = getString(R.string.try_keyboard)
             setTextColor(ui.text)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
             minHeight = ui.dp(48)
         }))
 
-        column.addView(ui.heading("Typing"))
+        column.addView(ui.heading(getString(R.string.app_language)))
         column.addView(ui.card(
-            ui.label("Autocorrect"),
             ui.segmented(
-                Dictionaries.AUTOCORRECT_MODES.zip(listOf("Off", "Obvious", "All")),
+                listOf("en" to getString(R.string.language_english), "de" to getString(R.string.language_german)),
+                AppLocale.current(this),
+            ) { id ->
+                ui.preferences.edit().putString(AppLocale.KEY, id).apply()
+                recreate()
+            },
+        ))
+
+        column.addView(ui.heading(getString(R.string.typing)))
+        column.addView(ui.card(
+            ui.label(getString(R.string.autocorrect)),
+            ui.segmented(
+                Dictionaries.AUTOCORRECT_MODES.zip(listOf(getString(R.string.off), getString(R.string.autocorrect_obvious), getString(R.string.autocorrect_all))),
                 Dictionaries.autocorrectMode(this),
             ) { id -> ui.preferences.edit().putString(Dictionaries.AUTOCORRECT_MODE, id).apply() },
             learningRow(),
         ))
 
-        column.addView(ui.heading("Gestures"))
+        column.addView(ui.heading(getString(R.string.gestures)))
         column.addView(ui.card(
-            ui.label("Delete by sliding in from"),
+            ui.label(getString(R.string.delete_from)),
             ui.segmented(
-                listOf("left" to "Left edge", "right" to "Right edge"),
+                listOf("left" to getString(R.string.left_edge), "right" to getString(R.string.right_edge)),
                 if (ui.preferences.getBoolean(KeyboardView.DELETE_FROM_LEFT, false)) "left" else "right",
             ) { id -> ui.preferences.edit().putBoolean(KeyboardView.DELETE_FROM_LEFT, id == "left").apply() },
             ui.slider(
-                "Slide this far to delete everything",
+                getString(R.string.delete_all),
                 KeyboardView.DELETE_ALL,
                 range = KeyboardView.DELETE_ALL_LEAST..KeyboardView.DELETE_ALL_OFF,
                 default = KeyboardView.DELETE_ALL_DEFAULT,
-                describe = { if (it == KeyboardView.DELETE_ALL_OFF) "Off" else "$it %" },
+                describe = { if (it == KeyboardView.DELETE_ALL_OFF) getString(R.string.off) else getString(R.string.percent, it) },
             ),
-            ui.label("A shorter slide also deletes more characters on the way. Off keeps whole words for resting at the far side."),
+            ui.label(getString(R.string.delete_all_hint)),
         ))
 
-        column.addView(ui.heading("Voice"))
+        column.addView(ui.heading(getString(R.string.voice)))
         column.addView(voiceCard())
 
-        column.addView(ui.heading("Look"))
+        column.addView(ui.heading(getString(R.string.look)))
         layouts = layoutPicker()
         column.addView(ui.card(
-            ui.label("Layout"),
+            ui.label(getString(R.string.layout)),
             layouts,
             *leftKeyViews.toTypedArray(),
-            ui.toggle("Shift and backspace keys", KeyboardView.EDIT_KEYS) { layouts.invalidateAll() },
-            ui.label("Theme"),
+            ui.toggle(getString(R.string.edit_keys), KeyboardView.EDIT_KEYS) { layouts.invalidateAll() },
+            ui.label(getString(R.string.theme)),
             themePicker(),
         ))
 
-        column.addView(ui.heading("Size"))
+        column.addView(ui.heading(getString(R.string.size)))
         column.addView(ui.card(
-            ui.slider("Whole keyboard", KeyboardView.SIZE_ALL, KeyboardView.SIZE_RANGE, KeyboardView.SIZE_DEFAULT) { layouts.invalidateAll() },
-            ui.slider("Letter keys", KeyboardView.SIZE_KEYS, KeyboardView.SIZE_RANGE, KeyboardView.SIZE_DEFAULT) { layouts.invalidateAll() },
-            ui.toggle("Number row", KeyboardView.NUMBER_ROW, default = true) {
+            ui.slider(getString(R.string.size_all), KeyboardView.SIZE_ALL, KeyboardView.SIZE_RANGE, KeyboardView.SIZE_DEFAULT) { layouts.invalidateAll() },
+            ui.slider(getString(R.string.size_keys), KeyboardView.SIZE_KEYS, KeyboardView.SIZE_RANGE, KeyboardView.SIZE_DEFAULT) { layouts.invalidateAll() },
+            ui.toggle(getString(R.string.number_row), KeyboardView.NUMBER_ROW, default = true) {
                 numberRowHeight.visibility = if (KeyboardView.numberRow(ui.preferences)) View.VISIBLE else View.GONE
                 layouts.invalidateAll()
             },
             numberRowHeight,
-            ui.label("Without the number row the digits move to the symbols, and shift and backspace become keys: deleting by sliding and moving the cursor along the row need it."),
+            ui.label(getString(R.string.number_row_hint)),
         ))
 
         languages = TextView(this).apply {
             textSize = 15f
             setTextColor(ui.secondaryText)
         }
-        column.addView(ui.card(ui.navigationRow("Languages", languages) {
+        column.addView(ui.card(ui.navigationRow(getString(R.string.languages), languages) {
             startActivity(Intent(this, LanguagesActivity::class.java))
         }).apply { (layoutParams as LinearLayout.LayoutParams).topMargin = ui.dp(24) })
 
-        column.addView(ui.card(ui.navigationRow("Credits", TextView(this).apply {
-            text = "Dictionaries, data and libraries"
+        column.addView(ui.card(ui.navigationRow(getString(R.string.help), TextView(this).apply {
+            text = getString(R.string.help_summary)
+            textSize = 15f
+            setTextColor(ui.secondaryText)
+        }) {
+            startActivity(Intent(this, HelpActivity::class.java))
+        }))
+
+        column.addView(ui.card(ui.navigationRow(getString(R.string.credits), TextView(this).apply {
+            text = getString(R.string.credits_summary)
             textSize = 15f
             setTextColor(ui.secondaryText)
         }) {
@@ -132,7 +151,7 @@ class SettingsActivity : Activity() {
 
         val page = ui.page(column)
         setContentView(page)
-        title = "Hexkeys"
+        title = getString(R.string.app_name)
         if (intent.getStringExtra(SECTION) == VOICE) showVoice(page)
     }
 
@@ -176,13 +195,13 @@ class SettingsActivity : Activity() {
         val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
             ?.startsWith("$packageName/") == true
         setup.visibility = if (enabled && current) View.GONE else View.VISIBLE
-        setupButton.text = if (enabled) "Switch to Hexkeys" else "Enable Hexkeys"
+        setupButton.text = if (enabled) getString(R.string.switch_to_keyboard) else getString(R.string.enable_keyboard)
         setupButton.setOnClickListener {
             if (enabled) manager.showInputMethodPicker()
             else startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
         }
         val chosen = Dictionaries.enabled(this)
-        languages.text = Dictionaries.catalog(this).filter { it.file in chosen }.joinToString(", ") { it.name }
+        languages.text = Dictionaries.catalog(this).filter { it.file in chosen }.joinToString(", ") { it.title(this) }
         microphone.visibility = if (Voice.permitted(this) || !Voice.enabled(this)) View.GONE else View.VISIBLE
     }
 
@@ -211,7 +230,7 @@ class SettingsActivity : Activity() {
             visibility = View.GONE
         }
         val model = Voice.SPEECH_MODEL
-        val options = listOf<Pair<String, CharSequence>>("off" to "Off", "on" to "On  ·  ${model.megabytes} MB")
+        val options = listOf<Pair<String, CharSequence>>("off" to getString(R.string.off), "on" to getString(R.string.voice_on, model.megabytes))
         fun switchOn() {
             if (Voice.downloaded(this)) {
                 ui.preferences.edit().putString(Voice.MODEL, model.id).apply()
@@ -238,7 +257,7 @@ class SettingsActivity : Activity() {
                 recreate()
             }
         }
-        microphone = ui.primaryButton("Allow the microphone").apply {
+        microphone = ui.primaryButton(getString(R.string.allow_microphone)).apply {
             setOnClickListener { requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 1) }
         }
         voice = ui.card(choice, progress, microphone)
@@ -256,10 +275,10 @@ class SettingsActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val toggle = ui.toggle("Learn new words", Dictionaries.LEARNING)
+        val toggle = ui.toggle(getString(R.string.learn_new_words), Dictionaries.LEARNING)
         row.addView(toggle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         if (Dictionaries.learned(this).isNotEmpty()) {
-            val clear = ui.textButton("Forget")
+            val clear = ui.textButton(getString(R.string.forget))
             clear.setOnClickListener {
                 Dictionaries.deleteLearned(this)
                 clear.visibility = View.GONE
@@ -269,10 +288,9 @@ class SettingsActivity : Activity() {
         return row
     }
 
-    /** The layouts side by side as tiles with a drawing of their keys, the chosen one outlined. */
     /** How tall the number row is, offered while there is one. */
     private val numberRowHeight by lazy {
-        ui.slider("Number row height", KeyboardView.SIZE_NUMBERS, KeyboardView.SIZE_NUMBERS_RANGE, KeyboardView.SIZE_DEFAULT) {
+        ui.slider(getString(R.string.size_numbers), KeyboardView.SIZE_NUMBERS, KeyboardView.SIZE_NUMBERS_RANGE, KeyboardView.SIZE_DEFAULT) {
             layouts.invalidateAll()
         }.also { it.visibility = if (KeyboardView.numberRow(ui.preferences)) View.VISIBLE else View.GONE }
     }
@@ -280,11 +298,13 @@ class SettingsActivity : Activity() {
     /** What the key left of space does, offered while space is in the middle. */
     private val leftKeyViews by lazy {
         val names = mapOf(
-            "comma" to ",", "backspace" to "⌫", "emoji" to "Emoji", "clipboard" to "Clipboard",
-            "voice" to "Dictation", "hide" to "Hide keyboard", "space" to "Second space",
+            "comma" to getString(R.string.left_key_comma), "backspace" to getString(R.string.left_key_backspace),
+            "emoji" to getString(R.string.left_key_emoji), "clipboard" to getString(R.string.left_key_clipboard),
+            "voice" to getString(R.string.left_key_voice), "hide" to getString(R.string.left_key_hide),
+            "space" to getString(R.string.left_key_space),
         )
         listOf(
-            ui.label("Key left of space"),
+            ui.label(getString(R.string.left_key)),
             ui.segmented(
                 KeyboardView.LEFT_KEYS.map { it to names.getValue(it) },
                 ui.preferences.getString(KeyboardView.LEFT_KEY, null) ?: KeyboardView.DEFAULT_LEFT_KEY,
@@ -296,11 +316,12 @@ class SettingsActivity : Activity() {
         ).onEach { it.visibility = if (KeyboardView.spaceMiddle(ui.preferences)) View.VISIBLE else View.GONE }
     }
 
+    /** The layouts side by side as tiles with a drawing of their keys, the chosen one outlined. */
     private fun layoutPicker(): LayoutTiles {
         val tiles = LayoutTiles(this)
         val chosen = if (KeyboardView.spaceMiddle(ui.preferences)) KeyboardView.SPACE_MIDDLE else KeyboardView.SPACE_BOTTOM
         val views = mutableListOf<View>()
-        for ((id, name) in listOf(KeyboardView.SPACE_BOTTOM to "Space at the bottom", KeyboardView.SPACE_MIDDLE to "Space in the middle")) {
+        for ((id, name) in listOf(KeyboardView.SPACE_BOTTOM to getString(R.string.layout_space_bottom), KeyboardView.SPACE_MIDDLE to getString(R.string.layout_space_middle))) {
             val preview = LayoutPreview(this, id == KeyboardView.SPACE_MIDDLE)
             tiles.previews += preview
             val tile = LinearLayout(this).apply {
