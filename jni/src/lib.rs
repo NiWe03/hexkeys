@@ -161,7 +161,8 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchMove(
 }
 
 /// What lifting the finger means, as `[kind, text]` with kind one of
-/// `commit`, `backspace`, `enter`, `redraw`, `nothing`, `swipe`, or
+/// `commit`, `backspace`, `enter`, `enter_action`, `emoji`, `language`
+/// (text 1 or -1), `cursor` (text "dx dy"), `redraw`, `nothing`, `swipe`, or
 /// `delete` with text "pieces words started", the last two 0 or 1.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_tieo_hexkeys_Core_touchUp(

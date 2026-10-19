@@ -77,7 +77,11 @@ object Core {
     /** Delete swipes from the left edge instead of the right; the capital gesture as 0 flick up, 1 hold. */
     external fun configure(handle: Long, deleteFromLeft: Boolean)
 
-    /** What lifting means, as kind (commit, replace, backspace, enter, redraw, nothing) and text; replace has the old and new text split by a tab. */
+    /**
+     * What lifting means, as kind and text. The kinds are commit, backspace, enter,
+     * enter_action, emoji, language (text 1 or -1), cursor (text "dx dy"), redraw,
+     * nothing, swipe, and delete (text "pieces words started", the last two 0 or 1).
+     */
     external fun touchUp(handle: Long, x: Float, y: Float, time: Long): Array<String>
     external fun touchCancel(handle: Long)
 

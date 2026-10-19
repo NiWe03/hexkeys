@@ -844,7 +844,7 @@ class KeyboardView(
     }
 
     /**
-     * The strip's part at x: -2 the settings button and -1 the emoji button
+     * The strip's part at x: -2 the settings button and -1 the clipboard button
      * at its left end, 0 to 2 the word slots, 4 the microphone and 3 the
      * right end, which holds the password manager's button.
      */
@@ -1165,7 +1165,7 @@ class KeyboardView(
         /** How long the number row takes to shrink into the bar or grow back, in ms. */
         private const val BAR_MS = 180L
 
-        /** Regular hexagons: at eight to a row they are already finger-sized. */
+        /** Regular hexagons: at seven to a row they are already finger-sized. */
         private const val STRETCH = 1.0f
 
         /** The share of the screen's height the keys take in landscape, besides the strip's height they take over there and the navigation bar. */
