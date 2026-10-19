@@ -308,6 +308,9 @@ class HexInputMethod : InputMethodService() {
     private var decoding = false
     private val waiting = ArrayDeque<Pair<String, String>>()
 
+    /** Counts the fields closed, so a swipe decoded for one never lands in the next. */
+    private var fields = 0
+
     /** What a key, gesture or hold asks for, in the order they came. */
     private fun act(kind: String, text: String) {
         if (decoding) {
@@ -395,7 +398,8 @@ class HexInputMethod : InputMethodService() {
     }
 
     /** Puts in the word a swipe spelled, then whatever was typed while it was decoded. */
-    private fun swiped(words: Array<String>) {
+    private fun swiped(words: Array<String>, field: Int) {
+        if (field != fields) return
         decoding = false
         val view = keyboard
         if (view != null && words.isNotEmpty() && currentInputConnection != null) {
@@ -442,10 +446,11 @@ class HexInputMethod : InputMethodService() {
                 val path = view.swiped()
                 val letters = view.letters
                 val before = connection.textBefore()
+                val field = fields
                 decoding = true
                 Core.words.execute {
                     val words = if (lexicon == 0L || letters == 0L) emptyArray() else Core.decodeSwipe(lexicon, letters, path, before)
-                    mainExecutor.execute { swiped(words) }
+                    mainExecutor.execute { swiped(words, field) }
                 }
             }
             "commit" -> {
@@ -676,6 +681,10 @@ class HexInputMethod : InputMethodService() {
         voice.stop()
         // A language picked by hand holds for the field it was picked in.
         if (pinned != null) pinLanguage(null)
+        // A swipe still being decoded and the keys typed meanwhile belong to the field that closed.
+        fields += 1
+        decoding = false
+        waiting.clear()
         // Chips of an answer still being drawn belong to the field that closed.
         inlineAnswer += 1
         frame?.show(emptyList())
@@ -1005,8 +1014,8 @@ class HexInputMethod : InputMethodService() {
     private fun currentStrip() {
         val view = keyboard ?: return
         val before = editor.textBefore()
-        if (!suggesting || view.stripBefore == before) return
         val letters = view.letters
+        if (!suggesting || letters == 0L || view.stripBefore == before) return
         val strip = runCatching {
             Core.words.submit<Array<String>> { Core.strip(lexicon, letters, before) }
                 .get(STRIP_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
