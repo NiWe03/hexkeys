@@ -417,10 +417,10 @@ impl Layout {
         // Below the points of the row above, a flat bottom row's keys go by column.
         if let Some(flat) = self.flat_row.filter(|_| !in_band) {
             let cells = self.keys.iter().filter(|key| key.row == flat).flat_map(|key| key.cells.iter().map(move |cell| (key, *cell)));
-            if let Some((key, cell)) = cells.min_by(|a, b| (a.1.x - touch.x).abs().total_cmp(&(b.1.x - touch.x).abs())) {
-                if touch.y > self.points_above(cell, touch.x) {
-                    return Some(key);
-                }
+            if let Some((key, cell)) = cells.min_by(|a, b| (a.1.x - touch.x).abs().total_cmp(&(b.1.x - touch.x).abs()))
+                && touch.y > self.points_above(cell, touch.x)
+            {
+                return Some(key);
             }
         }
         let flat = self.flat_row;
@@ -927,16 +927,10 @@ const WORD_REPEAT_MS: u64 = 300;
 const WORD_REPEAT_FASTEST: u64 = 60;
 
 /// How gestures are set up, from the settings.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Gestures {
     /// Delete swipes come in from the left edge instead of the right.
     pub delete_from_left: bool,
-}
-
-impl Default for Gestures {
-    fn default() -> Self {
-        Self { delete_from_left: false }
-    }
 }
 
 /// What a touch amounts to so far.
