@@ -156,7 +156,8 @@ pub fn telex(word: &str, key: char) -> Option<String> {
                 'o' | 'ô' => 'ơ',
                 _ => 'ư',
             };
-        } else if let Some(i) = vowels.iter().rposition(|&v| matches!(v, 'ă' | 'ơ' | 'ư')) {
+        } else {
+            let i = vowels.iter().rposition(|&v| matches!(v, 'ă' | 'ơ' | 'ư'))?;
             vowels[i] = match vowels[i] {
                 'ă' => 'a',
                 'ơ' => 'o',
@@ -165,8 +166,6 @@ pub fn telex(word: &str, key: char) -> Option<String> {
             let mut word = write(&lower, start, &vowels, count, tone);
             word.push(key);
             return Some(recase(&word, &caps, word.len() - 1));
-        } else {
-            return None;
         }
         out = Some(write(&lower, start, &vowels, count, tone));
     }

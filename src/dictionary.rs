@@ -265,7 +265,7 @@ impl Dictionary {
                 word.extend(&node.chars);
                 return Ok(node.frequency.map(|frequency| (word, frequency)));
             }
-            let Some(parent) = nodes.iter().filter(|node| node.children.is_some_and(|c| c <= address)).last()
+            let Some(parent) = nodes.iter().rfind(|node| node.children.is_some_and(|c| c <= address))
             else {
                 return Ok(None);
             };
@@ -292,7 +292,7 @@ impl Dictionary {
                 break;
             }
         }
-        words.sort_by(|a, b| b.1.cmp(&a.1));
+        words.sort_by_key(|word| std::cmp::Reverse(word.1));
         Ok(words)
     }
 }

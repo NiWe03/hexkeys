@@ -601,7 +601,7 @@ pub extern "system" fn Java_io_github_tieo_hexkeys_Core_decodeSwipe(
     let _ = env.get_float_array_region(&path, 0, &mut flat);
     let words = match flat.split_last() {
         Some((&capital, points)) if points.len() >= 2 => {
-            let path: Vec<Point> = points.chunks_exact(2).map(|p| Point { x: p[0], y: p[1] }).collect();
+            let path: Vec<Point> = points.as_chunks::<2>().0.iter().map(|p| Point { x: p[0], y: p[1] }).collect();
             let previous = suggest::last_word(&before);
             let lexicon = lexicon(lexicon_handle);
             // A swipe follows a whole word, space or not: it puts in its own.

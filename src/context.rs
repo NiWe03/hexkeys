@@ -252,10 +252,11 @@ impl Lexicon {
             // A plain word this language's dictionary does not have, next to a word
             // only this language has, is a slip for the spelling it does have, as
             // "im" before "happy" is for "I'm", whatever German makes of "im".
-            if !known(plain) && (self.only_in(*index, before) || self.only_in(*index, after)) {
-                if let Some(word) = contexts.likeliest(plain, &known) {
-                    return Some(word.to_owned());
-                }
+            if !known(plain)
+                && (self.only_in(*index, before) || self.only_in(*index, after))
+                && let Some(word) = contexts.likeliest(plain, known)
+            {
+                return Some(word.to_owned());
             }
             if let Some(word) = contexts.judge(plain, before, after, known) {
                 return Some(word.to_owned());

@@ -198,6 +198,7 @@ fn resample(points: &[Point], n: usize) -> Vec<Point> {
 /// The mean distance between two paths of equal length with each point
 /// paired to one at most `band` samples away, the pairing chosen to make
 /// the total least, both ends paired with each other.
+#[allow(clippy::needless_range_loop)] // i and j index both paths and the rows alike.
 fn warped(a: &[Point], b: &[Point], band: usize) -> f32 {
     let n = a.len();
     // Two rows of (total distance, pairs) suffice: each cell looks back one row.

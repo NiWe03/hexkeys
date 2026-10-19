@@ -3,6 +3,7 @@ package io.github.tieo.hexkeys
 import android.app.PendingIntent
 import android.app.assist.AssistStructure
 import android.content.Intent
+import android.os.Build
 import android.os.CancellationSignal
 import android.service.autofill.AutofillService
 import android.service.autofill.Dataset
@@ -25,6 +26,11 @@ import androidx.autofill.inline.v1.InlineSuggestionUi
 class TestAutofillService : AutofillService() {
 
     override fun onFillRequest(request: FillRequest, cancellationSignal: CancellationSignal, callback: FillCallback) {
+        // Inline suggestions came with Android 11; before it there is nothing to offer.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            callback.onSuccess(null)
+            return
+        }
         val structure = request.fillContexts.last().structure
         val field = (0 until structure.windowNodeCount)
             .firstNotNullOfOrNull { focusedText(structure.getWindowNodeAt(it).rootViewNode) }

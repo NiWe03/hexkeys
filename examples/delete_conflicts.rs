@@ -54,7 +54,7 @@ fn main() {
             })
             .expect("walk");
     }
-    words.sort_by(|a, b| b.0.cmp(&a.0));
+    words.sort_by_key(|word| std::cmp::Reverse(word.0));
     words.dedup_by(|a, b| a.1 == b.1);
     let mut noise = Noise(0x9e3779b97f4a7c15);
     let mut keyboard = Keyboard::new(letters, 1008.0, 1.0, 400);

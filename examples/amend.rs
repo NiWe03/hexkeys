@@ -18,7 +18,7 @@ fn main() {
         let pieces: Vec<String> = sentence
             .split(' ')
             .flat_map(|word| match word.strip_suffix(['.', ',', '?', '!']) {
-                Some(stem) => vec![format!("{stem}"), word[stem.len()..].to_owned()],
+                Some(stem) => vec![stem.to_string(), word[stem.len()..].to_owned()],
                 None => vec![word.to_owned()],
             })
             .collect();

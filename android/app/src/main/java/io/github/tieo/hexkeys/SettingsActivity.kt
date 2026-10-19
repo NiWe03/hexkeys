@@ -422,8 +422,13 @@ class Ui(private val activity: Activity) {
     fun page(content: View) = ScrollView(activity).apply {
         addView(content)
         setOnApplyWindowInsetsListener { view, insets ->
-            val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            }
             insets
         }
     }

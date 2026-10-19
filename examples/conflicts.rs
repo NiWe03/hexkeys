@@ -39,7 +39,7 @@ fn main() {
     // One entry per word, with its highest frequency, most frequent first.
     words.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
     words.dedup_by(|a, b| a.0 == b.0);
-    words.sort_by(|a, b| b.1.cmp(&a.1));
+    words.sort_by_key(|word| std::cmp::Reverse(word.1));
     for (name, spec) in [("hexkeys", honeycomb()), ("middle", space_middle())] {
         let keys = Keyboard::new(spec, 1080.0, 1.0, 400).swipe_keys();
         let centre = |c: char| keys.letters.iter().find(|(l, _)| *l == c).map(|(_, p)| *p);
