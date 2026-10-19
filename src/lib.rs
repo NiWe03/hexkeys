@@ -1376,7 +1376,7 @@ impl Keyboard {
             // A flick up on enter, towards the action drawn above its arrow, does the field's action.
             Gesture::Up if label == "⏎" => Action::EnterAction,
             Gesture::Up if label == SYMBOLS_KEY => Action::Emoji,
-            Gesture::Up if is_letter(&label) => {
+            Gesture::Up if self.on_letters(&label) => {
                 self.letter_typed();
                 Action::Commit(upper(&label))
             }
@@ -1493,7 +1493,13 @@ impl Keyboard {
     /// A path counts as swipe typing when it is drawn on the letters and
     /// starts on one.
     fn is_swipe(&self, touch: &Touch) -> bool {
-        self.layer == 0 && is_letter(&self.layout.keys[touch.key].label)
+        self.on_letters(&self.layout.keys[touch.key].label)
+    }
+
+    /// A letter on the letter page: the symbol pages have alphabetic marks
+    /// too, such as π, which has no capital to flick up to.
+    fn on_letters(&self, label: &str) -> bool {
+        self.layer == 0 && is_letter(label)
     }
 
     /// The path being drawn while it is swipe typing, for the trail on screen.
@@ -1643,7 +1649,7 @@ impl Keyboard {
     pub fn label(&self, index: usize) -> String {
         let label = &self.layout.keys[index].label;
         let flicked = self.touch.as_ref().is_some_and(|touch| touch.key == index && self.gesture(touch) == Gesture::Up);
-        if is_letter(label) && (self.shift != Shift::Off || flicked) { upper(label) } else { label.clone() }
+        if self.on_letters(label) && (self.shift != Shift::Off || flicked) { upper(label) } else { label.clone() }
     }
 
     /// What a flick up types on a punctuation key, shown small on it; empty
@@ -2087,6 +2093,20 @@ mod tests {
         assert_eq!(keyboard.label(g), "g");
         assert_eq!(gesture(&mut keyboard, ",", &[(0.0, -0.6)]), Action::Commit(":".into()), "punctuation gives its first alternative");
         assert_eq!(gesture(&mut keyboard, "space", &[(0.0, -0.6)]), Action::Commit(" ".into()), "where a flick up means nothing the key is typed");
+    }
+
+    #[test]
+    fn flick_up_on_a_symbol_page_types_the_symbol_even_when_it_is_alphabetic() {
+        let mut keyboard = Keyboard::new(space_bottom(), 1008.0, 1.0, 400);
+        let symbols = keyboard_index(&keyboard, SYMBOLS_KEY);
+        keyboard.press(symbols);
+        let more = keyboard_index(&keyboard, MORE);
+        keyboard.press(more);
+        let pi = keyboard_index(&keyboard, "π");
+        keyboard.touch_down(near(&keyboard, "π", 0.0, 0.0), 0);
+        keyboard.touch_move(near(&keyboard, "π", 0.1, -0.6), 30);
+        assert_eq!(keyboard.label(pi), "π", "no capital is previewed");
+        assert_eq!(keyboard.touch_up(near(&keyboard, "π", 0.1, -0.6), 40), Action::Commit("π".into()));
     }
 
     #[test]
