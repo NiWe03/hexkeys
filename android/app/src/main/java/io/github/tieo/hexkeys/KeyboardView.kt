@@ -396,7 +396,7 @@ class KeyboardView(
         // The bar stands for the number row, and a finger leaving it stays on the row's
         // edge: its height counts two and a half times, which would send the cursor
         // to other lines at the slightest drift.
-        return ((inKeys - barTop) / barScale).coerceIn(0f, numbersHeight - 1f)
+        return ((inKeys - barTop) / barScale).coerceIn(0f, maxOf(0f, numbersHeight - 1f))
     }
 
     /** A label of the page shown, to tell a page change from other redraws, and the page's fade-in. */
@@ -422,22 +422,28 @@ class KeyboardView(
         val spaceMiddle = spaceMiddle(preferences)
         val leftKey = preferences.getString(LEFT_KEY, null) ?: DEFAULT_LEFT_KEY
         val editKeys = preferences.getBoolean(EDIT_KEYS, false)
+        val sizes = sizes(preferences)
+        val numberRow = numberRow(preferences)
         // The keys are laid out again only when what they depend on changed: every
         // panel shown over them measures the keyboard too, and building it anew
         // each time held up opening the emoji and their search.
         // Landscape is short: the number row and the strip go, deleting is the backspace
         // key's, and the keys flatten to fit [LANDSCAPE_KEYS] of the height and the strip's.
-        val shape = "$width/$spaceMiddle/$leftKey/$editKeys/$landscape"
+        val shape = "$width/$spaceMiddle/$leftKey/$editKeys/$landscape/$numberRow/${sizes.first}/${sizes.second}"
         if (handle == 0L || shape != builtFor) {
             if (handle != 0L) Core.destroy(handle)
             stretch = STRETCH
             if (landscape) {
-                val regular = Core.create(width.toFloat(), STRETCH, 0, spaceMiddle, leftKey, editKeys, true)
+                val regular = Core.create(width.toFloat(), STRETCH, 1f, 0, spaceMiddle, leftKey, editKeys, true)
                 val room = resources.displayMetrics.heightPixels * LANDSCAPE_KEYS + fullStrip
                 stretch = minOf(STRETCH, STRETCH * room / Core.height(regular))
                 Core.destroy(regular)
             }
-            handle = Core.create(width.toFloat(), stretch, ViewConfiguration.getLongPressTimeout().toLong(), spaceMiddle, leftKey, editKeys, landscape)
+            stretch *= sizes.first
+            handle = Core.create(
+                width.toFloat(), stretch, sizes.second, ViewConfiguration.getLongPressTimeout().toLong(),
+                spaceMiddle, leftKey, editKeys, landscape || !numberRow,
+            )
             builtFor = shape
             // Freed on the words thread after whatever it is still doing with it.
             val old = letters
@@ -1261,6 +1267,32 @@ class KeyboardView(
         const val DELETE_ALL_DEFAULT = 80
         const val DELETE_ALL_LEAST = 50
         const val DELETE_ALL_OFF = 100
+
+        /**
+         * Preferences for how big the keyboard is, in percent: all of it, the letter keys on
+         * their own, and the number row on its own; and whether there is a number row.
+         */
+        const val SIZE_ALL = "size_all"
+        const val SIZE_KEYS = "size_keys"
+        const val SIZE_NUMBERS = "size_numbers"
+        const val NUMBER_ROW = "number_row"
+        val SIZE_RANGE = 70..130
+        val SIZE_NUMBERS_RANGE = 50..150
+        const val SIZE_DEFAULT = 100
+
+        fun numberRow(preferences: android.content.SharedPreferences) = preferences.getBoolean(NUMBER_ROW, true)
+
+        /**
+         * The factor the keys' height is made of, from the whole keyboard's size and the
+         * letter keys', and the number row's height against that of the keys: the number row
+         * is as tall as its own size says, whatever the letter keys are set to.
+         */
+        fun sizes(preferences: android.content.SharedPreferences): Pair<Float, Float> {
+            fun percent(key: String, range: IntRange) = preferences.getInt(key, SIZE_DEFAULT).coerceIn(range) / 100f
+            val all = percent(SIZE_ALL, SIZE_RANGE)
+            val keys = percent(SIZE_KEYS, SIZE_RANGE)
+            return all * keys to percent(SIZE_NUMBERS, SIZE_NUMBERS_RANGE) / keys
+        }
 
         /** Preference adding shift and backspace keys to the layout. */
         const val EDIT_KEYS = "edit_keys"

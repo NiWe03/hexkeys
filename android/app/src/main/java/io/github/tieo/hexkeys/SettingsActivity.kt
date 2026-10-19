@@ -102,6 +102,18 @@ class SettingsActivity : Activity() {
             themePicker(),
         ))
 
+        column.addView(ui.heading("Size"))
+        column.addView(ui.card(
+            ui.slider("Whole keyboard", KeyboardView.SIZE_ALL, KeyboardView.SIZE_RANGE, KeyboardView.SIZE_DEFAULT) { layouts.invalidateAll() },
+            ui.slider("Letter keys", KeyboardView.SIZE_KEYS, KeyboardView.SIZE_RANGE, KeyboardView.SIZE_DEFAULT) { layouts.invalidateAll() },
+            ui.toggle("Number row", KeyboardView.NUMBER_ROW, default = true) {
+                numberRowHeight.visibility = if (KeyboardView.numberRow(ui.preferences)) View.VISIBLE else View.GONE
+                layouts.invalidateAll()
+            },
+            numberRowHeight,
+            ui.label("Without the number row the digits move to the symbols, and shift and backspace become keys: deleting by sliding and moving the cursor along the row need it."),
+        ))
+
         languages = TextView(this).apply {
             textSize = 15f
             setTextColor(ui.secondaryText)
@@ -258,6 +270,13 @@ class SettingsActivity : Activity() {
     }
 
     /** The layouts side by side as tiles with a drawing of their keys, the chosen one outlined. */
+    /** How tall the number row is, offered while there is one. */
+    private val numberRowHeight by lazy {
+        ui.slider("Number row height", KeyboardView.SIZE_NUMBERS, KeyboardView.SIZE_NUMBERS_RANGE, KeyboardView.SIZE_DEFAULT) {
+            layouts.invalidateAll()
+        }.also { it.visibility = if (KeyboardView.numberRow(ui.preferences)) View.VISIBLE else View.GONE }
+    }
+
     /** What the key left of space does, offered while space is in the middle. */
     private val leftKeyViews by lazy {
         val names = mapOf(
@@ -636,9 +655,11 @@ private class LayoutPreview(context: Context, private val spaceMiddle: Boolean) 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         if (handle != 0L) Core.destroy(handle)
-        val editKeys = Dictionaries.preferences(context).getBoolean(KeyboardView.EDIT_KEYS, false)
-        val leftKey = Dictionaries.preferences(context).getString(KeyboardView.LEFT_KEY, null) ?: KeyboardView.DEFAULT_LEFT_KEY
-        handle = Core.create(width.toFloat(), 1f, 400, spaceMiddle, leftKey, editKeys, false)
+        val preferences = Dictionaries.preferences(context)
+        val editKeys = preferences.getBoolean(KeyboardView.EDIT_KEYS, false)
+        val leftKey = preferences.getString(KeyboardView.LEFT_KEY, null) ?: KeyboardView.DEFAULT_LEFT_KEY
+        val (stretch, numberScale) = KeyboardView.sizes(preferences)
+        handle = Core.create(width.toFloat(), stretch, numberScale, 400, spaceMiddle, leftKey, editKeys, !KeyboardView.numberRow(preferences))
         theme = Theme.current(context)
         setMeasuredDimension(width, Core.height(handle).toInt())
     }

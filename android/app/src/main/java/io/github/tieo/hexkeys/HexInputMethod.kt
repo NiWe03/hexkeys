@@ -77,7 +77,8 @@ class HexInputMethod : InputMethodService() {
                 emojiSearch = null
             }
             Theme.KEY -> keyboard?.theme = Theme.current(this)
-            KeyboardView.LAYOUT, KeyboardView.LEFT_KEY, KeyboardView.DELETE_FROM_LEFT, KeyboardView.DELETE_ALL, KeyboardView.EDIT_KEYS ->
+            KeyboardView.LAYOUT, KeyboardView.LEFT_KEY, KeyboardView.DELETE_FROM_LEFT, KeyboardView.DELETE_ALL, KeyboardView.EDIT_KEYS,
+            KeyboardView.SIZE_ALL, KeyboardView.SIZE_KEYS, KeyboardView.SIZE_NUMBERS, KeyboardView.NUMBER_ROW ->
                 keyboard?.requestLayout()
             Dictionaries.LEARNED_RESET -> {
                 Core.words.execute { Core.lexiconForget(lexicon) }

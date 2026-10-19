@@ -68,6 +68,8 @@ pub struct LayoutSpec {
     /// Digits in a row of their own above the honeycomb, narrower and lower
     /// than the cells, as the number row of a phone keyboard.
     pub numbers: Option<String>,
+    /// How tall the number row is against its usual height, 1.0 for that.
+    pub number_scale: f32,
 }
 
 impl LayoutSpec {
@@ -168,7 +170,7 @@ impl Layout {
         let cell_width = width / spec.width_in_cells();
         let cell_height = cell_width * 2.0 / 3f32.sqrt() * stretch;
         let row_pitch = cell_height * 0.75;
-        let numbers_bottom = if spec.numbers.is_some() { cell_height * NUMBER_BAND } else { 0.0 };
+        let numbers_bottom = if spec.numbers.is_some() { cell_height * NUMBER_BAND * spec.number_scale } else { 0.0 };
         // Under a number row the honeycomb starts at the top row's points, so
         // those keys reach up to the digits with all of their height.
         let top = if spec.numbers.is_some() { numbers_bottom - TOP_CUT * cell_height } else { 0.0 };
@@ -629,6 +631,7 @@ pub fn honeycomb() -> LayoutSpec {
         ],
         first_row_shifted: false,
         numbers: Some("1234567890".into()),
+        number_scale: 1.0,
     }
 }
 
@@ -654,6 +657,7 @@ pub fn space_bottom() -> LayoutSpec {
         ],
         first_row_shifted: true,
         numbers: Some("1234567890".into()),
+        number_scale: 1.0,
     }
 }
 
@@ -666,6 +670,14 @@ pub fn with_shift_and_backspace(mut spec: LayoutSpec) -> LayoutSpec {
     row.left_edge = Some("⇧".into());
     row.right_edge = Some("⌫".into());
     spec
+}
+
+/// The least and the most the number row may be scaled to, against its usual height.
+pub const NUMBER_SCALE: std::ops::RangeInclusive<f32> = 0.5..=1.5;
+
+/// `spec` with a number row `scale` times as tall as usual, kept to [`NUMBER_SCALE`].
+pub fn with_number_scale(spec: LayoutSpec, scale: f32) -> LayoutSpec {
+    LayoutSpec { number_scale: scale.clamp(*NUMBER_SCALE.start(), *NUMBER_SCALE.end()), ..spec }
 }
 
 /// `spec` for landscape: no number row, so the letters keep more of the
@@ -712,6 +724,7 @@ pub fn space_middle_with(left: &str) -> LayoutSpec {
         ],
         first_row_shifted: true,
         numbers: Some("1234567890".into()),
+        number_scale: 1.0,
     }
 }
 
@@ -2164,6 +2177,37 @@ mod tests {
             let expected = layout.width * layout.height;
             assert!((area - expected).abs() / expected < 1e-4);
         }
+    }
+
+    #[test]
+    fn the_number_row_scales_on_its_own_and_every_layer_still_tiles() {
+        let usual = Layout::fit(&space_bottom(), 1008.0, 1.0);
+        for scale in [0.5, 0.8, 1.0, 1.5] {
+            for spec in [space_bottom(), space_middle(), with_shift_and_backspace(space_middle())] {
+                let spec = with_number_scale(spec, scale);
+                let layout = Layout::fit(&spec, 1008.0, 1.0);
+                assert!((layout.numbers_bottom - usual.numbers_bottom * scale).abs() < 0.01, "{scale}");
+                let letters = layout.height - layout.numbers_bottom;
+                assert!((letters - (usual.height - usual.numbers_bottom)).abs() < 0.01, "letters keep their height at {scale}");
+                for page in 0..2 {
+                    let layer = Layout::fit(&symbol_layer(&spec, page), 1008.0, 1.0);
+                    let area: f32 = layer.keys.iter().map(|key| polygon_area(&layer.outline(key))).sum();
+                    assert!((area - layer.width * layer.height).abs() / (layer.width * layer.height) < 1e-4, "{scale} page {page}");
+                }
+                let area: f32 = layout.keys.iter().map(|key| polygon_area(&layout.outline(key))).sum();
+                assert!((area - layout.width * layout.height).abs() / (layout.width * layout.height) < 1e-4, "{scale}");
+            }
+        }
+        assert_eq!(with_number_scale(space_bottom(), 9.0).number_scale, 1.5);
+        assert_eq!(with_number_scale(space_bottom(), 0.0).number_scale, 0.5);
+    }
+
+    #[test]
+    fn deleting_and_the_cursor_follow_a_scaled_number_row() {
+        let mut keyboard = Keyboard::new(with_number_scale(space_bottom(), 1.5), 1008.0, 1.0, 400);
+        assert!(keyboard.layout.numbers_bottom > Layout::fit(&space_bottom(), 1008.0, 1.0).numbers_bottom * 1.4);
+        let actions = slide_to(&mut keyboard, &[(900.0, 100), (700.0, 500)]);
+        assert!(matches!(actions[1], Action::Delete { .. }), "{actions:?}");
     }
 
     /// A point `right` key widths right and `down` key widths below the
